@@ -10,20 +10,49 @@
 
 ### Current State
 
-The repository is currently documentation-first. Application code has not been scaffolded yet.
+Milestone 1 of v0.1.0 is implemented. The repository contains the Tauri desktop scaffold, Svelte frontend, Rust backend foundation, baseline tests, and CI.
 
-Do not invent package scripts, source directories, dependencies, build commands, or implementation details that do not exist in the repository or approved project documentation.
+Do not invent dependencies, commands, modules, or implementation details that do not exist in the repository or approved project documentation.
+
+### Stack
+
+- Desktop runtime: Tauri 2
+- Native backend: Rust
+- Frontend: Svelte 5 + TypeScript + Vite
+- Styling: Tailwind CSS 4
+- Package manager: npm
+
+### Commands
+
+```text
+Install:       npm install
+Dev:           npm run tauri dev
+Frontend:      npm run dev
+Build:         npm run build
+Desktop build: npm run tauri build -- --no-bundle
+Lint:          npm run lint
+Typecheck:     npm run check
+Test:          npm test
+Rust format:   npm run rust:fmt
+Rust lint:     npm run rust:clippy
+Rust test:     npm run rust:test
+```
 
 ### Important Paths
 
 Keep this short. Detailed navigation belongs in `docs/reference/codebase-map.md`.
 
 ```text
-AGENTS.md       Repository-wide agent instructions
-README.md       Repository entry point
-docs/BRIEF.md   Product brief and project boundaries
-docs/SPEC.md    Product behavior and acceptance criteria
-docs/           Project documentation
+AGENTS.md                 Repository-wide agent instructions
+src/                      Svelte frontend
+src-tauri/                Tauri/Rust desktop backend
+.github/workflows/ci.yml  Baseline CI
+docs/                     Project documentation
+docs/BRIEF.md             Product brief and project boundaries
+docs/SPEC.md              Product behavior and acceptance criteria
+docs/TDD.md               Technical design
+docs/IMPLEMENTATION.md    Implementation sequence
+docs/STATUS.md            Current project context
 ```
 
 Update this section only when important repository locations actually exist.

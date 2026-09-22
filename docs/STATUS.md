@@ -2,39 +2,42 @@
 
 ## Current State
 
-Refrain is documentation-complete through the implementation-planning stage.
+Milestone 1: Application Foundation is implemented for the v0.1.0 development line.
 
-The repository has not yet been scaffolded as an application. There is currently no frontend, Rust backend, database, CI configuration, test suite, or packaging configuration.
+The repository now contains:
 
-The approved project documentation is:
+- a Tauri 2 desktop scaffold
+- a Svelte 5 + TypeScript + Vite frontend
+- Tailwind CSS 4
+- a Rust backend foundation
+- a typed frontend-to-Rust command smoke path
+- application-data directory resolution
+- rolling structured Rust logs
+- frontend and Rust test harnesses
+- baseline GitHub Actions CI
 
-- `docs/BRIEF.md`
-- `docs/SPEC.md`
-- `docs/TDD.md`
-- `docs/IMPLEMENTATION.md`
+v0.1.0 is not feature-complete yet. Spotify persistence, authentication, source synchronization, product views, and release hardening remain in later v0.1.0 milestones.
 
 ## Active Work
 
-No implementation work is currently active.
-
-The project is ready to move from planning into issue creation and implementation.
+No later milestone is implemented in this change.
 
 ## Recent Changes
 
-- established the product brief and release boundaries
-- defined v0.1.0 and v1.0.0 product behavior
-- defined the technical architecture, data model, integrations, matching strategy, filesystem behavior, security model, and testing approach
-- defined the ordered implementation plan from application scaffolding through v1.0.0 release hardening
+- completed Milestone 1 from `docs/IMPLEMENTATION.md`
+- established the initial desktop source layout and development commands
+- pinned direct JavaScript and Rust dependencies used by the scaffold
+- added baseline static checks, tests, and build verification in CI
 
 ## Known Issues
 
-None currently.
+None known in the scaffold.
 
 ## Next
 
-Create implementation issues from `docs/IMPLEMENTATION.md`, beginning with **Milestone 1: Application Foundation**.
+Implement **Milestone 2: Persistence Foundation** from `docs/IMPLEMENTATION.md`.
 
-The first implementation work should establish the Tauri 2 + Svelte 5 + TypeScript + Vite application skeleton, Rust backend foundation, baseline tooling, tests, and CI without introducing later v1 subsystems early.
+That milestone introduces SQLite, migrations, application settings, and the v0.1 source-domain persistence tables without adding the v1 library/acquisition schema early.
 
 ## Blockers
 
@@ -42,13 +45,13 @@ None.
 
 ## Open Decisions
 
-No unresolved product or architectural decision currently blocks application scaffolding or v0.1.0 implementation.
+No unresolved product or architectural decision blocks Milestone 2.
 
-Technical questions explicitly deferred in `docs/TDD.md` should be resolved when the affected implementation work begins.
+The deferred technical questions in `docs/TDD.md` remain deferred until their affected implementation areas begin.
 
 ## Relevant Context
 
-- `docs/BRIEF.md` defines project purpose and boundaries.
-- `docs/SPEC.md` defines product behavior and acceptance criteria.
-- `docs/TDD.md` defines the approved technical design.
-- `docs/IMPLEMENTATION.md` defines implementation order, dependencies, verification gates, and release milestones.
+- `docs/BRIEF.md` defines project purpose and release boundaries.
+- `docs/SPEC.md` defines v0.1.0 and v1.0.0 behavior.
+- `docs/TDD.md` defines the technical architecture.
+- `docs/IMPLEMENTATION.md` defines milestone order and verification gates.
