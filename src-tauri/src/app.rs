@@ -2,11 +2,7 @@ use std::{error::Error, fs, path::PathBuf, sync::Arc};
 
 use tracing_subscriber::EnvFilter;
 
-use crate::{
-    db::Database,
-    source_sync::SourceRefreshControl,
-    spotify::SpotifyClient,
-};
+use crate::{db::Database, source_sync::SourceRefreshControl, spotify::SpotifyClient};
 
 pub struct AppState {
     pub app_data_dir: PathBuf,
