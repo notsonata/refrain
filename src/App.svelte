@@ -1,15 +1,21 @@
 <script lang="ts">
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
   import { getAppInfo, type AppInfo } from './lib/app-info';
   import {
+    cancelSpotifySourceRefresh,
     connectSpotify,
     disconnectSpotify,
     getSpotifyAuthStatus,
+    refreshSpotifySource,
     spotifyErrorMessage,
     type SpotifyAuthStatus,
+    type SpotifySourceRefreshProgress,
+    type SpotifySourceRefreshSummary,
   } from './lib/spotify';
 
   const fallbackRedirectUri = 'http://127.0.0.1:43817/callback';
+  const sourceProgressEvent = 'spotify-source-refresh-progress';
 
   let appInfo: AppInfo | null = null;
   let authStatus: SpotifyAuthStatus | null = null;
@@ -17,9 +23,30 @@
   let backendError: string | null = null;
   let authError: string | null = null;
   let authBusy = false;
+  let sourceBusy = false;
+  let sourceError: string | null = null;
+  let sourceProgress: SpotifySourceRefreshProgress | null = null;
+  let sourceSummary: SpotifySourceRefreshSummary | null = null;
 
   onMount(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+
+    void listen<SpotifySourceRefreshProgress>(sourceProgressEvent, (event) => {
+      sourceProgress = event.payload;
+    }).then((stopListening) => {
+      if (disposed) {
+        stopListening();
+      } else {
+        unlisten = stopListening;
+      }
+    });
     void initialize();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   });
 
   async function initialize() {
@@ -55,10 +82,39 @@
     authError = null;
     try {
       authStatus = await disconnectSpotify();
+      sourceProgress = null;
+      sourceSummary = null;
     } catch (error) {
       authError = spotifyErrorMessage(error);
     } finally {
       authBusy = false;
+    }
+  }
+
+  async function refreshSource() {
+    sourceBusy = true;
+    sourceError = null;
+    sourceSummary = null;
+    sourceProgress = {
+      phase: 'starting',
+      completed: 0,
+      total: null,
+      message: 'Starting Spotify source refresh',
+    };
+    try {
+      sourceSummary = await refreshSpotifySource();
+    } catch (error) {
+      sourceError = spotifyErrorMessage(error);
+    } finally {
+      sourceBusy = false;
+    }
+  }
+
+  async function cancelSourceRefresh() {
+    try {
+      await cancelSpotifySourceRefresh();
+    } catch (error) {
+      sourceError = spotifyErrorMessage(error);
     }
   }
 </script>
@@ -82,7 +138,7 @@
           </p>
         </div>
         <span class="rounded-full border border-slate-800 px-3 py-1 text-xs">
-          v0.1 authentication
+          v0.1 source sync
         </span>
       </div>
     </header>
@@ -119,7 +175,7 @@
           <input
             id="spotify-client-id"
             bind:value={clientId}
-            disabled={authBusy || authStatus?.connected}
+            disabled={authBusy || sourceBusy || authStatus?.connected}
             autocomplete="off"
             spellcheck="false"
             placeholder="Paste your Spotify Client ID"
@@ -152,16 +208,33 @@
           </div>
         {/if}
 
-        <div class="mt-6 flex items-center gap-3">
+        <div class="mt-6 flex flex-wrap items-center gap-3">
           {#if authStatus?.connected}
             <button
               type="button"
               onclick={disconnect}
-              disabled={authBusy}
+              disabled={authBusy || sourceBusy}
               class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {authBusy ? 'Disconnecting…' : 'Disconnect'}
             </button>
+            <button
+              type="button"
+              onclick={refreshSource}
+              disabled={authBusy || sourceBusy}
+              class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Refresh Spotify
+            </button>
+            {#if sourceBusy}
+              <button
+                type="button"
+                onclick={cancelSourceRefresh}
+                class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900"
+              >
+                Cancel refresh
+              </button>
+            {/if}
           {:else}
             <button
               type="button"
@@ -178,6 +251,36 @@
             </span>
           {/if}
         </div>
+
+        {#if sourceProgress || sourceError || sourceSummary}
+          <div class="mt-6 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+            {#if sourceBusy && sourceProgress}
+              <p class="text-sm text-slate-200">{sourceProgress.message}</p>
+              {#if sourceProgress.total !== null}
+                <p class="mt-1 text-xs text-slate-500">
+                  {sourceProgress.completed} / {sourceProgress.total}
+                </p>
+              {/if}
+            {/if}
+            {#if sourceError}
+              <p class="text-sm text-amber-200">{sourceError}</p>
+            {/if}
+            {#if sourceSummary}
+              <p class="text-sm font-medium text-slate-200">
+                Spotify source refreshed
+              </p>
+              <p class="mt-2 text-xs leading-5 text-slate-400">
+                {sourceSummary.likedSongs} Liked Songs ·
+                {sourceSummary.playlists} playlists ·
+                {sourceSummary.refreshedPlaylists} refreshed ·
+                {sourceSummary.unchangedPlaylists} unchanged
+                {#if sourceSummary.inaccessiblePlaylists > 0}
+                  · {sourceSummary.inaccessiblePlaylists} inaccessible
+                {/if}
+              </p>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <aside class="rounded-xl border border-slate-800 p-5 text-sm">
@@ -208,8 +311,7 @@
     </section>
 
     <footer class="border-t border-slate-800 pt-5 text-xs text-slate-600">
-      Spotify library retrieval and manual source refresh arrive in the next
-      v0.1 milestone.
+      Liked Songs and playlist browsing arrive in the next v0.1 milestone.
     </footer>
   </div>
 </main>
