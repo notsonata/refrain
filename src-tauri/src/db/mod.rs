@@ -288,7 +288,10 @@ mod tests {
 
         assert!(settings.sync_on_startup);
         assert_eq!(settings.sync_interval_minutes, Some(30));
-        assert_eq!(settings.spotify_client_id.as_deref(), Some("spotify-client"));
+        assert_eq!(
+            settings.spotify_client_id.as_deref(),
+            Some("spotify-client")
+        );
     }
 
     #[test]
