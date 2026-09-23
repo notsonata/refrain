@@ -424,7 +424,12 @@ impl LoopbackCallback {
 
         loop {
             match self.listener.accept() {
-                Ok((mut stream, _)) => return handle_callback(&mut stream, expected_state),
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_nonblocking(false)
+                        .map_err(callback_listener_error)?;
+                    return handle_callback(&mut stream, expected_state);
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
                         return Err(SpotifyAuthError::new(
