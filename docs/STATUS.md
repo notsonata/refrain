@@ -2,47 +2,71 @@
 
 ## Current State
 
-Milestones 1 and 2 are merged for the v0.1.0 development line. Milestone 3 is implemented on the active Spotify-authentication branch and is awaiting verification and merge.
+Milestones 1 through 3 are merged for the v0.1.0 development line.
 
-The application foundation now includes SQLite source-state persistence. The Milestone 3 branch adds Spotify Client ID configuration, Authorization Code with PKCE, a dynamic loopback callback on `127.0.0.1`, OS credential-store persistence for refresh credentials, in-memory access tokens, token refresh behavior, and connect/disconnect UI.
+The application now includes:
 
-Spotify source synchronization remains out of scope until Milestone 4.
+- the Tauri/Svelte/Rust application foundation
+- SQLite persistence for v0.1 source state and application settings
+- Spotify Client ID configuration
+- Authorization Code with PKCE
+- a dynamic loopback OAuth callback on `127.0.0.1`
+- OS credential-store persistence for Spotify refresh credentials
+- in-memory Spotify access tokens with refresh and reconnect behavior
+- connect/disconnect UI and typed frontend command wrappers
+
+Spotify source synchronization has not been implemented yet.
 
 ## Active Work
 
-Verify and merge **Milestone 3: Spotify Authentication** from `docs/IMPLEMENTATION.md`.
+No later milestone is currently active on `main`.
+
+The project is ready for **Milestone 4: Spotify Source Synchronization** from `docs/IMPLEMENTATION.md`.
 
 ## Recent Changes
 
+- merged Milestone 3 Spotify authentication
 - added persisted Spotify Client ID configuration
 - added the initial Rust `SpotifyClient` authentication adapter
 - added PKCE and OAuth-state validation with a dynamic loopback callback
 - added native secure refresh-credential storage and in-memory access-token caching
-- added refresh, reauthorization, disconnect, and reconnect behavior
+- added token refresh, reauthorization, disconnect, and reconnect behavior
 - added a focused Spotify connection screen and typed frontend command wrappers
-- added mocked authentication coverage and a manual smoke-test reference
+- added mocked authentication coverage and Spotify authentication setup documentation
 
 ## Known Issues
 
 No known implementation defect is currently documented.
 
-The required real Spotify developer-application authentication smoke test cannot run in CI and remains pending until performed manually.
+The real Spotify developer-application authentication smoke test remains a manual verification follow-up because it cannot run in CI.
 
 ## Next
 
-After Milestone 3 passes automated validation and the manual authentication smoke test, implement **Milestone 4: Spotify Source Synchronization**.
+Implement **Milestone 4: Spotify Source Synchronization**.
 
-Milestone 4 adds current-user profile retrieval, Liked Songs and playlist pagination, transactional source refresh, retry/rate-limit behavior, progress, and cancellation where practical.
+Milestone 4 adds:
+
+- current-user profile retrieval
+- Liked Songs pagination
+- playlist listing and playlist-item pagination
+- playlist snapshot optimization
+- inaccessible and unavailable playlist-item handling
+- collection-level transactional persistence
+- manual source refresh
+- retry and rate-limit handling
+- refresh progress and cancellation where practical
+
+The real Spotify authentication smoke test should also be completed before v0.1.0 release and preferably before or during Milestone 4 integration testing.
 
 ## Blockers
 
-None for automated Milestone 3 validation.
+None block Milestone 4 implementation.
 
-A user-owned Spotify developer application is required for the Milestone 3 manual smoke test.
+A user-owned Spotify developer application is required for the pending real authentication smoke test.
 
 ## Open Decisions
 
-No unresolved product or architectural decision blocks the current milestone.
+No unresolved product or architectural decision blocks Milestone 4.
 
 The deferred technical questions in `docs/TDD.md` remain deferred until their affected implementation areas begin.
 
