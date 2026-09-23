@@ -26,6 +26,9 @@ pub fn run() {
             commands::disconnect_spotify,
             commands::refresh_spotify_source,
             commands::cancel_spotify_source_refresh,
+            commands::get_spotify_source_overview,
+            commands::list_spotify_playlists,
+            commands::get_source_collection_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Refrain");

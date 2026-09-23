@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceAccount {
     pub provider: String,
@@ -59,4 +61,73 @@ pub struct SourceCollectionItem {
     pub item_type: String,
     pub added_at: Option<i64>,
     pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceAccountOverview {
+    pub display_name: Option<String>,
+    pub last_source_sync_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCollectionSummary {
+    pub id: i64,
+    pub provider_collection_id: String,
+    pub kind: String,
+    pub name: String,
+    pub is_accessible: bool,
+    pub access_issue: Option<String>,
+    pub entry_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotifySourceOverview {
+    pub account: Option<SourceAccountOverview>,
+    pub liked_songs: Option<SourceCollectionSummary>,
+    pub playlist_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCollectionListPage {
+    pub items: Vec<SourceCollectionSummary>,
+    pub total: i64,
+    pub offset: u32,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceTrackView {
+    pub provider_track_id: String,
+    pub title: String,
+    pub artists: Vec<String>,
+    pub album: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub explicit: Option<bool>,
+    pub image_url: Option<String>,
+    pub external_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCollectionEntryView {
+    pub position: i64,
+    pub item_type: String,
+    pub added_at: Option<i64>,
+    pub unavailable_reason: Option<String>,
+    pub track: Option<SourceTrackView>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCollectionPage {
+    pub collection: SourceCollectionSummary,
+    pub entries: Vec<SourceCollectionEntryView>,
+    pub total: i64,
+    pub offset: u32,
+    pub limit: u32,
 }

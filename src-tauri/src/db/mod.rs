@@ -1,6 +1,7 @@
 mod migrations;
 mod settings;
 mod source;
+mod source_browse;
 mod source_refresh;
 
 use std::{
