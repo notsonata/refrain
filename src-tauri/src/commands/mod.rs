@@ -6,9 +6,7 @@ use tauri::Emitter;
 use crate::{
     app::AppState,
     db::{Database, DatabaseError},
-    domain::{
-        AppSettings, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview,
-    },
+    domain::{AppSettings, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview},
     source_sync::{
         SOURCE_REFRESH_PROGRESS_EVENT, SourceRefreshError, SourceRefreshSummary,
         refresh_spotify_source as run_spotify_source_refresh,
