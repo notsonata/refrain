@@ -262,7 +262,7 @@ mod tests {
 
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
-        assert_eq!(user_version, 1);
+        assert_eq!(user_version, 2);
         assert_eq!(database.path(), test_path.path.as_path());
     }
 
@@ -275,6 +275,7 @@ mod tests {
             let updated = AppSettings {
                 sync_on_startup: true,
                 sync_interval_minutes: Some(30),
+                spotify_client_id: Some("spotify-client".into()),
                 ..AppSettings::default()
             };
             database
@@ -287,6 +288,7 @@ mod tests {
 
         assert!(settings.sync_on_startup);
         assert_eq!(settings.sync_interval_minutes, Some(30));
+        assert_eq!(settings.spotify_client_id.as_deref(), Some("spotify-client"));
     }
 
     #[test]

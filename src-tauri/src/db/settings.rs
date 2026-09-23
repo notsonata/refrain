@@ -28,7 +28,8 @@ pub(super) fn get(conn: &Connection) -> Result<AppSettings, rusqlite::Error> {
             keep_removed_managed_files,
             sync_on_startup,
             sync_interval_minutes,
-            acquisition_enabled
+            acquisition_enabled,
+            spotify_client_id
          FROM app_settings
          WHERE id = 1",
         [],
@@ -39,6 +40,7 @@ pub(super) fn get(conn: &Connection) -> Result<AppSettings, rusqlite::Error> {
                 sync_on_startup: row.get::<_, i64>(2)? != 0,
                 sync_interval_minutes: row.get(3)?,
                 acquisition_enabled: row.get::<_, i64>(4)? != 0,
+                spotify_client_id: row.get(5)?,
             })
         },
     )
@@ -55,7 +57,8 @@ pub(super) fn update(
              sync_on_startup = ?3,
              sync_interval_minutes = ?4,
              acquisition_enabled = ?5,
-             updated_at = ?6
+             spotify_client_id = ?6,
+             updated_at = ?7
          WHERE id = 1",
         params![
             settings.library_root,
@@ -63,6 +66,7 @@ pub(super) fn update(
             bool_to_sql(settings.sync_on_startup),
             settings.sync_interval_minutes,
             bool_to_sql(settings.acquisition_enabled),
+            settings.spotify_client_id,
             now_ms(),
         ],
     )?;

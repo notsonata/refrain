@@ -2,6 +2,8 @@ mod app;
 mod commands;
 mod db;
 mod domain;
+mod security;
+mod spotify;
 
 use tauri::Manager;
 
@@ -18,6 +20,9 @@ pub fn run() {
             commands::get_app_info,
             commands::get_settings,
             commands::update_settings,
+            commands::get_spotify_auth_status,
+            commands::connect_spotify,
+            commands::disconnect_spotify,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Refrain");
