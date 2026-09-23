@@ -137,7 +137,9 @@
         </div>
 
         {#if authError}
-          <div class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200">
+          <div
+            class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
+          >
             {authError}
           </div>
         {/if}
