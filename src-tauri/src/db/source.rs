@@ -95,15 +95,15 @@ pub(super) fn upsert_collection(
     conn.query_row(
         "SELECT id FROM source_collections
          WHERE source_account_id = ?1 AND provider_collection_id = ?2",
-        params![collection.source_account_id, collection.provider_collection_id],
+        params![
+            collection.source_account_id,
+            collection.provider_collection_id
+        ],
         |row| row.get(0),
     )
 }
 
-pub(super) fn upsert_track(
-    conn: &Connection,
-    track: &SourceTrack,
-) -> Result<i64, rusqlite::Error> {
+pub(super) fn upsert_track(conn: &Connection, track: &SourceTrack) -> Result<i64, rusqlite::Error> {
     let now = now_ms();
     conn.execute(
         "INSERT INTO source_tracks (

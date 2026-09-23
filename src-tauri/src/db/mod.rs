@@ -4,8 +4,7 @@ mod source;
 
 use std::{
     error::Error,
-    fmt,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -52,10 +51,7 @@ impl Database {
         self.with_connection(|connection| settings::update(connection, value))
     }
 
-    pub fn upsert_source_account(
-        &self,
-        account: &SourceAccount,
-    ) -> Result<i64, DatabaseError> {
+    pub fn upsert_source_account(&self, account: &SourceAccount) -> Result<i64, DatabaseError> {
         self.with_connection(|connection| source::upsert_account(connection, account))
     }
 

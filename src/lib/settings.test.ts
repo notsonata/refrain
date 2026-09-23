@@ -21,11 +21,13 @@ describe('settings commands', () => {
   });
 
   it('updates settings through a use-case command', async () => {
-    const invoke = vi.fn(async <T>(command: string, args?: Record<string, unknown>) => {
-      expect(command).toBe('update_settings');
-      expect(args).toEqual({ settings });
-      return settings as T;
-    }) as InvokeFn;
+    const invoke = vi.fn(
+      async <T>(command: string, args?: Record<string, unknown>) => {
+        expect(command).toBe('update_settings');
+        expect(args).toEqual({ settings });
+        return settings as T;
+      },
+    ) as InvokeFn;
 
     await expect(updateSettings(settings, invoke)).resolves.toEqual(settings);
   });

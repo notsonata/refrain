@@ -24,7 +24,10 @@ impl Default for AppSettings {
 
 impl AppSettings {
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.sync_interval_minutes.is_some_and(|minutes| minutes <= 0) {
+        if self
+            .sync_interval_minutes
+            .is_some_and(|minutes| minutes <= 0)
+        {
             return Err("sync interval must be greater than zero");
         }
 
