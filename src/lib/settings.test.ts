@@ -8,6 +8,7 @@ const settings: AppSettings = {
   syncOnStartup: false,
   syncIntervalMinutes: null,
   acquisitionEnabled: false,
+  spotifyClientId: null,
 };
 
 describe('settings commands', () => {

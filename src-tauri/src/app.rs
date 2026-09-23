@@ -1,20 +1,25 @@
-use std::{error::Error, fs, path::PathBuf};
+use std::{error::Error, fs, path::PathBuf, sync::Arc};
 
 use tracing_subscriber::EnvFilter;
 
-use crate::db::Database;
+use crate::{db::Database, spotify::SpotifyClient};
 
-#[derive(Debug)]
 pub struct AppState {
     pub app_data_dir: PathBuf,
-    pub database: Database,
+    pub database: Arc<Database>,
+    pub spotify: Arc<SpotifyClient>,
 }
 
 impl AppState {
-    pub fn new(app_data_dir: PathBuf, database: Database) -> Self {
+    pub fn new(
+        app_data_dir: PathBuf,
+        database: Arc<Database>,
+        spotify: Arc<SpotifyClient>,
+    ) -> Self {
         Self {
             app_data_dir,
             database,
+            spotify,
         }
     }
 }
@@ -26,7 +31,8 @@ pub fn initialize(app_data_dir: PathBuf) -> Result<AppState, Box<dyn Error>> {
     fs::create_dir_all(&log_dir)?;
     initialize_logging(log_dir);
 
-    let database = Database::open(app_data_dir.join("refrain.sqlite3"))?;
+    let database = Arc::new(Database::open(app_data_dir.join("refrain.sqlite3"))?);
+    let spotify = Arc::new(SpotifyClient::new()?);
 
     tracing::info!(
         app_data_dir = %app_data_dir.display(),
@@ -34,7 +40,7 @@ pub fn initialize(app_data_dir: PathBuf) -> Result<AppState, Box<dyn Error>> {
         "application persistence initialized"
     );
 
-    Ok(AppState::new(app_data_dir, database))
+    Ok(AppState::new(app_data_dir, database, spotify))
 }
 
 fn initialize_logging(log_dir: PathBuf) {
