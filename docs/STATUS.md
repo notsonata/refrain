@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 4 are merged and verified for the v0.1.0 development line. Milestone 5, the v0.1 Desktop Experience, is implemented on the active feature branch and is awaiting automated validation, a manual desktop browsing smoke test, and merge.
+Milestones 1 through 5 are merged for the v0.1.0 development line. Milestone 5, the v0.1 Desktop Experience, is implemented in `main`; this follow-up tree addresses validation issues found after the merge before the milestone is considered fully verified.
 
 The application now includes:
 
@@ -29,34 +29,35 @@ The application now includes:
 
 ## Active Work
 
-Verify and merge **Milestone 5: v0.1 Desktop Experience**.
+Complete automated validation and the manual desktop browsing smoke test for **Milestone 5: v0.1 Desktop Experience**.
 
 The Milestone 3 real Spotify authentication smoke test and Milestone 4 real source-refresh smoke test have both passed on macOS.
 
 ## Recent Changes
 
+- merged Milestone 5 desktop browsing through PR #14
+- fixed TrackList lint failures that were present in the merged Milestone 5 tree
+- allowed Spotify album artwork from `https://i.scdn.co` in the Tauri content security policy
+- made accepted Spotify loopback callback sockets explicitly blocking so macOS does not surface an inherited nonblocking read race
 - added paginated backend projections for the Spotify source overview, playlist list, and collection entries
 - added desktop navigation for Liked Songs, Playlists, and Settings
-- added dense playlist and Liked Songs track views with lazy artwork
-- preserved playlist ordering, duplicate positions, and unavailable entries in the browsing UI
-- added explicit inaccessible-playlist and disconnected states
+- preserved playlist ordering, duplicate positions, unavailable entries, and inaccessible playlist state in the browsing UI
 - added restart-state hydration from persisted SQLite source state
 - retained manual Spotify refresh and progress/cancellation within the desktop experience
 - added virtualized rendering for loaded track rows and incremental page loading
 - added Rust projection tests, mocked Tauri IPC tests, and Svelte component coverage for duplicate and empty track-list states
-- completed the real Milestone 4 source-refresh smoke test on macOS
 
 ## Known Issues
 
-No known implementation defect is currently documented.
+No unresolved implementation defect is currently documented in the Milestone 5 follow-up changes.
 
 Port `43817` must be available while starting Spotify authorization. Refrain reports an authentication error rather than choosing a different port when it is occupied.
 
-Milestone 5 still needs automated validation and a manual desktop smoke test covering Liked Songs browsing, playlist selection/detail, restart hydration, inaccessible playlists, and refresh behavior.
+Milestone 5 still needs a manual desktop smoke test covering Liked Songs browsing, playlist selection/detail, restart hydration, inaccessible playlists, refresh behavior, artwork loading, and large-collection scrolling.
 
 ## Next
 
-After Milestone 5 passes validation and merge, implement **Milestone 6: v0.1 Hardening and Release**.
+After Milestone 5 automated validation and manual verification are complete, implement **Milestone 6: v0.1 Hardening and Release**.
 
 Milestone 6 covers release metadata and icons, clean first-run and migration checks, user-facing error hardening, log-redaction verification, platform build checks, stable developer/reference documentation, the initial release changelog, and v0.1.0 packaging.
 
