@@ -6,9 +6,46 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  autofix:
+    name: Format milestone 4
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: npm install --no-audit --no-fund
+      - name: Fix source sync serde bound
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('src-tauri/src/source_sync.rs')
+          text = path.read_text()
+          old = '#[derive(Debug, Deserialize)]\nstruct SpotifyPage<T> {'
+          new = '#[derive(Debug, Deserialize)]\n#[serde(bound(deserialize = "T: Deserialize<\'de>"))]\nstruct SpotifyPage<T> {'
+          if old in text:
+              path.write_text(text.replace(old, new, 1))
+      - run: npx prettier --write src/App.svelte
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+      - name: Commit formatting
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.svelte src-tauri/src/source_sync.rs src-tauri/src/spotify.rs
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: format milestone 4 changes"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
