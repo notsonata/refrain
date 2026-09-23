@@ -2,21 +2,25 @@
 
 ## Current State
 
-Milestone 1: Application Foundation is implemented for the v0.1.0 development line.
+Milestones 1 and 2 are implemented for the v0.1.0 development line.
 
-The repository now contains:
+The repository now contains the Tauri/Svelte/Rust application foundation plus SQLite persistence for the v0.1 source domain.
 
-- a Tauri 2 desktop scaffold
-- a Svelte 5 + TypeScript + Vite frontend
-- Tailwind CSS 4
-- a Rust backend foundation
-- a typed frontend-to-Rust command smoke path
-- application-data directory resolution
-- rolling structured Rust logs
-- frontend and Rust test harnesses
-- baseline GitHub Actions CI
+Persistence currently includes:
 
-v0.1.0 is not feature-complete yet. Spotify persistence, authentication, source synchronization, product views, and release hardening remain in later v0.1.0 milestones.
+- SQLite in the platform application-data directory
+- ordered schema migrations
+- foreign keys, WAL mode, and a busy timeout
+- persisted application settings
+- `source_accounts`
+- `source_collections`
+- `source_tracks`
+- `collection_entries`
+- transactional collection-entry replacement
+- source-state upsert helpers
+- typed settings commands across the Tauri boundary
+
+v0.1.0 is not feature-complete yet. Spotify authentication, source synchronization, product views, and release hardening remain in later v0.1.0 milestones.
 
 ## Active Work
 
@@ -24,20 +28,21 @@ No later milestone is implemented in this change.
 
 ## Recent Changes
 
-- completed Milestone 1 from `docs/IMPLEMENTATION.md`
-- established the initial desktop source layout and development commands
-- pinned direct JavaScript and Rust dependencies used by the scaffold
-- added baseline static checks, tests, and build verification in CI
+- completed Milestone 2 from `docs/IMPLEMENTATION.md`
+- added SQLite and migration infrastructure
+- added the v0.1 source-domain schema only
+- added persistence tests covering migrations, constraints, restart persistence, upserts, and transactional rollback
+- added typed frontend wrappers for settings commands
 
 ## Known Issues
 
-None known in the scaffold.
+None known in the persistence foundation.
 
 ## Next
 
-Implement **Milestone 2: Persistence Foundation** from `docs/IMPLEMENTATION.md`.
+Implement **Milestone 3: Spotify Authentication** from `docs/IMPLEMENTATION.md`.
 
-That milestone introduces SQLite, migrations, application settings, and the v0.1 source-domain persistence tables without adding the v1 library/acquisition schema early.
+That milestone adds user-provided Spotify Client ID configuration, Authorization Code with PKCE, loopback callback handling, secure refresh-token storage, and the initial Spotify API adapter.
 
 ## Blockers
 
@@ -45,7 +50,7 @@ None.
 
 ## Open Decisions
 
-No unresolved product or architectural decision blocks Milestone 2.
+No unresolved product or architectural decision blocks Milestone 3.
 
 The deferred technical questions in `docs/TDD.md` remain deferred until their affected implementation areas begin.
 
@@ -53,5 +58,5 @@ The deferred technical questions in `docs/TDD.md` remain deferred until their af
 
 - `docs/BRIEF.md` defines project purpose and release boundaries.
 - `docs/SPEC.md` defines v0.1.0 and v1.0.0 behavior.
-- `docs/TDD.md` defines the technical architecture.
+- `docs/TDD.md` defines the technical architecture and persistence schema.
 - `docs/IMPLEMENTATION.md` defines milestone order and verification gates.

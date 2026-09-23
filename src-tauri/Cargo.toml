@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Mirror Spotify playlists and Liked Songs to a local music library"
 authors = ["notsonata"]
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.95"
 publish = false
 
 [lib]
@@ -15,6 +15,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
+rusqlite = { version = "=0.40.1", features = ["bundled"] }
+rusqlite_migration = "=2.6.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 tauri = { version = "=2.11.5", features = [] }
 tracing = "=0.1.44"
