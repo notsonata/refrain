@@ -858,13 +858,7 @@ Connection: close\r\
         credentials: Arc<MockCredentialStore>,
         browser: Arc<MockBrowser>,
     ) -> SpotifyClient {
-        SpotifyClient::with_dependencies(
-            tokens,
-            credentials,
-            browser,
-            0,
-            Duration::from_secs(1),
-        )
+        SpotifyClient::with_dependencies(tokens, credentials, browser, 0, Duration::from_secs(1))
     }
 
     #[test]
