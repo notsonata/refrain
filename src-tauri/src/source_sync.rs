@@ -275,11 +275,11 @@ fn refresh_with_api<A: SpotifySourceApi>(
                     "Spotify only allows item access for playlists you own or collaborate on."
                         .into(),
                 );
-                database
-                    .upsert_source_collection(&inaccessible)
-                    .map_err(|database_error_value| {
+                database.upsert_source_collection(&inaccessible).map_err(
+                    |database_error_value| {
                         database_error("save inaccessible playlist", database_error_value)
-                    })?;
+                    },
+                )?;
                 inaccessible_playlists += 1;
             }
             Err(error) => return Err(error),
@@ -499,7 +499,10 @@ impl AccessTokenProvider for ProductionAccessTokenProvider {
 
         if !status.is_success() {
             let token_error = serde_json::from_str::<SpotifyTokenErrorDto>(&body).ok();
-            if token_error.as_ref().is_some_and(|error| error.error == "invalid_grant") {
+            if token_error
+                .as_ref()
+                .is_some_and(|error| error.error == "invalid_grant")
+            {
                 credentials.clear_refresh_token().map_err(|error| {
                     tracing::error!(%error, "Spotify credential clear failed after invalid grant");
                     SourceRefreshError::new(
@@ -593,7 +596,10 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifyApiClient<T, P> {
 
             let response = match self.transport.get(url, &token) {
                 Ok(response) => response,
-                Err(error) if error.code == "spotifyNetworkFailed" && attempt + 1 < MAX_REQUEST_ATTEMPTS => {
+                Err(error)
+                    if error.code == "spotifyNetworkFailed"
+                        && attempt + 1 < MAX_REQUEST_ATTEMPTS =>
+                {
                     sleep_interruptibly(
                         Duration::from_millis(250 * (attempt as u64 + 1)),
                         control,
@@ -717,8 +723,17 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifySourceApi for SpotifyApiCl
                     unavailable_reason: saved
                         .track
                         .as_ref()
-                        .and_then(|track| map_spotify_track(track).is_none().then_some("unavailable_track".into()))
-                        .or_else(|| saved.track.is_none().then_some("removed_or_unavailable".into())),
+                        .and_then(|track| {
+                            map_spotify_track(track)
+                                .is_none()
+                                .then_some("unavailable_track".into())
+                        })
+                        .or_else(|| {
+                            saved
+                                .track
+                                .is_none()
+                                .then_some("removed_or_unavailable".into())
+                        }),
                 });
             }
             next = page.next;
@@ -814,6 +829,7 @@ struct SpotifyProfileDto {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
 struct SpotifyPage<T> {
     #[serde(default)]
     items: Vec<T>,
@@ -997,12 +1013,10 @@ fn map_spotify_track(track: &SpotifyTrackDto) -> Option<SourceTrack> {
         explicit: track.explicit,
         version_kind: None,
         version_detail: None,
-        image_url: track.album.as_ref().and_then(|album| {
-            album
-                .images
-                .iter()
-                .find_map(|image| image.url.clone())
-        }),
+        image_url: track
+            .album
+            .as_ref()
+            .and_then(|album| album.images.iter().find_map(|image| image.url.clone())),
         external_url: track
             .external_urls
             .as_ref()
@@ -1053,10 +1067,7 @@ fn parse_spotify_timestamp(value: &str) -> Option<i64> {
     };
     let days = days_from_civil(year, month, day);
     Some(
-        (days * 86_400
-            + i64::from(hour) * 3_600
-            + i64::from(minute) * 60
-            + i64::from(second))
+        (days * 86_400 + i64::from(hour) * 3_600 + i64::from(minute) * 60 + i64::from(second))
             * 1_000
             + milliseconds,
     )
@@ -1175,7 +1186,10 @@ mod tests {
         assert_eq!(items[0].position, 0);
         assert_eq!(items[1].position, 1);
         assert_eq!(
-            items[1].track.as_ref().map(|track| track.provider_track_id.as_str()),
+            items[1]
+                .track
+                .as_ref()
+                .map(|track| track.provider_track_id.as_str()),
             Some("two")
         );
     }
@@ -1188,10 +1202,7 @@ mod tests {
                 retry_after_seconds: Some(0),
                 body: String::new(),
             }),
-            response(
-                200,
-                r#"{"account_id":"account","display_name":"Listener"}"#,
-            ),
+            response(200, r#"{"account_id":"account","display_name":"Listener"}"#),
         ]);
         let tokens = MockTokens::new();
         let mut client = SpotifyApiClient::new(transport, tokens, "https://api.test");
@@ -1201,17 +1212,22 @@ mod tests {
             .expect("profile should retry");
 
         assert_eq!(profile.provider_account_id, "account");
-        assert_eq!(client.transport.calls.lock().expect("calls should lock").len(), 2);
+        assert_eq!(
+            client
+                .transport
+                .calls
+                .lock()
+                .expect("calls should lock")
+                .len(),
+            2
+        );
     }
 
     #[test]
     fn unauthorized_request_refreshes_token_once() {
         let transport = MockTransport::with_responses([
             response(401, "{}"),
-            response(
-                200,
-                r#"{"account_id":"account","display_name":"Listener"}"#,
-            ),
+            response(200, r#"{"account_id":"account","display_name":"Listener"}"#),
         ]);
         let tokens = MockTokens::new();
         let mut client = SpotifyApiClient::new(transport, tokens, "https://api.test");
@@ -1242,9 +1258,15 @@ mod tests {
         assert_eq!(items.len(), 3);
         assert!(items[0].track.is_some());
         assert!(items[0].added_at.is_some());
-        assert_eq!(items[1].unavailable_reason.as_deref(), Some("removed_or_unavailable"));
+        assert_eq!(
+            items[1].unavailable_reason.as_deref(),
+            Some("removed_or_unavailable")
+        );
         assert_eq!(items[2].item_type, "episode");
-        assert_eq!(items[2].unavailable_reason.as_deref(), Some("unsupported_episode"));
+        assert_eq!(
+            items[2].unavailable_reason.as_deref(),
+            Some("unsupported_episode")
+        );
     }
 
     static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(0);
@@ -1308,10 +1330,7 @@ mod tests {
         }
     }
 
-    fn setup_existing_playlist(
-        name: &str,
-        snapshot: &str,
-    ) -> (TestDatabasePath, Database, i64) {
+    fn setup_existing_playlist(name: &str, snapshot: &str) -> (TestDatabasePath, Database, i64) {
         let path = TestDatabasePath::new(name);
         let database = Database::open(path.path.clone()).expect("database should open");
         let account_id = database
@@ -1419,10 +1438,7 @@ mod tests {
         let (_path, database, account_id) = setup_existing_playlist("forbidden", "old");
         let mut api = FakeSourceApi {
             playlist: fake_playlist("new"),
-            playlist_items_result: Err(SourceRefreshError::new(
-                "spotifyForbidden",
-                "forbidden",
-            )),
+            playlist_items_result: Err(SourceRefreshError::new("spotifyForbidden", "forbidden")),
             playlist_item_calls: 0,
         };
 
@@ -1478,10 +1494,7 @@ mod tests {
 
     #[test]
     fn timestamp_parser_handles_spotify_utc_values() {
-        assert_eq!(
-            parse_spotify_timestamp("1970-01-01T00:00:00Z"),
-            Some(0)
-        );
+        assert_eq!(parse_spotify_timestamp("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(
             parse_spotify_timestamp("1970-01-01T00:00:01.250Z"),
             Some(1_250)

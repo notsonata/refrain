@@ -916,11 +916,11 @@ Connection: close\r\
             params.get("code_challenge").map(String::as_str),
             Some(expected_challenge.as_str())
         );
-        assert!(
-            params
-                .get("scope")
-                .is_some_and(|scope| scope.split_whitespace().any(|value| value == "user-read-private"))
-        );
+        assert!(params.get("scope").is_some_and(|scope| {
+            scope
+                .split_whitespace()
+                .any(|value| value == "user-read-private")
+        }));
         assert_eq!(
             credentials
                 .get_refresh_token()

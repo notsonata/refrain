@@ -253,7 +253,9 @@
         </div>
 
         {#if sourceProgress || sourceError || sourceSummary}
-          <div class="mt-6 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+          <div
+            class="mt-6 rounded-lg border border-slate-800 bg-slate-900/60 p-4"
+          >
             {#if sourceBusy && sourceProgress}
               <p class="text-sm text-slate-200">{sourceProgress.message}</p>
               {#if sourceProgress.total !== null}
