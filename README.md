@@ -8,7 +8,7 @@ It is being built to import Spotify playlists and Liked Songs, reconcile them ag
 
 Refrain is under active development and does not have a released version yet.
 
-Milestones 1 through 4 of the v0.1.0 development line are implemented on the current tree:
+Milestones 1 through 5 of the v0.1.0 development line are implemented on the current tree:
 
 - Tauri 2 + Svelte 5 + TypeScript desktop application foundation
 - SQLite persistence for application settings and v0.1 source state
@@ -21,8 +21,12 @@ Milestones 1 through 4 of the v0.1.0 development line are implemented on the cur
 - transactional source persistence and playlist snapshot reuse
 - inaccessible/unavailable Spotify item preservation
 - bounded retry/rate-limit handling, refresh progress, and cancellation
+- Liked Songs, Playlists, and Settings desktop navigation
+- persisted playlist and Liked Songs browsing after restart
+- ordered playlist detail with duplicate and unavailable entries preserved
+- lazy artwork loading and virtualized track-row rendering backed by paginated Rust queries
 
-The next milestone adds the v0.1 desktop views for browsing the synchronized Liked Songs and playlist state.
+Milestone 5 is awaiting final automated validation and a manual desktop browsing smoke test before merge. The next implementation milestone after that is v0.1.0 hardening and release preparation.
 
 For current project state, see [`docs/STATUS.md`](docs/STATUS.md).
 
@@ -110,13 +114,12 @@ Refrain does not ship shared Spotify credentials. Each user supplies their own S
    ```
 
 3. Start Refrain with `npm run tauri dev`.
-4. Enter the Spotify Client ID in the application.
+4. Open **Settings** and enter the Spotify Client ID.
 5. Choose **Connect Spotify** and complete authorization in the system browser.
 6. Choose **Refresh Spotify** to fetch and persist Liked Songs and playlist source state.
+7. Browse imported tracks under **Liked Songs** and **Playlists**. The persisted source state is loaded again when Refrain restarts.
 
 Refrain uses Authorization Code with PKCE and does not require a Spotify client secret. During sign-in, Refrain listens only on `127.0.0.1:43817`; if another application is already using that port, Spotify connection cannot start until the port is free.
-
-The current Milestone 4 screen reports refresh progress and a compact completion summary. Full Liked Songs and playlist browsing arrives in Milestone 5.
 
 See [`docs/reference/spotify-auth.md`](docs/reference/spotify-auth.md) for credential handling details and the manual authentication smoke test.
 
@@ -162,6 +165,6 @@ The repository documentation is the source of truth for planned behavior and arc
 
 ## Development Roadmap
 
-The immediate next milestone after source-sync verification is **Milestone 5: v0.1 Desktop Experience**, which adds Liked Songs and playlist browsing, playlist detail and ordering, inaccessible/error states, restart-state hydration, and large-list rendering behavior.
+After Milestone 5 desktop verification, the immediate next milestone is **Milestone 6: v0.1 Hardening and Release**. It covers release metadata, clean-install and migration checks, user-facing error hardening, log-redaction verification, platform build checks, stable reference documentation, the first release changelog, and v0.1.0 packaging.
 
 See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the full path through v0.1.0 and v1.0.0.
