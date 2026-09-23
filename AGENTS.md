@@ -10,7 +10,22 @@
 
 ### Current State
 
-Milestone 1 of v0.1.0 is implemented. The repository contains the Tauri desktop scaffold, Svelte frontend, Rust backend foundation, baseline tests, and CI.
+Milestones 1 through 3 of the v0.1.0 development line are merged.
+
+The repository currently includes:
+
+- the Tauri desktop scaffold and Svelte frontend
+- the Rust backend foundation and baseline CI
+- SQLite persistence for v0.1 source state and application settings
+- Spotify Client ID configuration
+- Authorization Code with PKCE
+- loopback OAuth callback handling on `127.0.0.1`
+- OS credential-store persistence for Spotify refresh credentials
+- in-memory Spotify access tokens with refresh and reconnect behavior
+
+Milestone 4, Spotify Source Synchronization, is the next implementation milestone.
+
+A real Spotify developer-application authentication smoke test remains a manual verification follow-up for Milestone 3.
 
 Do not invent dependencies, commands, modules, or implementation details that do not exist in the repository or approved project documentation.
 
@@ -43,16 +58,17 @@ Rust test:     npm run rust:test
 Keep this short. Detailed navigation belongs in `docs/reference/codebase-map.md`.
 
 ```text
-AGENTS.md                 Repository-wide agent instructions
-src/                      Svelte frontend
-src-tauri/                Tauri/Rust desktop backend
-.github/workflows/ci.yml  Baseline CI
-docs/                     Project documentation
-docs/BRIEF.md             Product brief and project boundaries
-docs/SPEC.md              Product behavior and acceptance criteria
-docs/TDD.md               Technical design
-docs/IMPLEMENTATION.md    Implementation sequence
-docs/STATUS.md            Current project context
+AGENTS.md                         Repository-wide agent instructions
+src/                              Svelte frontend
+src-tauri/                        Tauri/Rust desktop backend
+.github/workflows/ci.yml          Baseline CI
+docs/                             Project documentation
+docs/BRIEF.md                     Product brief and project boundaries
+docs/SPEC.md                      Product behavior and acceptance criteria
+docs/TDD.md                       Technical design
+docs/IMPLEMENTATION.md            Implementation sequence
+docs/STATUS.md                    Current project context
+docs/reference/spotify-auth.md    Spotify authentication setup and smoke test
 ```
 
 Update this section only when important repository locations actually exist.
@@ -92,12 +108,15 @@ Project documentation currently uses the following layout:
 docs/
 ├── BRIEF.md
 ├── SPEC.md
+├── TDD.md
+├── IMPLEMENTATION.md
 ├── STATUS.md
 │
 ├── decisions/
 │   └── 001-*.md
 │
 └── reference/
+    ├── spotify-auth.md
     ├── codebase-map.md
     ├── setup.md
     ├── testing.md
@@ -105,14 +124,7 @@ docs/
     └── ui.md
 ```
 
-Future planning documents should use:
-
-```text
-docs/TDD.md
-docs/IMPLEMENTATION.md
-```
-
-Not every optional status, decision, or reference document must exist before it is useful.
+Not every optional decision or reference document must exist before it is useful.
 
 Do not invent files solely to make the documentation tree complete.
 
@@ -193,7 +205,7 @@ Individual work items belong in the issue tracker.
 
 Durable decision rationale belongs in `docs/decisions/`.
 
-Released changes belong in `CHANGELOG.md`.
+Released changes belong in `CHANGELOG.md` when release history exists.
 
 ## Codebase Map
 
@@ -356,7 +368,9 @@ Validation should be proportional to the change.
 
 ### Release
 
-Use `CHANGELOG.md` when meaningful release history is useful.
+Create `CHANGELOG.md` when the project has meaningful released changes to preserve.
+
+Do not create or maintain a changelog solely for unreleased milestone history. Until a release exists, use Git, pull requests, and `docs/STATUS.md` for implementation history and current context.
 
 Do not create unnecessary release overhead.
 
@@ -466,16 +480,21 @@ Do not claim verification that was not performed.
 
 ## Documentation Updates
 
-Update documentation only when work changes relevant project knowledge.
+Documentation review is part of completing meaningful work.
 
-In particular:
+Before considering a substantial task, milestone, or release complete, review the repository documentation and update any document whose owned knowledge changed.
 
-- update `STATUS.md` when current state materially changes
+At minimum:
+
+- update `docs/STATUS.md` whenever current state, active work, recent meaningful changes, known issues, next work, blockers, open decisions, or relevant context changed
+- update `AGENTS.md` when repository-wide instructions, commands, stack, important paths, or current high-level implementation state changed
 - update the codebase map when navigation-relevant structure changes
 - update planning docs when documented product or technical decisions change
 - create or update ADRs for significant durable decisions
 - update reference docs when their subject changes
-- update `CHANGELOG.md` for meaningful released changes
+- update `CHANGELOG.md` only when meaningful released changes exist
+
+Do not leave documentation knowingly stale after implementation work.
 
 Do not update documentation merely because files were touched.
 
@@ -487,7 +506,7 @@ A task is complete when:
 
 1. requested behavior is implemented
 2. relevant validation passed, or skipped validation is explained
-3. necessary documentation is updated
+3. a final documentation review was performed and necessary documentation is updated
 4. current project context is accurate
 5. no required follow-up is hidden
 6. completion reporting accurately describes the work
