@@ -6,7 +6,9 @@ use tauri::Emitter;
 use crate::{
     app::AppState,
     db::{Database, DatabaseError},
-    domain::AppSettings,
+    domain::{
+        AppSettings, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview,
+    },
     source_sync::{
         SOURCE_REFRESH_PROGRESS_EVENT, SourceRefreshError, SourceRefreshSummary,
         refresh_spotify_source as run_spotify_source_refresh,
@@ -144,6 +146,42 @@ pub async fn refresh_spotify_source(
 #[tauri::command]
 pub fn cancel_spotify_source_refresh(state: tauri::State<'_, AppState>) -> bool {
     state.source_refresh.cancel()
+}
+
+#[tauri::command]
+pub fn get_spotify_source_overview(
+    state: tauri::State<'_, AppState>,
+) -> Result<SpotifySourceOverview, String> {
+    state
+        .database
+        .spotify_source_overview()
+        .map_err(|error| command_database_error("load Spotify source overview", error))
+}
+
+#[tauri::command]
+pub fn list_spotify_playlists(
+    offset: u32,
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<SourceCollectionListPage, String> {
+    state
+        .database
+        .spotify_playlists_page(offset, limit)
+        .map_err(|error| command_database_error("load Spotify playlists", error))
+}
+
+#[tauri::command]
+pub fn get_source_collection_page(
+    collection_id: i64,
+    offset: u32,
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<SourceCollectionPage, String> {
+    state
+        .database
+        .source_collection_page(collection_id, offset, limit)
+        .map_err(|error| command_database_error("load Spotify collection", error))?
+        .ok_or_else(|| "Spotify collection was not found.".to_owned())
 }
 
 fn spotify_client_id(database: &Database) -> Result<Option<String>, SpotifyAuthError> {
