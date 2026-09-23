@@ -519,12 +519,24 @@ fn write_callback_response(
     let body = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Refrain</title></head><body><p>{message}</p></body></html>"
     );
-    write!(
+    match write!(
         stream,
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
-    )
-    .map_err(callback_listener_error)
+    ) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(callback_listener_error(error)),
+    }
 }
 
 fn build_authorization_url(

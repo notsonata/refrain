@@ -98,11 +98,15 @@
             </p>
           </div>
           {#if authStatus?.connected}
-            <span class="rounded-full bg-emerald-950 px-3 py-1 text-xs text-emerald-300">
+            <span
+              class="rounded-full bg-emerald-950 px-3 py-1 text-xs text-emerald-300"
+            >
               Connected
             </span>
           {:else}
-            <span class="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-300">
+            <span
+              class="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-300"
+            >
               Not connected
             </span>
           {/if}
@@ -123,8 +127,12 @@
           />
         </div>
 
-        <div class="mt-5 rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-          <p class="text-xs font-medium uppercase tracking-wider text-slate-500">
+        <div
+          class="mt-5 rounded-lg border border-slate-800 bg-slate-900/60 p-4"
+        >
+          <p
+            class="text-xs font-medium uppercase tracking-wider text-slate-500"
+          >
             Spotify redirect URI
           </p>
           <code class="mt-2 block break-all text-sm text-slate-200">
