@@ -3,22 +3,24 @@ import { describe, expect, it } from 'vitest';
 import type { SourceCollectionEntryView } from '../lib/source';
 import TrackList from './TrackList.svelte';
 
-const duplicateEntries: SourceCollectionEntryView[] = [0, 1].map((position) => ({
-  position,
-  itemType: 'track',
-  addedAt: null,
-  unavailableReason: null,
-  track: {
-    providerTrackId: 'same-track',
-    title: 'Repeated Track',
-    artists: ['Artist'],
-    album: 'Album',
-    durationMs: 180_000,
-    explicit: false,
-    imageUrl: null,
-    externalUrl: null,
-  },
-}));
+const duplicateEntries: SourceCollectionEntryView[] = [0, 1].map(
+  (position) => ({
+    position,
+    itemType: 'track',
+    addedAt: null,
+    unavailableReason: null,
+    track: {
+      providerTrackId: 'same-track',
+      title: 'Repeated Track',
+      artists: ['Artist'],
+      album: 'Album',
+      durationMs: 180_000,
+      explicit: false,
+      imageUrl: null,
+      externalUrl: null,
+    },
+  }),
+);
 
 describe('TrackList', () => {
   it('renders intentional duplicate playlist positions separately', () => {

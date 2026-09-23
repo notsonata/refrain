@@ -522,7 +522,9 @@
                       disabled={playlistsLoadingMore}
                       class="mt-2 w-full rounded-lg border border-slate-800 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-900 disabled:opacity-50"
                     >
-                      {playlistsLoadingMore ? 'Loading…' : 'Load more playlists'}
+                      {playlistsLoadingMore
+                        ? 'Loading…'
+                        : 'Load more playlists'}
                     </button>
                   {/if}
                 </div>
@@ -590,8 +592,8 @@
                   </p>
                   <h2 class="mt-1 text-xl font-semibold">Connection</h2>
                   <p class="mt-2 max-w-xl text-sm leading-6 text-slate-500">
-                    The Client ID is saved locally. Refresh credentials are stored
-                    in your operating system credential store.
+                    The Client ID is saved locally. Refresh credentials are
+                    stored in your operating system credential store.
                   </p>
                 </div>
                 {#if authStatus?.connected}
@@ -726,7 +728,9 @@
                   </div>
                 </dl>
               {:else}
-                <div class="mt-4 h-20 animate-pulse rounded-lg bg-slate-900"></div>
+                <div
+                  class="mt-4 h-20 animate-pulse rounded-lg bg-slate-900"
+                ></div>
               {/if}
             </aside>
           </div>
