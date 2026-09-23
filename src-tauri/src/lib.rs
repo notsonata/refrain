@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod domain;
 mod security;
+mod source_sync;
 mod spotify;
 
 use tauri::Manager;
@@ -23,6 +24,8 @@ pub fn run() {
             commands::get_spotify_auth_status,
             commands::connect_spotify,
             commands::disconnect_spotify,
+            commands::refresh_spotify_source,
+            commands::cancel_spotify_source_refresh,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Refrain");
