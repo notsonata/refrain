@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::app::AppState;
+use crate::{app::AppState, db::DatabaseError, domain::AppSettings};
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +15,32 @@ pub struct AppInfo {
 #[tauri::command]
 pub fn get_app_info(state: tauri::State<'_, AppState>) -> AppInfo {
     app_info_for(&state.app_data_dir)
+}
+
+#[tauri::command]
+pub fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppSettings, String> {
+    state
+        .database
+        .get_settings()
+        .map_err(|error| command_database_error("load settings", error))
+}
+
+#[tauri::command]
+pub fn update_settings(
+    settings: AppSettings,
+    state: tauri::State<'_, AppState>,
+) -> Result<AppSettings, String> {
+    settings.validate().map_err(str::to_owned)?;
+
+    state
+        .database
+        .update_settings(&settings)
+        .map_err(|error| command_database_error("update settings", error))
+}
+
+fn command_database_error(operation: &str, error: DatabaseError) -> String {
+    tracing::error!(%error, operation, "database command failed");
+    format!("failed to {operation}")
 }
 
 fn app_info_for(data_dir: &Path) -> AppInfo {

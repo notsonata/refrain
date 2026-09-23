@@ -1,28 +1,40 @@
-use std::{fs, io, path::PathBuf};
+use std::{error::Error, fs, path::PathBuf};
 
 use tracing_subscriber::EnvFilter;
+
+use crate::db::Database;
 
 #[derive(Debug)]
 pub struct AppState {
     pub app_data_dir: PathBuf,
+    pub database: Database,
 }
 
 impl AppState {
-    pub fn new(app_data_dir: PathBuf) -> Self {
-        Self { app_data_dir }
+    pub fn new(app_data_dir: PathBuf, database: Database) -> Self {
+        Self {
+            app_data_dir,
+            database,
+        }
     }
 }
 
-pub fn initialize(app_data_dir: PathBuf) -> Result<AppState, io::Error> {
+pub fn initialize(app_data_dir: PathBuf) -> Result<AppState, Box<dyn Error>> {
     fs::create_dir_all(&app_data_dir)?;
 
     let log_dir = app_data_dir.join("logs");
     fs::create_dir_all(&log_dir)?;
     initialize_logging(log_dir);
 
-    tracing::info!(app_data_dir = %app_data_dir.display(), "application foundation initialized");
+    let database = Database::open(app_data_dir.join("refrain.sqlite3"))?;
 
-    Ok(AppState::new(app_data_dir))
+    tracing::info!(
+        app_data_dir = %app_data_dir.display(),
+        database_path = %database.path().display(),
+        "application persistence initialized"
+    );
+
+    Ok(AppState::new(app_data_dir, database))
 }
 
 fn initialize_logging(log_dir: PathBuf) {
