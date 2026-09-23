@@ -7,6 +7,7 @@ export interface AppSettings {
   syncOnStartup: boolean;
   syncIntervalMinutes: number | null;
   acquisitionEnabled: boolean;
+  spotifyClientId: string | null;
 }
 
 export function getSettings(invokeFn: InvokeFn = invoke): Promise<AppSettings> {
