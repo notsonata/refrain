@@ -1,8 +1,8 @@
 use rusqlite::{OptionalExtension, params};
 
 use crate::domain::{
-    SourceAccountOverview, SourceCollectionEntryView, SourceCollectionListPage, SourceCollectionPage,
-    SourceCollectionSummary, SourceTrackView, SpotifySourceOverview,
+    SourceAccountOverview, SourceCollectionEntryView, SourceCollectionListPage,
+    SourceCollectionPage, SourceCollectionSummary, SourceTrackView, SpotifySourceOverview,
 };
 
 use super::{Database, DatabaseError};
@@ -187,9 +187,7 @@ impl Database {
                             artists,
                             album: row.get(7)?,
                             duration_ms: row.get(8)?,
-                            explicit: row
-                                .get::<_, Option<i64>>(9)?
-                                .map(|value| value != 0),
+                            explicit: row.get::<_, Option<i64>>(9)?.map(|value| value != 0),
                             image_url: row.get(10)?,
                             external_url: row.get(11)?,
                         })
@@ -388,10 +386,8 @@ mod tests {
             )
             .expect("liked songs should save");
 
-        for (id, name, accessible) in [
-            ("playlist-b", "Beta", true),
-            ("playlist-a", "Alpha", false),
-        ] {
+        for (id, name, accessible) in [("playlist-b", "Beta", true), ("playlist-a", "Alpha", false)]
+        {
             database
                 .replace_source_collection(
                     &SourceCollection {
@@ -412,7 +408,10 @@ mod tests {
         let overview = database
             .spotify_source_overview()
             .expect("overview should load");
-        assert_eq!(overview.account.unwrap().display_name.as_deref(), Some("Listener"));
+        assert_eq!(
+            overview.account.unwrap().display_name.as_deref(),
+            Some("Listener")
+        );
         assert_eq!(overview.liked_songs.unwrap().entry_count, 1);
         assert_eq!(overview.playlist_count, 2);
 
@@ -487,6 +486,9 @@ mod tests {
             vec!["Artist", "Guest"]
         );
         assert!(page.entries[2].track.is_none());
-        assert_eq!(page.entries[2].unavailable_reason.as_deref(), Some("removed"));
+        assert_eq!(
+            page.entries[2].unavailable_reason.as_deref(),
+            Some("removed")
+        );
     }
 }
