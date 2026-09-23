@@ -10,7 +10,7 @@
 
 ### Current State
 
-Milestones 1 through 4 of the v0.1.0 development line are implemented on the current tree.
+Milestones 1 through 5 of the v0.1.0 development line are implemented on the current tree.
 
 The repository currently includes:
 
@@ -26,10 +26,14 @@ The repository currently includes:
 - collection-level transactional source persistence with playlist snapshot reuse
 - inaccessible/unavailable Spotify item preservation
 - bounded Spotify retry/rate-limit handling, manual refresh progress, and cancellation
+- persisted browse projections for Spotify collections and entries
+- v0.1 desktop navigation for Liked Songs, Playlists, and Settings
+- ordered playlist detail with intentional duplicate positions preserved
+- dense virtualized track rows with lazy Spotify album artwork
 
-Milestone 5, the v0.1 Desktop Experience, is the next implementation milestone after Milestone 4 is verified and merged.
+Milestone 6, v0.1 Hardening and Release, is the next implementation milestone after Milestone 5 is fully verified.
 
-The real Spotify developer-application authentication smoke test for Milestone 3 has passed on macOS, including restart persistence, disconnect, and reconnect. Milestone 4 still requires a real Spotify source-refresh smoke test before it is considered fully verified.
+The real Spotify authentication smoke test for Milestone 3 and source-refresh smoke test for Milestone 4 have passed on macOS. Milestone 5 still requires a real desktop browsing smoke test before it is considered fully verified.
 
 Do not invent dependencies, commands, modules, or implementation details that do not exist in the repository or approved project documentation.
 
@@ -66,6 +70,7 @@ AGENTS.md                         Repository-wide agent instructions
 src/                              Svelte frontend
 src-tauri/                        Tauri/Rust desktop backend
 src-tauri/src/source_sync.rs      Spotify source synchronization
+src-tauri/src/db/source_browse.rs Persisted Spotify browse projections
 .github/workflows/ci.yml          Baseline CI
 docs/                             Project documentation
 docs/BRIEF.md                     Product brief and project boundaries
