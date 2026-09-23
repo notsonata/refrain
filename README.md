@@ -14,7 +14,7 @@ Milestones 1 through 3 of the v0.1.0 development line are implemented:
 - SQLite persistence for application settings and v0.1 source state
 - user-provided Spotify Client ID configuration
 - Spotify Authorization Code with PKCE
-- loopback OAuth callback on `127.0.0.1`
+- loopback OAuth callback at `http://127.0.0.1:43817/callback`
 - secure refresh-credential storage through the operating system credential store
 - in-memory Spotify access tokens with refresh and reconnect behavior
 
@@ -99,17 +99,17 @@ Some application behavior depends on Tauri commands and will not work in browser
 Refrain does not ship shared Spotify credentials. Each user supplies their own Spotify application Client ID.
 
 1. Create a Spotify developer application.
-2. Add this redirect URI to the application:
+2. Add this exact redirect URI to the application:
 
    ```text
-   http://127.0.0.1/callback
+   http://127.0.0.1:43817/callback
    ```
 
 3. Start Refrain with `npm run tauri dev`.
 4. Enter the Spotify Client ID in the application.
 5. Choose **Connect Spotify** and complete authorization in the system browser.
 
-Refrain uses Authorization Code with PKCE and does not require a Spotify client secret.
+Refrain uses Authorization Code with PKCE and does not require a Spotify client secret. During sign-in, Refrain listens only on `127.0.0.1:43817`; if another application is already using that port, Spotify connection cannot start until the port is free.
 
 See [`docs/reference/spotify-auth.md`](docs/reference/spotify-auth.md) for credential handling details and the manual authentication smoke test.
 
