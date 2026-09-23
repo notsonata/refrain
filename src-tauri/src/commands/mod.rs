@@ -104,10 +104,7 @@ fn spotify_client_id(database: &Database) -> Result<Option<String>, SpotifyAuthE
         .map_err(|error| spotify_database_error("load Spotify configuration", error))
 }
 
-fn persist_spotify_client_id(
-    database: &Database,
-    client_id: &str,
-) -> Result<(), SpotifyAuthError> {
+fn persist_spotify_client_id(database: &Database, client_id: &str) -> Result<(), SpotifyAuthError> {
     let mut settings = database
         .get_settings()
         .map_err(|error| spotify_database_error("load Spotify configuration", error))?;
@@ -120,10 +117,7 @@ fn persist_spotify_client_id(
 
 fn spotify_database_error(operation: &str, error: DatabaseError) -> SpotifyAuthError {
     tracing::error!(%error, operation, "Spotify persistence command failed");
-    SpotifyAuthError::new(
-        "persistenceFailed",
-        format!("Failed to {operation}."),
-    )
+    SpotifyAuthError::new("persistenceFailed", format!("Failed to {operation}."))
 }
 
 fn command_database_error(operation: &str, error: DatabaseError) -> String {
