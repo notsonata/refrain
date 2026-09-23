@@ -9,7 +9,7 @@
   export let loading = false;
   export let loadingMore = false;
   export let emptyMessage = 'No tracks in this collection.';
-  export let onLoadMore: (() => void) | undefined;
+  export let onLoadMore: (() => void) | undefined = undefined;
 
   const rowHeight = 68;
   const overscan = 8;
