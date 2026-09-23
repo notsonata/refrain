@@ -1,5 +1,8 @@
 mod migrations;
 mod settings;
+// Milestone 2 establishes source persistence ahead of the Spotify sync that
+// consumes it in Milestone 4.
+#[allow(dead_code)]
 mod source;
 
 use std::{
@@ -51,10 +54,12 @@ impl Database {
         self.with_connection(|connection| settings::update(connection, value))
     }
 
+    #[allow(dead_code)]
     pub fn upsert_source_account(&self, account: &SourceAccount) -> Result<i64, DatabaseError> {
         self.with_connection(|connection| source::upsert_account(connection, account))
     }
 
+    #[allow(dead_code)]
     pub fn mark_source_account_synced(
         &self,
         account_id: i64,
@@ -65,6 +70,7 @@ impl Database {
         })
     }
 
+    #[allow(dead_code)]
     pub fn upsert_source_collection(
         &self,
         collection: &SourceCollection,
@@ -72,10 +78,12 @@ impl Database {
         self.with_connection(|connection| source::upsert_collection(connection, collection))
     }
 
+    #[allow(dead_code)]
     pub fn upsert_source_track(&self, track: &SourceTrack) -> Result<i64, DatabaseError> {
         self.with_connection(|connection| source::upsert_track(connection, track))
     }
 
+    #[allow(dead_code)]
     pub fn replace_collection_entries(
         &self,
         collection_id: i64,
