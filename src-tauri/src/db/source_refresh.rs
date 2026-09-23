@@ -8,7 +8,6 @@ use super::{Database, DatabaseError, now_ms, source};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredSourceCollectionState {
-    pub id: i64,
     pub snapshot_id: Option<String>,
     pub is_accessible: bool,
     pub entry_count: usize,
@@ -24,7 +23,6 @@ impl Database {
             connection
                 .query_row(
                     "SELECT
-                        collection.id,
                         collection.snapshot_id,
                         collection.is_accessible,
                         COUNT(entries.id)
@@ -37,10 +35,9 @@ impl Database {
                     params![source_account_id, provider_collection_id],
                     |row| {
                         Ok(StoredSourceCollectionState {
-                            id: row.get(0)?,
-                            snapshot_id: row.get(1)?,
-                            is_accessible: row.get::<_, i64>(2)? != 0,
-                            entry_count: row.get::<_, i64>(3)? as usize,
+                            snapshot_id: row.get(0)?,
+                            is_accessible: row.get::<_, i64>(1)? != 0,
+                            entry_count: row.get::<_, i64>(2)? as usize,
                         })
                     },
                 )
@@ -62,8 +59,14 @@ impl Database {
             [collection_id],
         )?;
 
-        {
-            let mut statement = transaction.prepare(
+        for item in items {
+            let source_track_id = item
+                .track
+                .as_ref()
+                .map(|track| source::upsert_track(&transaction, track))
+                .transpose()?;
+
+            transaction.execute(
                 "INSERT INTO collection_entries (
                     collection_id,
                     position,
@@ -73,16 +76,7 @@ impl Database {
                     added_at,
                     unavailable_reason
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            )?;
-
-            for item in items {
-                let source_track_id = item
-                    .track
-                    .as_ref()
-                    .map(|track| source::upsert_track(&transaction, track))
-                    .transpose()?;
-
-                statement.execute(params![
+                params![
                     collection_id,
                     item.position,
                     source_track_id,
@@ -90,8 +84,8 @@ impl Database {
                     item.item_type,
                     item.added_at,
                     item.unavailable_reason,
-                ])?;
-            }
+                ],
+            )?;
         }
 
         transaction.commit()?;
@@ -243,14 +237,24 @@ mod tests {
 
         let mut updated = collection.clone();
         updated.snapshot_id = Some("snapshot-two".into());
-        let invalid_items = vec![SourceCollectionItem {
-            position: 0,
-            track: None,
-            provider_item_uri: None,
-            item_type: String::new(),
-            added_at: None,
-            unavailable_reason: None,
-        }];
+        let invalid_items = vec![
+            SourceCollectionItem {
+                position: 0,
+                track: Some(sample_track("track-two")),
+                provider_item_uri: Some("spotify:track:track-two".into()),
+                item_type: "track".into(),
+                added_at: None,
+                unavailable_reason: None,
+            },
+            SourceCollectionItem {
+                position: 0,
+                track: Some(sample_track("track-three")),
+                provider_item_uri: Some("spotify:track:track-three".into()),
+                item_type: "track".into(),
+                added_at: None,
+                unavailable_reason: None,
+            },
+        ];
 
         let error = database.replace_source_collection(&updated, &invalid_items);
         assert!(error.is_err());
