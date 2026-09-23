@@ -5,15 +5,17 @@ Refrain uses Spotify Authorization Code with PKCE. It does not require or store 
 ## Developer Application Setup
 
 1. Create a Spotify developer application and copy its Client ID.
-2. Add this redirect URI to the application:
+2. Add this exact redirect URI to the application:
 
    ```text
-   http://127.0.0.1/callback
+   http://127.0.0.1:43817/callback
    ```
 
 3. Enter the Client ID in Refrain and choose **Connect Spotify**.
 
-Refrain binds a temporary listener to `127.0.0.1` on an available dynamic port during authorization. The authorization request includes that port while the registered loopback redirect omits it.
+Refrain binds its temporary OAuth callback listener to `127.0.0.1:43817` during authorization. The redirect URI sent to Spotify and the URI registered in the Spotify developer application are therefore identical.
+
+If another application is already using port `43817`, Refrain cannot start the Spotify callback listener. Close the application using that port and try connecting again.
 
 ## Credential Handling
 

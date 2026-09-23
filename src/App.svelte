@@ -9,7 +9,7 @@
     type SpotifyAuthStatus,
   } from './lib/spotify';
 
-  const fallbackRedirectUri = 'http://127.0.0.1/callback';
+  const fallbackRedirectUri = 'http://127.0.0.1:43817/callback';
 
   let appInfo: AppInfo | null = null;
   let authStatus: SpotifyAuthStatus | null = null;
@@ -140,7 +140,7 @@
           </code>
           <p class="mt-2 text-xs leading-5 text-slate-400">
             Add this exact URI to your Spotify developer application. Refrain
-            listens on a dynamic port on 127.0.0.1 during sign-in.
+            listens on 127.0.0.1 port 43817 during sign-in.
           </p>
         </div>
 

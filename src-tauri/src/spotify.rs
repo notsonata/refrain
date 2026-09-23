@@ -17,8 +17,10 @@ use crate::security::{CredentialStoreError, KeyringRefreshTokenStore, RefreshTok
 
 const AUTHORIZE_URL: &str = "https://accounts.spotify.com/authorize";
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
+const CALLBACK_HOST: &str = "127.0.0.1";
+const CALLBACK_PORT: u16 = 43817;
 const CALLBACK_PATH: &str = "/callback";
-const REGISTERED_REDIRECT_URI: &str = "http://127.0.0.1/callback";
+const REGISTERED_REDIRECT_URI: &str = "http://127.0.0.1:43817/callback";
 const SPOTIFY_SCOPES: &str = "user-library-read playlist-read-private playlist-read-collaborative";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const ACCESS_TOKEN_REFRESH_SKEW: Duration = Duration::from_secs(30);
@@ -28,6 +30,7 @@ pub struct SpotifyClient {
     credentials: Arc<dyn RefreshTokenStore>,
     browser: Arc<dyn BrowserOpener>,
     access_token: Mutex<Option<CachedAccessToken>>,
+    callback_port: u16,
     callback_timeout: Duration,
 }
 
@@ -47,6 +50,7 @@ impl SpotifyClient {
             Arc::new(ReqwestTokenClient::new(http_client, TOKEN_URL)),
             Arc::new(KeyringRefreshTokenStore),
             Arc::new(SystemBrowser),
+            CALLBACK_PORT,
             CALLBACK_TIMEOUT,
         ))
     }
@@ -55,6 +59,7 @@ impl SpotifyClient {
         token_client: Arc<dyn TokenClient>,
         credentials: Arc<dyn RefreshTokenStore>,
         browser: Arc<dyn BrowserOpener>,
+        callback_port: u16,
         callback_timeout: Duration,
     ) -> Self {
         Self {
@@ -62,6 +67,7 @@ impl SpotifyClient {
             credentials,
             browser,
             access_token: Mutex::new(None),
+            callback_port,
             callback_timeout,
         }
     }
@@ -104,7 +110,7 @@ impl SpotifyClient {
 
     pub fn connect(&self, client_id: &str) -> Result<(), SpotifyAuthError> {
         let client_id = Self::normalize_client_id(client_id)?;
-        let callback = LoopbackCallback::bind(self.callback_timeout)?;
+        let callback = LoopbackCallback::bind(self.callback_port, self.callback_timeout)?;
         let verifier = random_urlsafe(32)?;
         let state = random_urlsafe(32)?;
         let challenge = pkce_challenge(&verifier);
@@ -391,19 +397,20 @@ struct LoopbackCallback {
 }
 
 impl LoopbackCallback {
-    fn bind(timeout: Duration) -> Result<Self, SpotifyAuthError> {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(callback_listener_error)?;
+    fn bind(port: u16, timeout: Duration) -> Result<Self, SpotifyAuthError> {
+        let listener = TcpListener::bind((CALLBACK_HOST, port))
+            .map_err(|error| callback_bind_error(error, port))?;
         listener
             .set_nonblocking(true)
             .map_err(callback_listener_error)?;
-        let port = listener
+        let bound_port = listener
             .local_addr()
             .map_err(callback_listener_error)?
             .port();
 
         Ok(Self {
             listener,
-            redirect_uri: format!("http://127.0.0.1:{port}{CALLBACK_PATH}"),
+            redirect_uri: format!("http://{CALLBACK_HOST}:{bound_port}{CALLBACK_PATH}"),
             timeout,
         })
     }
@@ -446,7 +453,7 @@ fn handle_callback(
         .split_whitespace()
         .nth(1)
         .ok_or_else(|| SpotifyAuthError::new("invalidCallback", "Invalid Spotify callback."))?;
-    let callback_url = Url::parse(&format!("http://127.0.0.1{target}"))
+    let callback_url = Url::parse(&format!("http://{CALLBACK_HOST}{target}"))
         .map_err(|_| SpotifyAuthError::new("invalidCallback", "Invalid Spotify callback URL."))?;
 
     if callback_url.path() != CALLBACK_PATH {
@@ -521,7 +528,12 @@ fn write_callback_response(
     );
     match write!(
         stream,
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\
+Content-Type: text/html; charset=utf-8\r\
+Content-Length: {}\r\
+Connection: close\r\
+\r\
+{body}",
         body.len()
     ) {
         Ok(()) => Ok(()),
@@ -609,6 +621,19 @@ fn credential_error(error: CredentialStoreError) -> SpotifyAuthError {
         "credentialStoreUnavailable",
         "The operating system credential store is unavailable. Spotify credentials were not saved.",
     )
+}
+
+fn callback_bind_error(error: std::io::Error, port: u16) -> SpotifyAuthError {
+    if port == CALLBACK_PORT {
+        return SpotifyAuthError::new(
+            "callbackListenerFailed",
+            format!(
+                "Refrain could not listen on {REGISTERED_REDIRECT_URI}. Close any application using port {CALLBACK_PORT} and try again: {error}"
+            ),
+        );
+    }
+
+    callback_listener_error(error)
 }
 
 fn callback_listener_error(error: std::io::Error) -> SpotifyAuthError {
@@ -817,7 +842,11 @@ mod tests {
         .expect("callback should connect");
         write!(
             stream,
-            "GET {}?{} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+            "GET {}?{} HTTP/1.1\r\
+Host: 127.0.0.1\r\
+Connection: close\r\
+\r\
+",
             redirect_uri.path(),
             query
         )
@@ -829,11 +858,26 @@ mod tests {
         credentials: Arc<MockCredentialStore>,
         browser: Arc<MockBrowser>,
     ) -> SpotifyClient {
-        SpotifyClient::with_dependencies(tokens, credentials, browser, Duration::from_secs(1))
+        SpotifyClient::with_dependencies(tokens, credentials, browser, 0, Duration::from_secs(1))
     }
 
     #[test]
-    fn pkce_authorization_uses_matching_verifier_and_dynamic_loopback_port() {
+    fn status_reports_fixed_refrain_redirect_uri() {
+        let client = test_client(
+            Arc::new(MockTokenClient::success()),
+            Arc::new(MockCredentialStore::default()),
+            Arc::new(MockBrowser::new([])),
+        );
+
+        let status = client.status(None).expect("status should work");
+
+        assert_eq!(status.registered_redirect_uri, REGISTERED_REDIRECT_URI);
+        assert_eq!(REGISTERED_REDIRECT_URI, "http://127.0.0.1:43817/callback");
+        assert_eq!(CALLBACK_PORT, 43817);
+    }
+
+    #[test]
+    fn pkce_authorization_uses_matching_verifier_and_loopback_callback() {
         let tokens = Arc::new(MockTokenClient::success());
         let credentials = Arc::new(MockCredentialStore::default());
         let browser = Arc::new(MockBrowser::new([CallbackMode::Success]));

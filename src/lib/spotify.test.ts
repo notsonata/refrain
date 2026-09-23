@@ -12,7 +12,7 @@ const status: SpotifyAuthStatus = {
   clientId: 'client-id',
   connected: true,
   accessTokenCached: true,
-  registeredRedirectUri: 'http://127.0.0.1/callback',
+  registeredRedirectUri: 'http://127.0.0.1:43817/callback',
 };
 
 describe('Spotify auth commands', () => {
