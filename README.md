@@ -147,11 +147,11 @@ The GitHub Actions workflow currently runs:
 
 The repository documentation is the source of truth for planned behavior and architecture:
 
-- [`docs/BRIEF.md`](docs/BRIEF.md) — project purpose, goals, and release boundaries
-- [`docs/SPEC.md`](docs/SPEC.md) — product behavior and acceptance criteria
-- [`docs/TDD.md`](docs/TDD.md) — technical architecture and design decisions
-- [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) — implementation milestones and ordering
-- [`docs/STATUS.md`](docs/STATUS.md) — current project state and next work
+- [`docs/BRIEF.md`](docs/BRIEF.md): project purpose, goals, and release boundaries
+- [`docs/SPEC.md`](docs/SPEC.md): product behavior and acceptance criteria
+- [`docs/TDD.md`](docs/TDD.md): technical architecture and design decisions
+- [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md): implementation milestones and ordering
+- [`docs/STATUS.md`](docs/STATUS.md): current project state and next work
 
 ## Development Roadmap
 
