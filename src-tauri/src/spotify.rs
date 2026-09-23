@@ -13,16 +13,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::security::{
-    CredentialStoreError, KeyringRefreshTokenStore, RefreshTokenStore,
-};
+use crate::security::{CredentialStoreError, KeyringRefreshTokenStore, RefreshTokenStore};
 
 const AUTHORIZE_URL: &str = "https://accounts.spotify.com/authorize";
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 const CALLBACK_PATH: &str = "/callback";
 const REGISTERED_REDIRECT_URI: &str = "http://127.0.0.1/callback";
-const SPOTIFY_SCOPES: &str =
-    "user-library-read playlist-read-private playlist-read-collaborative";
+const SPOTIFY_SCOPES: &str = "user-library-read playlist-read-private playlist-read-collaborative";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const ACCESS_TOKEN_REFRESH_SKEW: Duration = Duration::from_secs(30);
 
@@ -84,10 +81,7 @@ impl SpotifyClient {
         Ok(client_id.to_owned())
     }
 
-    pub fn status(
-        &self,
-        client_id: Option<String>,
-    ) -> Result<SpotifyAuthStatus, SpotifyAuthError> {
+    pub fn status(&self, client_id: Option<String>) -> Result<SpotifyAuthStatus, SpotifyAuthError> {
         let connected = self
             .credentials
             .get_refresh_token()
@@ -114,23 +108,14 @@ impl SpotifyClient {
         let verifier = random_urlsafe(32)?;
         let state = random_urlsafe(32)?;
         let challenge = pkce_challenge(&verifier);
-        let authorization_url = build_authorization_url(
-            &client_id,
-            callback.redirect_uri(),
-            &state,
-            &challenge,
-        )?;
+        let authorization_url =
+            build_authorization_url(&client_id, callback.redirect_uri(), &state, &challenge)?;
 
         self.browser.open(&authorization_url)?;
         let code = callback.receive(&state)?;
         let token = self
             .token_client
-            .exchange_code(
-                &client_id,
-                &code,
-                callback.redirect_uri(),
-                &verifier,
-            )
+            .exchange_code(&client_id, &code, callback.redirect_uri(), &verifier)
             .map_err(|error| map_token_error(error, false))?;
         let refresh_token = token.refresh_token.as_deref().ok_or_else(|| {
             SpotifyAuthError::new(
@@ -148,10 +133,7 @@ impl SpotifyClient {
     }
 
     pub fn disconnect(&self) -> Result<(), SpotifyAuthError> {
-        self.access_token
-            .lock()
-            .map_err(|_| lock_error())?
-            .take();
+        self.access_token.lock().map_err(|_| lock_error())?.take();
         self.credentials
             .clear_refresh_token()
             .map_err(credential_error)
@@ -209,8 +191,7 @@ impl SpotifyClient {
 
     fn cache_access_token(&self, token: &TokenResponse) -> Result<(), SpotifyAuthError> {
         let refresh_after = Instant::now()
-            + Duration::from_secs(token.expires_in)
-                .saturating_sub(ACCESS_TOKEN_REFRESH_SKEW);
+            + Duration::from_secs(token.expires_in).saturating_sub(ACCESS_TOKEN_REFRESH_SKEW);
         self.access_token
             .lock()
             .map_err(|_| lock_error())?
@@ -465,12 +446,15 @@ fn handle_callback(
         .split_whitespace()
         .nth(1)
         .ok_or_else(|| SpotifyAuthError::new("invalidCallback", "Invalid Spotify callback."))?;
-    let callback_url = Url::parse(&format!("http://127.0.0.1{target}")).map_err(|_| {
-        SpotifyAuthError::new("invalidCallback", "Invalid Spotify callback URL.")
-    })?;
+    let callback_url = Url::parse(&format!("http://127.0.0.1{target}"))
+        .map_err(|_| SpotifyAuthError::new("invalidCallback", "Invalid Spotify callback URL."))?;
 
     if callback_url.path() != CALLBACK_PATH {
-        write_callback_response(stream, "404 Not Found", "Refrain did not request this path.")?;
+        write_callback_response(
+            stream,
+            "404 Not Found",
+            "Refrain did not request this path.",
+        )?;
         return Err(SpotifyAuthError::new(
             "invalidCallback",
             "Spotify returned to an unexpected callback path.",
@@ -481,7 +465,11 @@ fn handle_callback(
         .query_pairs()
         .find_map(|(key, value)| (key == "state").then(|| value.into_owned()));
     if state.as_deref() != Some(expected_state) {
-        write_callback_response(stream, "400 Bad Request", "Authorization state did not match.")?;
+        write_callback_response(
+            stream,
+            "400 Bad Request",
+            "Authorization state did not match.",
+        )?;
         return Err(SpotifyAuthError::new(
             "stateMismatch",
             "Spotify authorization state did not match. Try connecting again.",
@@ -585,9 +573,7 @@ fn map_token_error(error: TokenRequestError, refreshing: bool) -> SpotifyAuthErr
                 description.unwrap_or_else(|| "Spotify rejected this Client ID.".into()),
             )
         }
-        TokenRequestError::OAuth { code, description }
-            if refreshing && code == "invalid_grant" =>
-        {
+        TokenRequestError::OAuth { code, description } if refreshing && code == "invalid_grant" => {
             SpotifyAuthError::new(
                 "reauthorizationRequired",
                 description.unwrap_or_else(|| {
@@ -831,12 +817,7 @@ mod tests {
         credentials: Arc<MockCredentialStore>,
         browser: Arc<MockBrowser>,
     ) -> SpotifyClient {
-        SpotifyClient::with_dependencies(
-            tokens,
-            credentials,
-            browser,
-            Duration::from_secs(1),
-        )
+        SpotifyClient::with_dependencies(tokens, credentials, browser, Duration::from_secs(1))
     }
 
     #[test]
@@ -895,7 +876,9 @@ mod tests {
         let browser = Arc::new(MockBrowser::new([CallbackMode::StateMismatch]));
         let client = test_client(tokens.clone(), credentials, browser);
 
-        let error = client.connect("client-id").expect_err("connect should fail");
+        let error = client
+            .connect("client-id")
+            .expect_err("connect should fail");
 
         assert_eq!(error.code, "stateMismatch");
         assert!(
@@ -915,7 +898,9 @@ mod tests {
             Arc::new(MockBrowser::new([CallbackMode::Cancelled])),
         );
 
-        let error = client.connect("client-id").expect_err("connect should fail");
+        let error = client
+            .connect("client-id")
+            .expect_err("connect should fail");
 
         assert_eq!(error.code, "authorizationCancelled");
     }
@@ -936,7 +921,9 @@ mod tests {
             Arc::new(MockBrowser::new([CallbackMode::Success])),
         );
 
-        let error = client.connect("client-id").expect_err("connect should fail");
+        let error = client
+            .connect("client-id")
+            .expect_err("connect should fail");
 
         assert_eq!(error.code, "invalidClientId");
     }
@@ -951,7 +938,9 @@ mod tests {
             Arc::new(MockBrowser::new([CallbackMode::Success])),
         );
 
-        let error = client.connect("client-id").expect_err("connect should fail");
+        let error = client
+            .connect("client-id")
+            .expect_err("connect should fail");
 
         assert_eq!(error.code, "credentialStoreUnavailable");
         assert!(
@@ -974,7 +963,9 @@ mod tests {
         );
 
         assert_eq!(
-            client.access_token("client-id").expect("refresh should work"),
+            client
+                .access_token("client-id")
+                .expect("refresh should work"),
             "access-two"
         );
         assert_eq!(
@@ -1002,11 +993,7 @@ mod tests {
             description: None,
         });
         let credentials = Arc::new(MockCredentialStore::with_token("expired"));
-        let client = test_client(
-            tokens,
-            credentials.clone(),
-            Arc::new(MockBrowser::new([])),
-        );
+        let client = test_client(tokens, credentials.clone(), Arc::new(MockBrowser::new([])));
 
         let error = client
             .access_token("client-id")
@@ -1033,7 +1020,9 @@ mod tests {
             ])),
         );
 
-        client.connect("client-id").expect("first connect should work");
+        client
+            .connect("client-id")
+            .expect("first connect should work");
         assert!(
             client
                 .status(Some("client-id".into()))
@@ -1042,8 +1031,8 @@ mod tests {
         );
 
         client.disconnect().expect("disconnect should work");
-        assert!(!
-            client
+        assert!(
+            !client
                 .status(Some("client-id".into()))
                 .expect("status should work")
                 .connected
