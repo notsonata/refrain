@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { InvokeFn } from './app-info';
 import {
+  cancelSpotifySourceRefresh,
   connectSpotify,
   disconnectSpotify,
   getSpotifyAuthStatus,
+  refreshSpotifySource,
   spotifyErrorMessage,
   type SpotifyAuthStatus,
+  type SpotifySourceRefreshSummary,
 } from './spotify';
 
 const status: SpotifyAuthStatus = {
@@ -15,7 +18,18 @@ const status: SpotifyAuthStatus = {
   registeredRedirectUri: 'http://127.0.0.1:43817/callback',
 };
 
-describe('Spotify auth commands', () => {
+const summary: SpotifySourceRefreshSummary = {
+  accountDisplayName: 'Listener',
+  likedSongs: 20,
+  playlists: 3,
+  refreshedPlaylists: 2,
+  unchangedPlaylists: 1,
+  inaccessiblePlaylists: 0,
+  removedPlaylists: 0,
+  syncedAt: 1_790_000_000_000,
+};
+
+describe('Spotify commands', () => {
   it('loads authentication status', async () => {
     const invoke = vi.fn(async <T>(command: string) => {
       expect(command).toBe('get_spotify_auth_status');
@@ -47,7 +61,25 @@ describe('Spotify auth commands', () => {
     await expect(disconnectSpotify(invoke)).resolves.toEqual(disconnected);
   });
 
-  it('uses structured authentication error messages', () => {
+  it('refreshes Spotify source state', async () => {
+    const invoke = vi.fn(async <T>(command: string) => {
+      expect(command).toBe('refresh_spotify_source');
+      return summary as T;
+    }) as InvokeFn;
+
+    await expect(refreshSpotifySource(invoke)).resolves.toEqual(summary);
+  });
+
+  it('cancels an active source refresh', async () => {
+    const invoke = vi.fn(async <T>(command: string) => {
+      expect(command).toBe('cancel_spotify_source_refresh');
+      return true as T;
+    }) as InvokeFn;
+
+    await expect(cancelSpotifySourceRefresh(invoke)).resolves.toBe(true);
+  });
+
+  it('uses structured Spotify error messages', () => {
     expect(
       spotifyErrorMessage({
         code: 'authorizationCancelled',

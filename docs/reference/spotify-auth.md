@@ -25,13 +25,16 @@ If another application is already using port `43817`, Refrain cannot start the S
 - PKCE verifiers and OAuth state values are generated for each authorization attempt and are not persisted
 - authentication secrets and authorization headers must not be written to logs
 
-The initial scopes are:
+The requested scopes are:
 
 ```text
 user-library-read
 playlist-read-private
 playlist-read-collaborative
+user-read-private
 ```
+
+`user-read-private` is required for the current-user profile request used to identify the source account during synchronization. Credentials authorized before Milestone 4 did not include this scope, so those development installations must disconnect and connect once after updating before the first source refresh.
 
 If Spotify rejects a stored refresh credential as expired or revoked, Refrain clears it and requires the user to connect again.
 

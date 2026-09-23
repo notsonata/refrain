@@ -21,7 +21,8 @@ const CALLBACK_HOST: &str = "127.0.0.1";
 const CALLBACK_PORT: u16 = 43817;
 const CALLBACK_PATH: &str = "/callback";
 const REGISTERED_REDIRECT_URI: &str = "http://127.0.0.1:43817/callback";
-const SPOTIFY_SCOPES: &str = "user-library-read playlist-read-private playlist-read-collaborative";
+const SPOTIFY_SCOPES: &str =
+    "user-library-read playlist-read-private playlist-read-collaborative user-read-private";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const ACCESS_TOKEN_REFRESH_SKEW: Duration = Duration::from_secs(30);
 
@@ -145,7 +146,6 @@ impl SpotifyClient {
             .map_err(credential_error)
     }
 
-    #[allow(dead_code)]
     pub fn access_token(&self, client_id: &str) -> Result<String, SpotifyAuthError> {
         let client_id = Self::normalize_client_id(client_id)?;
 
@@ -916,6 +916,11 @@ Connection: close\r\
             params.get("code_challenge").map(String::as_str),
             Some(expected_challenge.as_str())
         );
+        assert!(params.get("scope").is_some_and(|scope| {
+            scope
+                .split_whitespace()
+                .any(|value| value == "user-read-private")
+        }));
         assert_eq!(
             credentials
                 .get_refresh_token()

@@ -8,7 +8,7 @@ It is being built to import Spotify playlists and Liked Songs, reconcile them ag
 
 Refrain is under active development and does not have a released version yet.
 
-Milestones 1 through 3 of the v0.1.0 development line are implemented:
+Milestones 1 through 4 of the v0.1.0 development line are implemented on the current tree:
 
 - Tauri 2 + Svelte 5 + TypeScript desktop application foundation
 - SQLite persistence for application settings and v0.1 source state
@@ -17,8 +17,12 @@ Milestones 1 through 3 of the v0.1.0 development line are implemented:
 - loopback OAuth callback at `http://127.0.0.1:43817/callback`
 - secure refresh-credential storage through the operating system credential store
 - in-memory Spotify access tokens with refresh and reconnect behavior
+- Spotify profile, Liked Songs, playlist, and playlist-item synchronization
+- transactional source persistence and playlist snapshot reuse
+- inaccessible/unavailable Spotify item preservation
+- bounded retry/rate-limit handling, refresh progress, and cancellation
 
-Spotify source synchronization is the next milestone. Liked Songs and playlist fetching are not implemented on `main` yet.
+The next milestone adds the v0.1 desktop views for browsing the synchronized Liked Songs and playlist state.
 
 For current project state, see [`docs/STATUS.md`](docs/STATUS.md).
 
@@ -108,8 +112,11 @@ Refrain does not ship shared Spotify credentials. Each user supplies their own S
 3. Start Refrain with `npm run tauri dev`.
 4. Enter the Spotify Client ID in the application.
 5. Choose **Connect Spotify** and complete authorization in the system browser.
+6. Choose **Refresh Spotify** to fetch and persist Liked Songs and playlist source state.
 
 Refrain uses Authorization Code with PKCE and does not require a Spotify client secret. During sign-in, Refrain listens only on `127.0.0.1:43817`; if another application is already using that port, Spotify connection cannot start until the port is free.
+
+The current Milestone 4 screen reports refresh progress and a compact completion summary. Full Liked Songs and playlist browsing arrives in Milestone 5.
 
 See [`docs/reference/spotify-auth.md`](docs/reference/spotify-auth.md) for credential handling details and the manual authentication smoke test.
 
@@ -155,6 +162,6 @@ The repository documentation is the source of truth for planned behavior and arc
 
 ## Development Roadmap
 
-The immediate next milestone is **Milestone 4: Spotify Source Synchronization**, which adds profile retrieval, Liked Songs, playlist and playlist-item pagination, transactional source refresh, retry/rate-limit handling, refresh progress, and cancellation where practical.
+The immediate next milestone after source-sync verification is **Milestone 5: v0.1 Desktop Experience**, which adds Liked Songs and playlist browsing, playlist detail and ordering, inaccessible/error states, restart-state hydration, and large-list rendering behavior.
 
 See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the full path through v0.1.0 and v1.0.0.

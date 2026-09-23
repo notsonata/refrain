@@ -50,3 +50,13 @@ pub struct CollectionEntry {
     pub added_at: Option<i64>,
     pub unavailable_reason: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceCollectionItem {
+    pub position: i64,
+    pub track: Option<SourceTrack>,
+    pub provider_item_uri: Option<String>,
+    pub item_type: String,
+    pub added_at: Option<i64>,
+    pub unavailable_reason: Option<String>,
+}

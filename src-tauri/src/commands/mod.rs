@@ -1,11 +1,16 @@
 use std::{path::Path, sync::Arc};
 
 use serde::Serialize;
+use tauri::Emitter;
 
 use crate::{
     app::AppState,
     db::{Database, DatabaseError},
     domain::AppSettings,
+    source_sync::{
+        SOURCE_REFRESH_PROGRESS_EVENT, SourceRefreshError, SourceRefreshSummary,
+        refresh_spotify_source as run_spotify_source_refresh,
+    },
     spotify::{SpotifyAuthError, SpotifyAuthStatus, SpotifyClient},
 };
 
@@ -97,6 +102,50 @@ pub async fn disconnect_spotify(
     spotify.status(client_id)
 }
 
+#[tauri::command]
+pub async fn refresh_spotify_source(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SourceRefreshSummary, SourceRefreshError> {
+    let client_id = state
+        .database
+        .get_settings()
+        .map_err(|error| source_refresh_database_error("load Spotify configuration", error))?
+        .spotify_client_id
+        .ok_or_else(|| {
+            SourceRefreshError::new(
+                "spotifyNotConfigured",
+                "Enter and connect a Spotify Client ID before refreshing source data.",
+            )
+        })?;
+    let guard = state.source_refresh.begin()?;
+    let database = Arc::clone(&state.database);
+    let spotify = Arc::clone(&state.spotify);
+    let control = Arc::clone(&state.source_refresh);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        run_spotify_source_refresh(&database, spotify, &client_id, &control, |progress| {
+            if let Err(error) = app.emit(SOURCE_REFRESH_PROGRESS_EVENT, progress) {
+                tracing::warn!(%error, "Spotify source refresh progress event failed");
+            }
+        })
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "Spotify source refresh worker failed");
+        SourceRefreshError::new(
+            "refreshWorkerFailed",
+            "Spotify source refresh stopped unexpectedly.",
+        )
+    })?
+}
+
+#[tauri::command]
+pub fn cancel_spotify_source_refresh(state: tauri::State<'_, AppState>) -> bool {
+    state.source_refresh.cancel()
+}
+
 fn spotify_client_id(database: &Database) -> Result<Option<String>, SpotifyAuthError> {
     database
         .get_settings()
@@ -118,6 +167,11 @@ fn persist_spotify_client_id(database: &Database, client_id: &str) -> Result<(),
 fn spotify_database_error(operation: &str, error: DatabaseError) -> SpotifyAuthError {
     tracing::error!(%error, operation, "Spotify persistence command failed");
     SpotifyAuthError::new("persistenceFailed", format!("Failed to {operation}."))
+}
+
+fn source_refresh_database_error(operation: &str, error: DatabaseError) -> SourceRefreshError {
+    tracing::error!(%error, operation, "Spotify source refresh persistence command failed");
+    SourceRefreshError::new("persistenceFailed", format!("Failed to {operation}."))
 }
 
 fn command_database_error(operation: &str, error: DatabaseError) -> String {

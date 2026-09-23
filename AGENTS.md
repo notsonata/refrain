@@ -10,7 +10,7 @@
 
 ### Current State
 
-Milestones 1 through 3 of the v0.1.0 development line are merged.
+Milestones 1 through 4 of the v0.1.0 development line are implemented on the current tree.
 
 The repository currently includes:
 
@@ -19,13 +19,17 @@ The repository currently includes:
 - SQLite persistence for v0.1 source state and application settings
 - Spotify Client ID configuration
 - Authorization Code with PKCE
-- loopback OAuth callback handling on `127.0.0.1`
+- the fixed loopback OAuth callback at `http://127.0.0.1:43817/callback`
 - OS credential-store persistence for Spotify refresh credentials
 - in-memory Spotify access tokens with refresh and reconnect behavior
+- Spotify profile, Liked Songs, playlist, and playlist-item synchronization
+- collection-level transactional source persistence with playlist snapshot reuse
+- inaccessible/unavailable Spotify item preservation
+- bounded Spotify retry/rate-limit handling, manual refresh progress, and cancellation
 
-Milestone 4, Spotify Source Synchronization, is the next implementation milestone.
+Milestone 5, the v0.1 Desktop Experience, is the next implementation milestone after Milestone 4 is verified and merged.
 
-A real Spotify developer-application authentication smoke test remains a manual verification follow-up for Milestone 3.
+The real Spotify developer-application authentication smoke test for Milestone 3 has passed on macOS, including restart persistence, disconnect, and reconnect. Milestone 4 still requires a real Spotify source-refresh smoke test before it is considered fully verified.
 
 Do not invent dependencies, commands, modules, or implementation details that do not exist in the repository or approved project documentation.
 
@@ -61,6 +65,7 @@ Keep this short. Detailed navigation belongs in `docs/reference/codebase-map.md`
 AGENTS.md                         Repository-wide agent instructions
 src/                              Svelte frontend
 src-tauri/                        Tauri/Rust desktop backend
+src-tauri/src/source_sync.rs      Spotify source synchronization
 .github/workflows/ci.yml          Baseline CI
 docs/                             Project documentation
 docs/BRIEF.md                     Product brief and project boundaries
