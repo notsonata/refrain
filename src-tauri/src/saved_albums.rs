@@ -1,4 +1,11 @@
-use std::{sync::Arc, thread, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
 
 use reqwest::header::RETRY_AFTER;
 use serde::Deserialize;
@@ -15,11 +22,22 @@ const PAGE_LIMIT: usize = 50;
 const MAX_REQUEST_ATTEMPTS: usize = 3;
 const MAX_RATE_LIMIT_WAIT_SECONDS: u64 = 60;
 
+static SAVED_ALBUM_REFRESH_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+pub fn prepare_spotify_saved_album_refresh() {
+    SAVED_ALBUM_REFRESH_CANCELLED.store(false, Ordering::Release);
+}
+
+pub fn cancel_spotify_saved_album_refresh() {
+    SAVED_ALBUM_REFRESH_CANCELLED.store(true, Ordering::Release);
+}
+
 pub fn refresh_spotify_saved_albums(
     database: &Database,
     spotify: Arc<SpotifyClient>,
     client_id: &str,
 ) -> Result<usize, SourceRefreshError> {
+    check_cancelled()?;
     let source_account_id = database
         .latest_spotify_source_account_id()
         .map_err(|error| database_error("load Spotify account", error))?
@@ -32,6 +50,7 @@ pub fn refresh_spotify_saved_albums(
     let access_token = spotify.access_token(client_id).map_err(source_auth_error)?;
     let transport = ReqwestSavedAlbumTransport::new()?;
     let albums = load_saved_albums(&transport, &access_token, SPOTIFY_API_BASE, source_account_id)?;
+    check_cancelled()?;
     let count = albums.len();
     database
         .replace_spotify_saved_albums(source_account_id, &albums)
@@ -52,12 +71,14 @@ fn load_saved_albums<T: SavedAlbumTransport>(
     let mut albums = Vec::new();
 
     while let Some(url) = next {
+        check_cancelled()?;
         let page = request_json::<SpotifyPage<SpotifySavedAlbumDto>, _>(
             transport,
             &url,
             access_token,
         )?;
         for saved in page.items {
+            check_cancelled()?;
             let album = saved.album.ok_or_else(|| {
                 SourceRefreshError::new(
                     "spotifyInvalidResponse",
@@ -100,6 +121,7 @@ fn map_saved_album<T: SavedAlbumTransport>(
     let mut items = Vec::new();
 
     for track in album.tracks.items {
+        check_cancelled()?;
         let position = items.len() as i64;
         items.push(map_album_track(
             track,
@@ -113,12 +135,14 @@ fn map_saved_album<T: SavedAlbumTransport>(
 
     let mut next = album.tracks.next;
     while let Some(url) = next {
+        check_cancelled()?;
         let page = request_json::<SpotifyPage<SpotifySimplifiedTrackDto>, _>(
             transport,
             &url,
             access_token,
         )?;
         for track in page.items {
+            check_cancelled()?;
             let position = items.len() as i64;
             items.push(map_album_track(
                 track,
@@ -156,20 +180,23 @@ fn map_album_track(
     album_image_url: Option<&str>,
 ) -> SourceCollectionItem {
     let provider_item_uri = track.uri.clone();
-    let mapped_track = map_simplified_track(
-        &track,
-        album_name,
-        release_year,
-        album_image_url,
-    );
+    let mapped_track = map_simplified_track(&track, album_name, release_year, album_image_url);
+    let unavailable_reason = mapped_track.is_none().then(|| {
+        if track.is_local.unwrap_or(false) {
+            "local_track"
+        } else {
+            "unavailable_track"
+        }
+        .into()
+    });
+
     SourceCollectionItem {
         position,
         track: mapped_track,
         provider_item_uri,
         item_type: "track".into(),
         added_at,
-        unavailable_reason: (track.id.is_none() || track.name.is_none())
-            .then_some("unavailable_track".into()),
+        unavailable_reason,
     }
 }
 
@@ -291,12 +318,13 @@ fn request_json<D: for<'de> Deserialize<'de>, T: SavedAlbumTransport>(
     access_token: &str,
 ) -> Result<D, SourceRefreshError> {
     for attempt in 0..MAX_REQUEST_ATTEMPTS {
+        check_cancelled()?;
         let response = match transport.get(url, access_token) {
             Ok(response) => response,
             Err(error)
                 if error.code == "spotifyNetworkFailed" && attempt + 1 < MAX_REQUEST_ATTEMPTS =>
             {
-                thread::sleep(Duration::from_millis(250 * (attempt as u64 + 1)));
+                sleep_interruptibly(Duration::from_millis(250 * (attempt as u64 + 1)))?;
                 continue;
             }
             Err(error) => return Err(error),
@@ -333,7 +361,7 @@ fn request_json<D: for<'de> Deserialize<'de>, T: SavedAlbumTransport>(
                         ),
                     ));
                 }
-                thread::sleep(Duration::from_secs(retry_after));
+                sleep_interruptibly(Duration::from_secs(retry_after))?;
             }
             429 => {
                 return Err(SourceRefreshError::new(
@@ -342,7 +370,7 @@ fn request_json<D: for<'de> Deserialize<'de>, T: SavedAlbumTransport>(
                 ));
             }
             500..=599 if attempt + 1 < MAX_REQUEST_ATTEMPTS => {
-                thread::sleep(Duration::from_millis(250 * (attempt as u64 + 1)));
+                sleep_interruptibly(Duration::from_millis(250 * (attempt as u64 + 1)))?;
             }
             status => {
                 return Err(SourceRefreshError::new(
@@ -357,6 +385,28 @@ fn request_json<D: for<'de> Deserialize<'de>, T: SavedAlbumTransport>(
         "spotifyRequestFailed",
         "Spotify saved-album request failed after retrying.",
     ))
+}
+
+fn check_cancelled() -> Result<(), SourceRefreshError> {
+    if SAVED_ALBUM_REFRESH_CANCELLED.load(Ordering::Acquire) {
+        return Err(SourceRefreshError::new(
+            "refreshCancelled",
+            "Spotify source refresh was cancelled.",
+        ));
+    }
+    Ok(())
+}
+
+fn sleep_interruptibly(duration: Duration) -> Result<(), SourceRefreshError> {
+    let mut remaining = duration;
+    let slice = Duration::from_millis(100);
+    while !remaining.is_zero() {
+        check_cancelled()?;
+        let current = remaining.min(slice);
+        thread::sleep(current);
+        remaining = remaining.saturating_sub(current);
+    }
+    check_cancelled()
 }
 
 fn source_auth_error(error: SpotifyAuthError) -> SourceRefreshError {
@@ -525,6 +575,7 @@ mod tests {
 
     #[test]
     fn saved_album_pagination_preserves_album_track_order() {
+        prepare_spotify_saved_album_refresh();
         let transport = MockTransport::with_responses([
             response(
                 r#"{"items":[{"added_at":"2026-09-01T00:00:00Z","album":{"id":"album-one","name":"Album One","release_date":"2024-02-03","images":[{"url":"https://i.scdn.co/image/cover"}],"tracks":{"items":[{"id":"track-one","uri":"spotify:track:track-one","name":"One","artists":[{"name":"Artist"}],"duration_ms":180000,"disc_number":1,"track_number":1,"explicit":false}],"next":"https://api.test/albums/album-one/tracks?page=2"}}}],"next":null}"#,
@@ -557,5 +608,18 @@ mod tests {
                 .and_then(|track| track.image_url.as_deref()),
             Some("https://i.scdn.co/image/cover")
         );
+    }
+
+    #[test]
+    fn cancellation_stops_saved_album_refresh() {
+        prepare_spotify_saved_album_refresh();
+        cancel_spotify_saved_album_refresh();
+        let transport = MockTransport::with_responses([]);
+
+        let error = load_saved_albums(&transport, "token", "https://api.test", 7)
+            .expect_err("cancelled refresh should stop");
+
+        assert_eq!(error.code, "refreshCancelled");
+        prepare_spotify_saved_album_refresh();
     }
 }
