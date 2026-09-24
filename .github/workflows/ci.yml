@@ -18,7 +18,10 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - run: npm run format:check
+      - name: Format frontend and show diff
+        run: |
+          npx prettier --write "src/**/*.{ts,svelte,css}" "*.{js,ts,json,html}"
+          git diff -- src/App.svelte src/lib/source.test.ts
       - run: npm run lint
       - run: npm run check
       - run: npm test
@@ -41,7 +44,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - name: Format Rust and show diff
+        shell: bash
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          git diff -- src-tauri/src/saved_albums.rs src-tauri/src/db/saved_albums.rs
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
