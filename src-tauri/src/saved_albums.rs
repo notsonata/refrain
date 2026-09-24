@@ -49,7 +49,12 @@ pub fn refresh_spotify_saved_albums(
         })?;
     let access_token = spotify.access_token(client_id).map_err(source_auth_error)?;
     let transport = ReqwestSavedAlbumTransport::new()?;
-    let albums = load_saved_albums(&transport, &access_token, SPOTIFY_API_BASE, source_account_id)?;
+    let albums = load_saved_albums(
+        &transport,
+        &access_token,
+        SPOTIFY_API_BASE,
+        source_account_id,
+    )?;
     check_cancelled()?;
     let count = albums.len();
     database
@@ -72,11 +77,8 @@ fn load_saved_albums<T: SavedAlbumTransport>(
 
     while let Some(url) = next {
         check_cancelled()?;
-        let page = request_json::<SpotifyPage<SpotifySavedAlbumDto>, _>(
-            transport,
-            &url,
-            access_token,
-        )?;
+        let page =
+            request_json::<SpotifyPage<SpotifySavedAlbumDto>, _>(transport, &url, access_token)?;
         for saved in page.items {
             check_cancelled()?;
             let album = saved.album.ok_or_else(|| {
@@ -250,7 +252,11 @@ fn map_simplified_track(
 }
 
 trait SavedAlbumTransport {
-    fn get(&self, url: &str, bearer_token: &str) -> Result<SavedAlbumHttpResponse, SourceRefreshError>;
+    fn get(
+        &self,
+        url: &str,
+        bearer_token: &str,
+    ) -> Result<SavedAlbumHttpResponse, SourceRefreshError>;
 }
 
 struct ReqwestSavedAlbumTransport {
@@ -273,7 +279,11 @@ impl ReqwestSavedAlbumTransport {
 }
 
 impl SavedAlbumTransport for ReqwestSavedAlbumTransport {
-    fn get(&self, url: &str, bearer_token: &str) -> Result<SavedAlbumHttpResponse, SourceRefreshError> {
+    fn get(
+        &self,
+        url: &str,
+        bearer_token: &str,
+    ) -> Result<SavedAlbumHttpResponse, SourceRefreshError> {
         let response = self
             .client
             .get(url)
@@ -589,7 +599,10 @@ mod tests {
             .expect("saved albums should load");
 
         assert_eq!(albums.len(), 1);
-        assert_eq!(albums[0].0.provider_collection_id, "spotify:album:album-one");
+        assert_eq!(
+            albums[0].0.provider_collection_id,
+            "spotify:album:album-one"
+        );
         assert_eq!(albums[0].0.kind, "saved_album");
         assert_eq!(albums[0].1.len(), 2);
         assert_eq!(albums[0].1[0].position, 0);

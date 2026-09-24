@@ -424,7 +424,8 @@
           class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${activeView === 'albums' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
         >
           <span>Saved Albums</span>
-          <span class="font-mono text-xs text-slate-600">{savedAlbumTotal}</span>
+          <span class="font-mono text-xs text-slate-600">{savedAlbumTotal}</span
+          >
         </button>
         <button
           type="button"
@@ -568,9 +569,7 @@
                       disabled={savedAlbumsLoadingMore}
                       class="mt-2 w-full rounded-lg border border-slate-800 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-900 disabled:opacity-50"
                     >
-                      {savedAlbumsLoadingMore
-                        ? 'Loading…'
-                        : 'Load more albums'}
+                      {savedAlbumsLoadingMore ? 'Loading…' : 'Load more albums'}
                     </button>
                   {/if}
                 </div>
@@ -828,7 +827,8 @@
                     Spotify source refreshed
                   </p>
                   <p class="mt-2 text-xs leading-5 text-slate-500">
-                    {sourceSummary.likedSongs} Liked Songs · {savedAlbumTotal} saved albums ·
+                    {sourceSummary.likedSongs} Liked Songs · {savedAlbumTotal} saved
+                    albums ·
                     {sourceSummary.playlists} playlists ·
                     {sourceSummary.refreshedPlaylists} refreshed ·
                     {sourceSummary.unchangedPlaylists} unchanged
@@ -866,7 +866,8 @@
                     </dt>
                     <dd class="mt-1 text-slate-400">
                       {sourceOverview?.likedSongs?.entryCount ?? 0} liked ·
-                      {savedAlbumTotal} albums · {sourceOverview?.playlistCount ?? 0}
+                      {savedAlbumTotal} albums · {sourceOverview?.playlistCount ??
+                        0}
                       playlists
                     </dd>
                   </div>

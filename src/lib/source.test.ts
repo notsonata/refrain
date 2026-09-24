@@ -133,13 +133,17 @@ describe('Spotify source browsing commands', () => {
   });
 
   it('lists saved albums through the dedicated browse command', async () => {
-    const invoke = vi.fn(async <T>(command: string, args?: Record<string, unknown>) => {
-      expect(command).toBe('list_spotify_saved_albums');
-      expect(args).toEqual({ offset: 100, limit: 50 });
-      return savedAlbums as T;
-    }) as InvokeFn;
+    const invoke = vi.fn(
+      async <T>(command: string, args?: Record<string, unknown>) => {
+        expect(command).toBe('list_spotify_saved_albums');
+        expect(args).toEqual({ offset: 100, limit: 50 });
+        return savedAlbums as T;
+      },
+    ) as InvokeFn;
 
-    await expect(listSpotifySavedAlbums(100, 50, invoke)).resolves.toEqual(savedAlbums);
+    await expect(listSpotifySavedAlbums(100, 50, invoke)).resolves.toEqual(
+      savedAlbums,
+    );
   });
 
   it('loads ordered collection pages without collapsing duplicate positions', async () => {
