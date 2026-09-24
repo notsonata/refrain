@@ -7,9 +7,13 @@ use crate::{
     app::AppState,
     db::{Database, DatabaseError},
     domain::{AppSettings, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview},
+    saved_albums::{
+        cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
+        refresh_spotify_saved_albums,
+    },
     source_sync::{
-        SOURCE_REFRESH_PROGRESS_EVENT, SourceRefreshError, SourceRefreshSummary,
-        refresh_spotify_source as run_spotify_source_refresh,
+        SOURCE_REFRESH_PROGRESS_EVENT, SourceRefreshError, SourceRefreshProgress,
+        SourceRefreshSummary, refresh_spotify_source as run_spotify_source_refresh,
     },
     spotify::{SpotifyAuthError, SpotifyAuthStatus, SpotifyClient},
 };
@@ -119,17 +123,50 @@ pub async fn refresh_spotify_source(
             )
         })?;
     let guard = state.source_refresh.begin()?;
+    prepare_spotify_saved_album_refresh();
     let database = Arc::clone(&state.database);
     let spotify = Arc::clone(&state.spotify);
     let control = Arc::clone(&state.source_refresh);
 
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
-        run_spotify_source_refresh(&database, spotify, &client_id, &control, |progress| {
-            if let Err(error) = app.emit(SOURCE_REFRESH_PROGRESS_EVENT, progress) {
-                tracing::warn!(%error, "Spotify source refresh progress event failed");
-            }
-        })
+        let summary = run_spotify_source_refresh(
+            &database,
+            Arc::clone(&spotify),
+            &client_id,
+            &control,
+            |progress| {
+                if let Err(error) = app.emit(SOURCE_REFRESH_PROGRESS_EVENT, progress) {
+                    tracing::warn!(%error, "Spotify source refresh progress event failed");
+                }
+            },
+        )?;
+
+        if let Err(error) = app.emit(
+            SOURCE_REFRESH_PROGRESS_EVENT,
+            SourceRefreshProgress {
+                phase: "savedAlbums".into(),
+                completed: 0,
+                total: None,
+                message: "Refreshing Saved Albums".into(),
+            },
+        ) {
+            tracing::warn!(%error, "Spotify saved album progress event failed");
+        }
+        let saved_albums = refresh_spotify_saved_albums(&database, spotify, &client_id)?;
+        if let Err(error) = app.emit(
+            SOURCE_REFRESH_PROGRESS_EVENT,
+            SourceRefreshProgress {
+                phase: "complete".into(),
+                completed: saved_albums,
+                total: Some(saved_albums),
+                message: format!("Spotify source refresh complete · {saved_albums} saved albums"),
+            },
+        ) {
+            tracing::warn!(%error, "Spotify saved album completion event failed");
+        }
+
+        Ok(summary)
     })
     .await
     .map_err(|error| {
@@ -143,7 +180,9 @@ pub async fn refresh_spotify_source(
 
 #[tauri::command]
 pub fn cancel_spotify_source_refresh(state: tauri::State<'_, AppState>) -> bool {
-    state.source_refresh.cancel()
+    let cancelled = state.source_refresh.cancel();
+    cancel_spotify_saved_album_refresh();
+    cancelled
 }
 
 #[tauri::command]
@@ -166,6 +205,18 @@ pub fn list_spotify_playlists(
         .database
         .spotify_playlists_page(offset, limit)
         .map_err(|error| command_database_error("load Spotify playlists", error))
+}
+
+#[tauri::command]
+pub fn list_spotify_saved_albums(
+    offset: u32,
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<SourceCollectionListPage, String> {
+    state
+        .database
+        .spotify_saved_albums_page(offset, limit)
+        .map_err(|error| command_database_error("load Spotify saved albums", error))
 }
 
 #[tauri::command]

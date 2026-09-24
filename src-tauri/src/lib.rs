@@ -2,6 +2,7 @@ mod app;
 mod commands;
 mod db;
 mod domain;
+mod saved_albums;
 mod security;
 mod source_sync;
 mod spotify;
@@ -28,6 +29,7 @@ pub fn run() {
             commands::cancel_spotify_source_refresh,
             commands::get_spotify_source_overview,
             commands::list_spotify_playlists,
+            commands::list_spotify_saved_albums,
             commands::get_source_collection_page,
         ])
         .run(tauri::generate_context!())

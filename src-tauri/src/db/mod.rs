@@ -1,4 +1,5 @@
 mod migrations;
+mod saved_albums;
 mod settings;
 mod source;
 mod source_browse;

@@ -7,6 +7,7 @@
     getSourceCollectionPage,
     hydrateSpotifySource,
     listSpotifyPlaylists,
+    listSpotifySavedAlbums,
     type SourceCollectionEntryView,
     type SourceCollectionSummary,
     type SpotifySourceOverview,
@@ -23,12 +24,12 @@
     type SpotifySourceRefreshSummary,
   } from './lib/spotify';
 
-  type AppView = 'liked' | 'playlists' | 'settings';
+  type AppView = 'liked' | 'albums' | 'playlists' | 'settings';
 
   const fallbackRedirectUri = 'http://127.0.0.1:43817/callback';
   const sourceProgressEvent = 'spotify-source-refresh-progress';
   const collectionPageSize = 200;
-  const playlistPageSize = 100;
+  const collectionListPageSize = 100;
 
   let activeView: AppView = 'liked';
   let appInfo: AppInfo | null = null;
@@ -44,6 +45,10 @@
   let sourceOverview: SpotifySourceOverview | null = null;
   let sourceHydrating = true;
   let sourceHydrationError: string | null = null;
+  let savedAlbums: SourceCollectionSummary[] = [];
+  let savedAlbumTotal = 0;
+  let savedAlbumsLoadingMore = false;
+  let selectedSavedAlbum: SourceCollectionSummary | null = null;
   let playlists: SourceCollectionSummary[] = [];
   let playlistTotal = 0;
   let playlistsLoadingMore = false;
@@ -99,8 +104,19 @@
     try {
       const hydrated = await hydrateSpotifySource();
       sourceOverview = hydrated.overview;
+      savedAlbums = hydrated.savedAlbums.items;
+      savedAlbumTotal = hydrated.savedAlbums.total;
       playlists = hydrated.playlists.items;
       playlistTotal = hydrated.playlists.total;
+
+      if (selectedSavedAlbum) {
+        selectedSavedAlbum =
+          savedAlbums.find((album) => album.id === selectedSavedAlbum?.id) ??
+          null;
+      }
+      if (!selectedSavedAlbum && savedAlbums.length > 0) {
+        selectedSavedAlbum = savedAlbums[0];
+      }
 
       if (selectedPlaylist) {
         selectedPlaylist =
@@ -113,6 +129,8 @@
 
       if (activeView === 'liked' && sourceOverview.likedSongs) {
         await loadCollection(sourceOverview.likedSongs);
+      } else if (activeView === 'albums' && selectedSavedAlbum) {
+        await loadCollection(selectedSavedAlbum);
       } else if (activeView === 'playlists' && selectedPlaylist) {
         await loadCollection(selectedPlaylist);
       }
@@ -184,9 +202,16 @@
 
     if (view === 'liked' && sourceOverview?.likedSongs) {
       await loadCollection(sourceOverview.likedSongs);
+    } else if (view === 'albums' && selectedSavedAlbum) {
+      await loadCollection(selectedSavedAlbum);
     } else if (view === 'playlists' && selectedPlaylist) {
       await loadCollection(selectedPlaylist);
     }
+  }
+
+  async function selectSavedAlbum(album: SourceCollectionSummary) {
+    selectedSavedAlbum = album;
+    await loadCollection(album);
   }
 
   async function selectPlaylist(playlist: SourceCollectionSummary) {
@@ -247,6 +272,26 @@
     await loadCollection(currentCollection, true);
   }
 
+  async function loadMoreSavedAlbums() {
+    if (savedAlbumsLoadingMore || savedAlbums.length >= savedAlbumTotal) {
+      return;
+    }
+    savedAlbumsLoadingMore = true;
+    sourceHydrationError = null;
+    try {
+      const page = await listSpotifySavedAlbums(
+        savedAlbums.length,
+        collectionListPageSize,
+      );
+      savedAlbums = [...savedAlbums, ...page.items];
+      savedAlbumTotal = page.total;
+    } catch (error) {
+      sourceHydrationError = spotifyErrorMessage(error);
+    } finally {
+      savedAlbumsLoadingMore = false;
+    }
+  }
+
   async function loadMorePlaylists() {
     if (playlistsLoadingMore || playlists.length >= playlistTotal) {
       return;
@@ -256,7 +301,7 @@
     try {
       const page = await listSpotifyPlaylists(
         playlists.length,
-        playlistPageSize,
+        collectionListPageSize,
       );
       playlists = [...playlists, ...page.items];
       playlistTotal = page.total;
@@ -375,6 +420,15 @@
         </button>
         <button
           type="button"
+          onclick={() => openView('albums')}
+          class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${activeView === 'albums' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
+        >
+          <span>Saved Albums</span>
+          <span class="font-mono text-xs text-slate-600">{savedAlbumTotal}</span
+          >
+        </button>
+        <button
+          type="button"
           onclick={() => openView('playlists')}
           class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${activeView === 'playlists' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
         >
@@ -402,8 +456,8 @@
             {/if}
             {#if sourceSummary}
               <p class="mt-2 leading-5">
-                Last refresh: {sourceSummary.likedSongs} liked ·
-                {sourceSummary.playlists} playlists
+                Last refresh: {sourceSummary.likedSongs} liked · {savedAlbumTotal}
+                albums · {sourceSummary.playlists} playlists
               </p>
             {/if}
           </div>
@@ -472,6 +526,94 @@
                 onLoadMore={loadMoreCollection}
               />
             {/if}
+          </div>
+        {:else if activeView === 'albums'}
+          <div class="grid min-w-0 gap-5 xl:grid-cols-[18rem_minmax(0,1fr)]">
+            <aside
+              class="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40"
+            >
+              <div class="border-b border-slate-800 px-4 py-3">
+                <h2 class="font-medium">Saved Albums</h2>
+                <p class="mt-0.5 text-xs text-slate-600">
+                  {savedAlbumTotal} imported
+                </p>
+              </div>
+
+              {#if savedAlbums.length === 0}
+                <p class="px-4 py-8 text-sm text-slate-500">
+                  No saved albums imported yet.
+                </p>
+              {:else}
+                <div class="max-h-[38rem] overflow-y-auto p-2">
+                  {#each savedAlbums as album (album.id)}
+                    <button
+                      type="button"
+                      onclick={() => selectSavedAlbum(album)}
+                      class={`mb-1 flex w-full items-start justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition ${selectedSavedAlbum?.id === album.id ? 'bg-slate-900' : 'hover:bg-slate-900/60'}`}
+                    >
+                      <span class="min-w-0">
+                        <span class="block truncate text-sm text-slate-200">
+                          {album.name}
+                        </span>
+                        <span class="mt-0.5 block text-xs text-slate-600">
+                          {album.entryCount} tracks
+                        </span>
+                      </span>
+                    </button>
+                  {/each}
+
+                  {#if savedAlbums.length < savedAlbumTotal}
+                    <button
+                      type="button"
+                      onclick={loadMoreSavedAlbums}
+                      disabled={savedAlbumsLoadingMore}
+                      class="mt-2 w-full rounded-lg border border-slate-800 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-900 disabled:opacity-50"
+                    >
+                      {savedAlbumsLoadingMore ? 'Loading…' : 'Load more albums'}
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            </aside>
+
+            <div class="min-w-0">
+              {#if !selectedSavedAlbum}
+                <div
+                  class="rounded-xl border border-dashed border-slate-800 px-6 py-14 text-center text-sm text-slate-500"
+                >
+                  Select a saved album to inspect its imported tracks.
+                </div>
+              {:else}
+                <div class="mb-5">
+                  <p class="text-xs uppercase tracking-wider text-slate-600">
+                    Saved Album
+                  </p>
+                  <h2 class="mt-1 truncate text-2xl font-semibold">
+                    {selectedSavedAlbum.name}
+                  </h2>
+                  <p class="mt-1 text-sm text-slate-500">
+                    {selectedSavedAlbum.entryCount} imported tracks
+                  </p>
+                </div>
+
+                {#if collectionError}
+                  <div
+                    class="rounded-xl border border-amber-900 bg-amber-950/30 p-5 text-sm text-amber-200"
+                  >
+                    {collectionError}
+                  </div>
+                {:else}
+                  <TrackList
+                    entries={collectionEntries}
+                    total={collectionTotal}
+                    loading={collectionLoading}
+                    loadingMore={collectionLoadingMore}
+                    emptyMessage="This saved album has no imported tracks."
+                    onLoadMore={loadMoreCollection}
+                  />
+                {/if}
+              {/if}
+            </div>
           </div>
         {:else if activeView === 'playlists'}
           <div class="grid min-w-0 gap-5 xl:grid-cols-[18rem_minmax(0,1fr)]">
@@ -685,7 +827,8 @@
                     Spotify source refreshed
                   </p>
                   <p class="mt-2 text-xs leading-5 text-slate-500">
-                    {sourceSummary.likedSongs} Liked Songs ·
+                    {sourceSummary.likedSongs} Liked Songs · {savedAlbumTotal} saved
+                    albums ·
                     {sourceSummary.playlists} playlists ·
                     {sourceSummary.refreshedPlaylists} refreshed ·
                     {sourceSummary.unchangedPlaylists} unchanged
@@ -723,7 +866,9 @@
                     </dt>
                     <dd class="mt-1 text-slate-400">
                       {sourceOverview?.likedSongs?.entryCount ?? 0} liked ·
-                      {sourceOverview?.playlistCount ?? 0} playlists
+                      {savedAlbumTotal} albums · {sourceOverview?.playlistCount ??
+                        0}
+                      playlists
                     </dd>
                   </div>
                 </dl>
