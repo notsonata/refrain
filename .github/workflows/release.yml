@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify tag matches application version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from 'node:fs';
+
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const tauriConfig = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const cargoToml = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+          const cargoVersion = cargoToml.match(/^version = "([^"]+)"/m)?.[1];
+          const expectedTag = `v${packageJson.version}`;
+
+          if (process.env.RELEASE_TAG !== expectedTag) {
+            throw new Error(`Release tag ${process.env.RELEASE_TAG} does not match package version ${packageJson.version}. Expected ${expectedTag}.`);
+          }
+
+          if (tauriConfig.version !== packageJson.version) {
+            throw new Error(`Tauri version ${tauriConfig.version} does not match package version ${packageJson.version}.`);
+          }
+
+          if (cargoVersion !== packageJson.version) {
+            throw new Error(`Cargo version ${cargoVersion ?? 'missing'} does not match package version ${packageJson.version}.`);
+          }
+          EOF
+
+  publish:
+    name: Package (${{ matrix.label }})
+    needs: validate-tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            platform: ubuntu-22.04
+            rustTargets: ''
+            args: '--bundles deb,appimage'
+          - label: macOS Apple Silicon
+            platform: macos-latest
+            rustTargets: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin --bundles app,dmg'
+          - label: macOS Intel
+            platform: macos-latest
+            rustTargets: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin --bundles app,dmg'
+          - label: Windows x86_64
+            platform: windows-latest
+            rustTargets: ''
+            args: '--bundles nsis,msi'
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTargets }}
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Refrain ${{ github.ref_name }}'
+          generateReleaseNotes: true
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

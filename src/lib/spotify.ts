@@ -31,6 +31,9 @@ interface SpotifyError {
   message?: unknown;
 }
 
+const UNKNOWN_SPOTIFY_ERROR =
+  'Spotify operation failed. Try again. If the problem persists, reconnect Spotify.';
+
 export function getSpotifyAuthStatus(
   invokeFn: InvokeFn = invoke,
 ): Promise<SpotifyAuthStatus> {
@@ -65,10 +68,21 @@ export function cancelSpotifySourceRefresh(
 export function spotifyErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error !== null) {
     const spotifyError = error as SpotifyError;
-    if (typeof spotifyError.message === 'string') {
+    if (
+      typeof spotifyError.message === 'string' &&
+      spotifyError.message.trim().length > 0
+    ) {
       return spotifyError.message;
     }
   }
 
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error;
+  }
+
+  return UNKNOWN_SPOTIFY_ERROR;
 }
