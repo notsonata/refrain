@@ -258,7 +258,11 @@ mod tests {
         }
     }
 
-    fn album(account_id: i64, id: &str, name: &str) -> (SourceCollection, Vec<SourceCollectionItem>) {
+    fn album(
+        account_id: i64,
+        id: &str,
+        name: &str,
+    ) -> (SourceCollection, Vec<SourceCollectionItem>) {
         (
             SourceCollection {
                 source_account_id: account_id,
@@ -297,7 +301,10 @@ mod tests {
         database
             .replace_spotify_saved_albums(
                 account_id,
-                &[album(account_id, "one", "One"), album(account_id, "two", "Two")],
+                &[
+                    album(account_id, "one", "One"),
+                    album(account_id, "two", "Two"),
+                ],
             )
             .expect("albums should save");
         let removed = database
