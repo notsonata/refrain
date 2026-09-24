@@ -7,7 +7,10 @@ use crate::{
     app::AppState,
     db::{Database, DatabaseError},
     domain::{AppSettings, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview},
-    saved_albums::refresh_spotify_saved_albums,
+    saved_albums::{
+        cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
+        refresh_spotify_saved_albums,
+    },
     source_sync::{
         SOURCE_REFRESH_PROGRESS_EVENT, SourceRefreshError, SourceRefreshProgress,
         SourceRefreshSummary, refresh_spotify_source as run_spotify_source_refresh,
@@ -120,6 +123,7 @@ pub async fn refresh_spotify_source(
             )
         })?;
     let guard = state.source_refresh.begin()?;
+    prepare_spotify_saved_album_refresh();
     let database = Arc::clone(&state.database);
     let spotify = Arc::clone(&state.spotify);
     let control = Arc::clone(&state.source_refresh);
@@ -176,7 +180,9 @@ pub async fn refresh_spotify_source(
 
 #[tauri::command]
 pub fn cancel_spotify_source_refresh(state: tauri::State<'_, AppState>) -> bool {
-    state.source_refresh.cancel()
+    let cancelled = state.source_refresh.cancel();
+    cancel_spotify_saved_album_refresh();
+    cancelled
 }
 
 #[tauri::command]
