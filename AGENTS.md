@@ -4,13 +4,13 @@
 
 **Name:** Refrain
 
-**Purpose:** Refrain is a desktop application that mirrors Spotify playlists and Liked Songs to a normalized local music library.
+**Purpose:** Refrain is a desktop application that mirrors Spotify playlists, Liked Songs, and saved albums to a normalized local music library.
 
 ## Project-Specific Instructions
 
 ### Current State
 
-Milestones 1 through 5 of the v0.1.0 development line are implemented on the current tree.
+Milestones 1 through 5 of the v0.1.0 development line are implemented and verified on the current development line. A saved-albums scope extension is being completed before Milestone 6.
 
 The repository currently includes:
 
@@ -22,18 +22,19 @@ The repository currently includes:
 - the fixed loopback OAuth callback at `http://127.0.0.1:43817/callback`
 - OS credential-store persistence for Spotify refresh credentials
 - in-memory Spotify access tokens with refresh and reconnect behavior
-- Spotify profile, Liked Songs, playlist, and playlist-item synchronization
+- Spotify profile, Liked Songs, saved-album, playlist, and playlist-item synchronization
 - collection-level transactional source persistence with playlist snapshot reuse
+- saved albums represented as ordered `saved_album` source collections that reuse shared Spotify track identities
 - inaccessible/unavailable Spotify item preservation
 - bounded Spotify retry/rate-limit handling, manual refresh progress, and cancellation
 - persisted browse projections for Spotify collections and entries
-- v0.1 desktop navigation for Liked Songs, Playlists, and Settings
-- ordered playlist detail with intentional duplicate positions preserved
+- v0.1 desktop navigation for Liked Songs, Saved Albums, Playlists, and Settings
+- ordered saved-album and playlist detail, with intentional playlist duplicate positions preserved
 - dense virtualized track rows with lazy Spotify album artwork
 
-Milestone 6, v0.1 Hardening and Release, is the next implementation milestone after Milestone 5 is fully verified.
+Milestone 6, v0.1 Hardening and Release, is the next implementation milestone after the Saved Albums scope extension is verified and merged.
 
-The real Spotify authentication smoke test for Milestone 3 and source-refresh smoke test for Milestone 4 have passed on macOS. Milestone 5 still requires a real desktop browsing smoke test before it is considered fully verified.
+The real Spotify authentication smoke test for Milestone 3, source-refresh smoke test for Milestone 4, and desktop browsing smoke test for Milestone 5 have passed on macOS. The Saved Albums extension still requires a real Spotify refresh/browse smoke test before it is considered fully verified.
 
 Do not invent dependencies, commands, modules, or implementation details that do not exist in the repository or approved project documentation.
 
@@ -70,6 +71,7 @@ AGENTS.md                         Repository-wide agent instructions
 src/                              Svelte frontend
 src-tauri/                        Tauri/Rust desktop backend
 src-tauri/src/source_sync.rs      Spotify source synchronization
+src-tauri/src/saved_albums.rs     Spotify saved-album synchronization
 src-tauri/src/db/source_browse.rs Persisted Spotify browse projections
 .github/workflows/ci.yml          Baseline CI
 docs/                             Project documentation
@@ -86,8 +88,8 @@ Update this section only when important repository locations actually exist.
 ### Project Conventions
 
 - Treat Spotify as the source of desired library state.
-- Keep playlist membership separate from audio-file identity.
-- A track referenced by multiple playlists should normally resolve to one logical library track and one canonical local copy.
+- Keep collection membership separate from audio-file identity.
+- A track referenced by multiple Spotify collections should normally resolve to one logical library track and one canonical local copy.
 - Keep logical library tracks separate from physical local files.
 - Matching must be conservative, explainable, and prefer unresolved results over incorrect automatic matches.
 - Persist user-confirmed match and rejection decisions so the same ambiguity is not repeatedly surfaced.
@@ -123,7 +125,8 @@ docs/
 ├── STATUS.md
 │
 ├── decisions/
-│   └── 001-*.md
+│   ├── 001-*.md
+│   └── 002-*.md
 │
 └── reference/
     ├── spotify-auth.md
