@@ -4,6 +4,7 @@ import {
   formatTrackDuration,
   getSourceCollectionPage,
   hydrateSpotifySource,
+  listSpotifySavedAlbums,
   type SourceCollectionListPage,
   type SourceCollectionPage,
   type SpotifySourceOverview,
@@ -36,6 +37,23 @@ const playlists: SourceCollectionListPage = {
       isAccessible: true,
       accessIssue: null,
       entryCount: 2,
+    },
+  ],
+  total: 1,
+  offset: 0,
+  limit: 100,
+};
+
+const savedAlbums: SourceCollectionListPage = {
+  items: [
+    {
+      id: 3,
+      providerCollectionId: 'spotify:album:album',
+      kind: 'saved_album',
+      name: 'Saved Album',
+      isAccessible: true,
+      accessIssue: null,
+      entryCount: 10,
     },
   ],
   total: 1,
@@ -93,17 +111,35 @@ describe('Spotify source browsing commands', () => {
       if (command === 'list_spotify_playlists') {
         return playlists as T;
       }
+      if (command === 'list_spotify_saved_albums') {
+        return savedAlbums as T;
+      }
       throw new Error(`unexpected command: ${command}`);
     }) as InvokeFn;
 
     await expect(hydrateSpotifySource(invoke)).resolves.toEqual({
       overview,
       playlists,
+      savedAlbums,
     });
     expect(invoke).toHaveBeenCalledWith('list_spotify_playlists', {
       offset: 0,
       limit: 100,
     });
+    expect(invoke).toHaveBeenCalledWith('list_spotify_saved_albums', {
+      offset: 0,
+      limit: 100,
+    });
+  });
+
+  it('lists saved albums through the dedicated browse command', async () => {
+    const invoke = vi.fn(async <T>(command: string, args?: Record<string, unknown>) => {
+      expect(command).toBe('list_spotify_saved_albums');
+      expect(args).toEqual({ offset: 100, limit: 50 });
+      return savedAlbums as T;
+    }) as InvokeFn;
+
+    await expect(listSpotifySavedAlbums(100, 50, invoke)).resolves.toEqual(savedAlbums);
   });
 
   it('loads ordered collection pages without collapsing duplicate positions', async () => {
