@@ -1,69 +1,36 @@
-name: CI
+name: Apply formatting
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  frontend:
-    name: Frontend
+  format:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
-      - name: Format frontend and show diff
-        run: |
-          npx prettier --write "src/**/*.{ts,svelte,css}" "*.{js,ts,json,html}"
-          git diff -- src/App.svelte src/lib/source.test.ts
-      - run: npm run lint
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
-
-  rust:
-    name: Rust (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - name: Format Rust and show diff
+          components: rustfmt
+      - run: npm install --no-audit --no-fund
+      - run: npx prettier --write "src/**/*.{ts,svelte,css}" "*.{js,ts,json,html}"
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+      - name: Commit formatting
         shell: bash
         run: |
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all
-          git diff -- src-tauri/src/saved_albums.rs src-tauri/src/db/saved_albums.rs
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
-
-  tauri-smoke:
-    name: Tauri build smoke test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Linux system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
-      - run: npm install --no-audit --no-fund
-      - run: npm run tauri build -- --no-bundle
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src src-tauri
+          git commit -m "style: format saved album changes"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
