@@ -87,4 +87,13 @@ describe('Spotify commands', () => {
       }),
     ).toBe('Spotify authorization was cancelled.');
   });
+
+  it('uses a safe fallback for malformed backend errors', () => {
+    expect(spotifyErrorMessage({ code: 'unexpected' })).toBe(
+      'Spotify operation failed. Try again. If the problem persists, reconnect Spotify.',
+    );
+    expect(spotifyErrorMessage(null)).toBe(
+      'Spotify operation failed. Try again. If the problem persists, reconnect Spotify.',
+    );
+  });
 });

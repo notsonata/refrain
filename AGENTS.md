@@ -10,7 +10,9 @@
 
 ### Current State
 
-Milestones 1 through 5 of the v0.1.0 development line are implemented and verified on the current development line. A saved-albums scope extension is being completed before Milestone 6.
+Milestones 1 through 5 of the v0.1.0 development line are implemented and verified. The Saved Albums scope extension, its virtualized track-list regression fix, and the native desktop resize correction are merged and manually verified on macOS.
+
+Milestone 6, v0.1 Hardening and Release, is active. The current release-hardening work adds native bundle metadata, cross-platform Tauri build smoke checks, tag-triggered GitHub Release packaging, stable setup/testing/release references, and the initial release changelog.
 
 The repository currently includes:
 
@@ -31,10 +33,11 @@ The repository currently includes:
 - v0.1 desktop navigation for Liked Songs, Saved Albums, Playlists, and Settings
 - ordered saved-album and playlist detail, with intentional playlist duplicate positions preserved
 - dense virtualized track rows with lazy Spotify album artwork
+- viewport-bound native window sizing with panel-local scrolling
+- Windows, macOS, and Linux Tauri build smoke checks
+- Tauri desktop bundle configuration and version-tag release automation
 
-Milestone 6, v0.1 Hardening and Release, is the next implementation milestone after the Saved Albums scope extension is verified and merged.
-
-The real Spotify authentication smoke test for Milestone 3, source-refresh smoke test for Milestone 4, and desktop browsing smoke test for Milestone 5 have passed on macOS. The Saved Albums extension still requires a real Spotify refresh/browse smoke test before it is considered fully verified.
+The real Spotify authentication, source-refresh, desktop browsing, Saved Albums refresh/browse, and native resize smoke tests have passed on macOS for the v0.1 development line.
 
 Do not invent dependencies, commands, modules, or implementation details that do not exist in the repository or approved project documentation.
 
@@ -73,13 +76,20 @@ src-tauri/                        Tauri/Rust desktop backend
 src-tauri/src/source_sync.rs      Spotify source synchronization
 src-tauri/src/saved_albums.rs     Spotify saved-album synchronization
 src-tauri/src/db/source_browse.rs Persisted Spotify browse projections
-.github/workflows/ci.yml          Baseline CI
+src-tauri/tauri.conf.json         Desktop bundle/application configuration
+.github/workflows/ci.yml          Baseline and cross-platform build CI
+.github/workflows/release.yml     Tag-triggered GitHub Release packaging
+CHANGELOG.md                      Released v0.1+ change history
 docs/                             Project documentation
 docs/BRIEF.md                     Product brief and project boundaries
 docs/SPEC.md                      Product behavior and acceptance criteria
 docs/TDD.md                       Technical design
 docs/IMPLEMENTATION.md            Implementation sequence
 docs/STATUS.md                    Current project context
+docs/reference/codebase-map.md    Source navigation map
+docs/reference/setup.md           Local development setup
+docs/reference/testing.md         Validation strategy and smoke tests
+docs/reference/release.md         Release workflow and packaging
 docs/reference/spotify-auth.md    Spotify authentication setup and smoke test
 ```
 
@@ -133,6 +143,7 @@ docs/
     ├── codebase-map.md
     ├── setup.md
     ├── testing.md
+    ├── release.md
     ├── api.md
     └── ui.md
 ```

@@ -10,17 +10,30 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{
-      "label": "main",
-      "title": "Refrain",
-      "width": 1100,
-      "height": 720,
-      "minWidth": 840,
-      "minHeight": 560
-    }],
+    "windows": [
+      {
+        "label": "main",
+        "title": "Refrain",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 840,
+        "minHeight": 560
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; img-src 'self' data: https://i.scdn.co; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
-  "bundle": { "active": false }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "notsonata",
+    "homepage": "https://github.com/notsonata/refrain",
+    "shortDescription": "Mirror Spotify source state into a desktop music-library workspace.",
+    "longDescription": "Refrain imports and browses Spotify Liked Songs, saved albums, and playlists as the desired state for a normalized local music library.",
+    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
 }

@@ -1,7 +1,7 @@
 [package]
 name = "refrain"
 version = "0.1.0"
-description = "Mirror Spotify playlists and Liked Songs to a local music library"
+description = "Mirror Spotify playlists, Liked Songs, and saved albums to a local music library"
 authors = ["notsonata"]
 edition = "2024"
 rust-version = "1.95"
