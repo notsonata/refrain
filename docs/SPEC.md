@@ -2,7 +2,7 @@
 
 ## Overview
 
-Refrain is a desktop application for Windows, macOS, and Linux that mirrors a user's Spotify playlists and Liked Songs to a normalized local music library.
+Refrain is a desktop application for Windows, macOS, and Linux that mirrors a user's Spotify playlists, Liked Songs, and saved albums to a normalized local music library.
 
 Spotify represents the desired library state. Refrain imports that state, compares it with the local collection, resolves Spotify tracks to logical local tracks, acquires missing audio through replaceable acquisition providers, and keeps playlists and mirror destinations aligned with the resulting local library.
 
@@ -14,12 +14,13 @@ The primary user is someone who uses Spotify to organize music but also wants a 
 
 The user needs to be able to:
 
-- see their Spotify playlists and Liked Songs in a desktop application
+- see their Spotify playlists, Liked Songs, and saved albums in a desktop application
 - understand which Spotify tracks already exist locally
 - acquire tracks that are missing
 - avoid downloading the same recording multiple times
 - keep local files consistently organized
 - preserve playlist membership and order locally
+- preserve saved-album membership and album track order locally
 - review ambiguous matches instead of accepting incorrect substitutions
 - export playlists for use outside Refrain
 - copy or mirror the library to another mounted filesystem location
@@ -38,10 +39,11 @@ It includes:
 - user-provided Spotify application credentials
 - Spotify authentication
 - retrieval of Liked Songs
+- retrieval of saved albums and their tracks
 - retrieval of user playlists
 - retrieval of playlist tracks and ordering
 - local persistence of imported Spotify state
-- browsing imported playlists and tracks
+- browsing imported Liked Songs, saved albums, playlists, and tracks
 - manual refresh of Spotify state
 
 v0.1.0 does not include local-library scanning, matching, downloading, normalization, playlist export, or library mirroring.
@@ -84,9 +86,12 @@ A Spotify collection whose membership Refrain tracks.
 For v1 this includes:
 
 - Liked Songs
+- saved Spotify albums
 - Spotify playlists
 
 Liked Songs should behave like a collection even though Spotify does not expose it as a normal playlist.
+
+Each saved album is represented as its own source collection. Its entries preserve the album's track order. Tracks shared with Liked Songs or playlists still refer to the same Spotify source-track identity rather than creating album-specific audio identities.
 
 ### Playlist Entry
 
@@ -95,6 +100,8 @@ A position in a source collection.
 Playlist entries preserve ordering and may legitimately contain the same track more than once.
 
 Repeated playlist entries do not imply repeated audio storage.
+
+Saved-album collections use the same ordered collection-entry storage model for album tracks, but do not imply playlist semantics or duplicate audio storage.
 
 ### Source Track
 
@@ -141,7 +148,7 @@ A mounted filesystem location that receives a synchronized copy of the normalize
 1. The user provides their Spotify application configuration.
 2. Refrain authenticates the user with Spotify.
 3. Refrain stores the resulting authorization state securely.
-4. Refrain fetches Liked Songs, playlists, and playlist entries.
+4. Refrain fetches Liked Songs, saved albums and their tracks, playlists, and playlist entries.
 5. The imported state becomes visible in the desktop UI.
 6. Subsequent refreshes update the persisted Spotify state.
 
@@ -152,6 +159,7 @@ A user should not need to paste a new short-lived access token for every session
 The user can browse:
 
 - Liked Songs
+- saved albums and album tracks
 - playlists
 - track order within a collection
 - basic track metadata
@@ -204,7 +212,7 @@ Refrain provides a setting controlling whether audio that is no longer reference
 
 If the user chooses to keep downloads:
 
-- playlist membership is updated
+- source collection membership is updated
 - the audio remains in the local library
 
 If the user chooses not to keep downloads:
@@ -390,7 +398,7 @@ Internal implementation may use additional states, but user-visible state should
 ## Business Rules
 
 1. Spotify is the desired state for managed collections.
-2. Playlist entries represent membership and order, not file ownership.
+2. Collection entries represent membership and order, not file ownership.
 3. One recording should normally occupy storage once, regardless of how many managed collections reference it.
 4. Intentional duplicate entries inside a playlist must be preserved.
 5. Different Spotify IDs may resolve to one library track only when Refrain has strong evidence they are the same recording.
@@ -408,15 +416,21 @@ Internal implementation may use additional states, but user-visible state should
 
 ### Same Track Across Many Collections
 
-One source or library track may appear in Liked Songs and many playlists.
+One source or library track may appear in Liked Songs, saved albums, and many playlists.
 
-Refrain stores playlist memberships separately and reuses one canonical audio file.
+Refrain stores collection memberships separately and reuses one canonical audio file.
 
 ### Duplicate Entry in One Playlist
 
 A playlist may intentionally contain the same track more than once.
 
 The exported and resolved playlist preserves each occurrence and its order while reusing one audio file.
+
+### Saved Album Also Represented Elsewhere
+
+A saved album track may also be Liked or appear in one or more playlists.
+
+The memberships remain separate, but the shared Spotify track identity must not imply multiple managed audio copies.
 
 ### Different Spotify IDs for the Same Recording
 
@@ -462,7 +476,7 @@ Future providers may later resolve it.
 
 ### Track Removed From One of Several Collections
 
-Removing a track from one playlist must not remove the local audio if another managed collection still references it.
+Removing a track from one playlist or unsaving an album must not remove the local audio if another managed collection still references it.
 
 ### Track Removed From All Managed Collections
 
@@ -487,7 +501,6 @@ The following are outside the v1 product scope unless explicitly promoted into s
 - music playback as a primary product feature
 - music discovery or recommendation features
 - Plex, Jellyfin, Navidrome, or Lidarr integration as a requirement
-- saved-album mirroring beyond what is represented through Liked Songs and playlists
 - automatic destructive duplicate cleanup of unmanaged files
 - multiple acquisition providers shipping in the initial release
 
@@ -501,10 +514,11 @@ v0.1.0 is complete when:
 - the user can supply their own Spotify application configuration
 - the user can authenticate with Spotify without Refrain shipping shared credentials
 - Refrain can fetch Liked Songs
+- Refrain can fetch the user's saved albums and preserve album track order
 - Refrain can fetch the user's playlists
 - Refrain can fetch and preserve playlist track order
 - imported Spotify state persists across application restarts
-- the user can browse the imported collections and tracks
+- the user can browse the imported Liked Songs, saved albums, playlists, and tracks
 - the user can manually refresh Spotify state
 - no local-library or download functionality is required for this release
 
