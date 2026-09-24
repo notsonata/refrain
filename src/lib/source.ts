@@ -59,6 +59,7 @@ export interface SourceCollectionPage {
 export interface SpotifySourceHydration {
   overview: SpotifySourceOverview;
   playlists: SourceCollectionListPage;
+  savedAlbums: SourceCollectionListPage;
 }
 
 export function getSpotifySourceOverview(
@@ -73,6 +74,17 @@ export function listSpotifyPlaylists(
   invokeFn: InvokeFn = invoke,
 ): Promise<SourceCollectionListPage> {
   return invokeFn<SourceCollectionListPage>('list_spotify_playlists', {
+    offset,
+    limit,
+  });
+}
+
+export function listSpotifySavedAlbums(
+  offset = 0,
+  limit = 100,
+  invokeFn: InvokeFn = invoke,
+): Promise<SourceCollectionListPage> {
+  return invokeFn<SourceCollectionListPage>('list_spotify_saved_albums', {
     offset,
     limit,
   });
@@ -94,9 +106,12 @@ export function getSourceCollectionPage(
 export async function hydrateSpotifySource(
   invokeFn: InvokeFn = invoke,
 ): Promise<SpotifySourceHydration> {
-  const overview = await getSpotifySourceOverview(invokeFn);
-  const playlists = await listSpotifyPlaylists(0, 100, invokeFn);
-  return { overview, playlists };
+  const [overview, playlists, savedAlbums] = await Promise.all([
+    getSpotifySourceOverview(invokeFn),
+    listSpotifyPlaylists(0, 100, invokeFn),
+    listSpotifySavedAlbums(0, 100, invokeFn),
+  ]);
+  return { overview, playlists, savedAlbums };
 }
 
 export function formatTrackDuration(durationMs: number | null): string {
