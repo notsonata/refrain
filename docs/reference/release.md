@@ -4,10 +4,11 @@ Refrain publishes desktop packages through `.github/workflows/release.yml` when 
 
 ## Version sources
 
-The release tag must match the application version in both:
+The release tag must match the application version in all three release metadata sources:
 
 - `package.json`
 - `src-tauri/tauri.conf.json`
+- `src-tauri/Cargo.toml`
 
 For v0.1.0, the expected tag is:
 
@@ -21,17 +22,18 @@ The workflow fails before packaging when the tag and configured versions disagre
 
 A pushed `v*.*.*` tag triggers builds for:
 
-- Linux: `.deb` and AppImage
-- macOS: `.app` and `.dmg`
-- Windows: NSIS and MSI installers
+- Linux x86_64: `.deb` and AppImage
+- macOS Apple Silicon: `.app` and `.dmg`
+- macOS Intel: `.app` and `.dmg`
+- Windows x86_64: NSIS and MSI installers
 
 `tauri-apps/tauri-action@v1` uploads the generated bundles to the GitHub Release associated with the tag and asks GitHub to generate release notes.
 
-The macOS bundle uses an ad-hoc signing identity by default so unsigned CI builds remain usable for development and testing. Public distribution should use proper platform signing and macOS notarization when credentials are available.
+The macOS bundle uses an ad-hoc signing identity by default so CI builds remain usable for development and testing without private signing credentials. Public distribution should use proper platform signing and macOS notarization when credentials are available.
 
 ## Before tagging
 
-1. Confirm the intended version is set consistently in `package.json` and `src-tauri/tauri.conf.json`.
+1. Confirm the intended version is set consistently in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
 2. Update `CHANGELOG.md` from `Unreleased` to the release date.
 3. Confirm CI passes on the release commit.
 4. Complete the manual checks in `docs/reference/testing.md`, including Spotify connect/refresh, restart hydration, clean first run, and log-secret inspection.
