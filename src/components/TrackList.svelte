@@ -9,10 +9,11 @@
   export let loading = false;
   export let loadingMore = false;
   export let emptyMessage = 'No tracks in this collection.';
-  export let onLoadMore: (() => void) | undefined;
+  export let onLoadMore: (() => void) | undefined = undefined;
 
   const rowHeight = 68;
   const overscan = 8;
+  const skeletonRows = Array.from({ length: 7 }, (_, index) => index);
   let scrollTop = 0;
   let viewportHeight = 520;
 
@@ -21,17 +22,11 @@
   $: endIndex = Math.min(entries.length, startIndex + visibleCount);
   $: visibleEntries = entries.slice(startIndex, endIndex);
   $: hasMore = entries.length < total;
-
-  function handleScroll(event: Event) {
-    const target = event.currentTarget as HTMLDivElement;
-    scrollTop = target.scrollTop;
-    viewportHeight = target.clientHeight;
-  }
 </script>
 
 {#if loading && entries.length === 0}
   <div class="grid gap-2" aria-label="Loading tracks">
-    {#each Array(7) as _}
+    {#each skeletonRows as row (row)}
       <div class="h-16 animate-pulse rounded-lg bg-slate-900"></div>
     {/each}
   </div>
@@ -56,7 +51,10 @@
 
     <div
       class="relative h-[34rem] overflow-y-auto"
-      onscroll={handleScroll}
+      onscroll={(event) => {
+        scrollTop = event.currentTarget.scrollTop;
+        viewportHeight = event.currentTarget.clientHeight;
+      }}
       aria-label="Track list"
     >
       <div class="relative" style={`height: ${entries.length * rowHeight}px`}>
