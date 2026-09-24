@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 5 are merged and verified for the v0.1.0 development line. The Saved Albums v0.1 scope extension is also merged. A follow-up fix is being verified for a virtualized track-list regression found during the real saved-album browsing smoke test before Milestone 6 begins.
+Milestones 1 through 5 are merged and verified for the v0.1.0 development line. The Saved Albums v0.1 scope extension and its virtualized track-list regression fix are merged. Before Milestone 6 begins, the desktop shell is being corrected so resizing the native Tauri window resizes the application layout instead of turning the whole webview into a scrolling document.
 
 The application now includes:
 
@@ -28,10 +28,11 @@ The application now includes:
 - loading, empty, inaccessible, disconnected, refresh, and error states
 - restart hydration from SQLite without requiring a source refresh
 - lazy artwork loading and a virtualized track list with paginated backend reads
+- a viewport-bound desktop shell with panel-local scrolling and track virtualization that follows the available window height
 
 ## Active Work
 
-Verify the virtualized track-list fix found during the **Saved Albums v0.1 scope extension** smoke test, then complete the remaining saved-album verification before starting Milestone 6.
+Verify native window resizing across the main browsing and Settings views, then complete the remaining Saved Albums smoke-test coverage before starting Milestone 6.
 
 The real Spotify authentication smoke test for Milestone 3, source-refresh smoke test for Milestone 4, and desktop browsing smoke test for Milestone 5 have passed on macOS.
 
@@ -46,12 +47,15 @@ The real Spotify authentication smoke test for Milestone 3, source-refresh smoke
 - preserved richer persisted track identity such as ISRC when simplified album-track payloads do not provide it
 - added Saved Albums browsing with paginated album lists and existing virtualized track detail
 - retained cooperative cancellation during the added saved-album refresh phase
-- fixed stale virtual-scroll state that could leave a short collection with loaded entries but no visible track rows after switching collections
+- merged the stale virtual-scroll fix through PR #17 so short collections no longer inherit an invalid virtual window after collection changes
+- constrained the desktop shell to the native viewport, moved scrolling into navigation/content panels, and made the virtual track viewport follow the actual available height
 - recorded the source-model decision in `docs/decisions/002-saved-albums-as-source-collections.md`
 
 ## Known Issues
 
-The saved-album smoke test exposed a track-list rendering regression where a collection could report all entries as loaded while the virtualized body was blank. The current follow-up fix resets stale scroll state when entries are replaced and clamps the virtual start index; it still requires real-app verification before the issue is considered closed.
+The native desktop resize correction still requires real-app verification at the configured minimum window size and at larger sizes on the supported desktop platforms.
+
+The saved-album rendering fix is merged but still needs real-app confirmation during the remaining saved-album smoke test.
 
 Port `43817` must be available while starting Spotify authorization. Refrain reports an authentication error rather than choosing a different port when it is occupied.
 
@@ -59,7 +63,7 @@ The saved-albums extension still needs the remaining real Spotify smoke-test cov
 
 ## Next
 
-After the saved-album rendering fix and remaining extension verification pass, implement **Milestone 6: v0.1 Hardening and Release**.
+After native resize behavior and the remaining Saved Albums verification pass, implement **Milestone 6: v0.1 Hardening and Release**.
 
 Milestone 6 covers release metadata and icons, clean first-run and migration checks, user-facing error hardening, log-redaction verification, platform build checks, stable developer/reference documentation, the initial release changelog, and v0.1.0 packaging.
 
@@ -71,7 +75,7 @@ A connected Spotify account with at least one saved album is required for the re
 
 ## Open Decisions
 
-No unresolved product or architectural decision blocks the saved-albums extension verification or Milestone 6 planning.
+No unresolved product or architectural decision blocks the current desktop-layout verification, saved-album verification, or Milestone 6 planning.
 
 The saved-album source-model decision is recorded in ADR 002. The deferred technical questions in `docs/TDD.md` remain deferred until their affected implementation areas begin.
 
@@ -80,7 +84,7 @@ The saved-album source-model decision is recorded in ADR 002. The deferred techn
 - `docs/BRIEF.md` defines project purpose and release boundaries.
 - `docs/SPEC.md` defines v0.1.0 and v1.0.0 behavior and acceptance criteria.
 - `docs/TDD.md` defines the baseline technical architecture and desktop data flow.
-- `docs/IMPLEMENTATION.md` defines milestone order and verification gates; the approved Saved Albums scope extension sits between Milestones 5 and 6.
+- `docs/IMPLEMENTATION.md` defines milestone order and verification gates; the approved Saved Albums scope extension and current UI follow-ups sit between Milestones 5 and 6.
 - `docs/decisions/001-fixed-spotify-callback-port.md` records the fixed callback-port decision.
 - `docs/decisions/002-saved-albums-as-source-collections.md` records the saved-album persistence and identity model and supersedes the earlier two-kind source-collection assumption.
 - `docs/reference/spotify-auth.md` documents Spotify developer setup and authentication behavior.

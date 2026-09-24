@@ -32,23 +32,26 @@
 </script>
 
 {#if loading && entries.length === 0}
-  <div class="grid gap-2" aria-label="Loading tracks">
+  <div
+    class="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto"
+    aria-label="Loading tracks"
+  >
     {#each skeletonRows as row (row)}
       <div class="h-16 animate-pulse rounded-lg bg-slate-900"></div>
     {/each}
   </div>
 {:else if entries.length === 0}
   <div
-    class="rounded-xl border border-dashed border-slate-800 px-6 py-12 text-center text-sm text-slate-500"
+    class="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-slate-800 px-6 py-12 text-center text-sm text-slate-500"
   >
     {emptyMessage}
   </div>
 {:else}
   <div
-    class="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40"
+    class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40"
   >
     <div
-      class="grid grid-cols-[3rem_minmax(0,2fr)_minmax(0,1.25fr)_5rem] gap-3 border-b border-slate-800 bg-slate-950 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-slate-600"
+      class="grid shrink-0 grid-cols-[3rem_minmax(0,2fr)_minmax(0,1.25fr)_5rem] gap-3 border-b border-slate-800 bg-slate-950 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-slate-600"
     >
       <span>#</span>
       <span>Track</span>
@@ -57,10 +60,10 @@
     </div>
 
     <div
-      class="relative h-[34rem] overflow-y-auto"
+      class="relative min-h-0 flex-1 overflow-y-auto"
+      bind:clientHeight={viewportHeight}
       onscroll={(event) => {
         scrollTop = event.currentTarget.scrollTop;
-        viewportHeight = event.currentTarget.clientHeight;
       }}
       aria-label="Track list"
     >
@@ -128,7 +131,7 @@
     </div>
 
     <div
-      class="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-xs text-slate-500"
+      class="flex shrink-0 items-center justify-between border-t border-slate-800 px-4 py-3 text-xs text-slate-500"
     >
       <span>{entries.length} of {total} entries loaded</span>
       {#if hasMore}
