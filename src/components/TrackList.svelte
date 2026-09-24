@@ -17,8 +17,15 @@
   let scrollTop = 0;
   let viewportHeight = 520;
 
-  $: startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  $: if (entries.length === 0) {
+    scrollTop = 0;
+  }
   $: visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
+  $: maxStartIndex = Math.max(0, entries.length - visibleCount);
+  $: startIndex = Math.min(
+    Math.max(0, Math.floor(scrollTop / rowHeight) - overscan),
+    maxStartIndex,
+  );
   $: endIndex = Math.min(entries.length, startIndex + visibleCount);
   $: visibleEntries = entries.slice(startIndex, endIndex);
   $: hasMore = entries.length < total;
