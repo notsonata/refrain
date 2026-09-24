@@ -1,22 +1,22 @@
 # Refrain Project Brief
 
-Refrain is a desktop application that mirrors Spotify playlists and Liked Songs to a normalized local music library.
+Refrain is a desktop application that mirrors Spotify playlists, Liked Songs, and saved albums to a normalized local music library.
 
 ## Problem
 
-Spotify can represent the music a user wants to keep, but that state is separate from the user's local collection. Keeping local files aligned with Spotify manually requires repeatedly checking playlists, finding missing tracks, avoiding duplicate downloads, organizing files, and rebuilding playlists.
+Spotify can represent the music a user wants to keep, but that state is separate from the user's local collection. Keeping local files aligned with Spotify manually requires repeatedly checking playlists, saved tracks and albums, finding missing tracks, avoiding duplicate downloads, organizing files, and rebuilding playlists.
 
 ## Solution
 
 Refrain treats Spotify as the desired state for a local music library.
 
-It imports playlists and Liked Songs, reconciles them against local library state, and resolves each source track to a logical library track. Missing tracks can be acquired through modular download providers, initially Sockseek/Soulseek, then staged, verified, normalized, and added to the canonical library.
+It imports playlists, Liked Songs, and saved albums, reconciles them against local library state, and resolves each source track to a logical library track. Missing tracks can be acquired through modular download providers, initially Sockseek/Soulseek, then staged, verified, normalized, and added to the canonical library.
 
-Playlist membership is stored separately from audio files, so a track is stored once even when it appears in multiple playlists. Refrain can export resolved playlists as M3U8 files, create portable playlist bundles containing copied audio, and mirror the full library and playlists to another filesystem location.
+Playlist and album membership is stored separately from audio files, so a track is stored once even when it appears in multiple Spotify collections. Refrain can export resolved playlists as M3U8 files, create portable playlist bundles containing copied audio, and mirror the full library and playlists to another filesystem location.
 
 ## Goals
 
-- Keep Spotify playlists and Liked Songs accurately mirrored to local storage.
+- Keep Spotify playlists, Liked Songs, and saved albums accurately mirrored to local storage.
 - Maintain one normalized, canonical local music library.
 - Avoid duplicate downloads when the same recording appears in multiple collections.
 - Match source tracks to local recordings conservatively and surface ambiguous cases for review.
@@ -32,7 +32,7 @@ Playlist membership is stored separately from audio files, so a track is stored 
 - Desktop application for Windows, macOS, and Linux.
 - User-provided Spotify developer credentials.
 - Spotify authentication.
-- Fetch and persist Liked Songs, playlists, and playlist tracks.
+- Fetch and persist Liked Songs, saved albums and their tracks, playlists, and playlist tracks.
 - Browse imported Spotify library state.
 - Manual refresh.
 - No downloading or local-library reconciliation yet.
@@ -44,7 +44,7 @@ Playlist membership is stored separately from audio files, so a track is stored 
 - Acquire missing tracks through a modular acquisition engine, initially using Sockseek.
 - Stage and verify acquired files before importing them.
 - Normalize filesystem organization and filenames.
-- Preserve one local copy for tracks referenced by multiple playlists.
+- Preserve one local copy for tracks referenced by multiple Spotify collections.
 - Highlight missing, failed, and ambiguous tracks.
 - Configurable behavior for tracks removed from Spotify collections.
 - Export resolved playlists as M3U8 files.
@@ -69,7 +69,7 @@ Future work may include additional acquisition providers, rclone-backed remote m
 
 ### v0.1.0
 
-A user can configure Spotify access, authenticate, fetch Liked Songs and playlists, persist that state locally, and browse it reliably across application restarts.
+A user can configure Spotify access, authenticate, fetch Liked Songs, saved albums, and playlists, persist that state locally, and browse it reliably across application restarts.
 
 ### v1.0.0
 
