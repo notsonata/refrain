@@ -3,9 +3,7 @@ use std::{error::Error, fs, path::PathBuf, sync::Arc};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    db::Database,
-    reconciliation::SyncCoordinator,
-    source_sync::SourceRefreshControl,
+    db::Database, reconciliation::SyncCoordinator, source_sync::SourceRefreshControl,
     spotify::SpotifyClient,
 };
 

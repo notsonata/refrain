@@ -2,12 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { InvokeFn } from './app-info';
 
 export type SyncTrigger = 'manual' | 'startup' | 'scheduled';
-export type SyncStatus =
-  | 'running'
-  | 'succeeded'
-  | 'partial'
-  | 'failed'
-  | 'cancelled';
+export type SyncStatus = 'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled';
 
 export interface SyncRun {
   id: number;

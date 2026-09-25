@@ -75,7 +75,10 @@ impl Database {
                  LIMIT ?1 OFFSET ?2",
             )?;
             let items = statement
-                .query_map(params![i64::from(limit), i64::from(offset)], sync_run_from_row)?
+                .query_map(
+                    params![i64::from(limit), i64::from(offset)],
+                    sync_run_from_row,
+                )?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(SyncRunPage {
                 items,
@@ -86,11 +89,7 @@ impl Database {
         })
     }
 
-    pub(crate) fn update_sync_run_phase(
-        &self,
-        id: i64,
-        phase: &str,
-    ) -> Result<(), DatabaseError> {
+    pub(crate) fn update_sync_run_phase(&self, id: i64, phase: &str) -> Result<(), DatabaseError> {
         self.with_connection(|connection| {
             connection.execute(
                 "UPDATE sync_runs SET phase = ?1 WHERE id = ?2 AND status = 'running'",
@@ -185,7 +184,8 @@ impl Database {
 
         let mut created = 0usize;
         for seed in seeds {
-            let library_track_id = match existing_library_track_for_local_seed(&transaction, &seed)? {
+            let library_track_id = match existing_library_track_for_local_seed(&transaction, &seed)?
+            {
                 Some(id) => id,
                 None => {
                     created += 1;
@@ -295,7 +295,10 @@ impl Database {
         method: &str,
         confidence: i64,
     ) -> Result<(), DatabaseError> {
-        if !matches!(method, "existing" | "isrc" | "metadata" | "acquisition" | "user") {
+        if !matches!(
+            method,
+            "existing" | "isrc" | "metadata" | "acquisition" | "user"
+        ) {
             return Err(DatabaseError::InvalidState(format!(
                 "unsupported track link method: {method}"
             )));
@@ -387,7 +390,11 @@ fn existing_library_track_for_local_seed(
     transaction: &Transaction<'_>,
     seed: &LocalTrackSeed,
 ) -> Result<Option<i64>, rusqlite::Error> {
-    if let Some(hash) = seed.content_hash.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(hash) = seed
+        .content_hash
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
         if let Some(id) = transaction
             .query_row(
                 "SELECT library_track_id
@@ -406,7 +413,11 @@ fn existing_library_track_for_local_seed(
         }
     }
 
-    if let Some(isrc) = seed.tag_isrc.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(isrc) = seed
+        .tag_isrc
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         return transaction
             .query_row(
                 "SELECT id

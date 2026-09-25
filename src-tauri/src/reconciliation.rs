@@ -62,9 +62,10 @@ impl SyncCoordinator {
         database: &Database,
         trigger: &str,
     ) -> Result<SyncBegin, DatabaseError> {
-        let mut active = self.active_run_id.lock().map_err(|_| {
-            DatabaseError::InvalidState("sync coordinator lock is poisoned".into())
-        })?;
+        let mut active = self
+            .active_run_id
+            .lock()
+            .map_err(|_| DatabaseError::InvalidState("sync coordinator lock is poisoned".into()))?;
         if let Some(run_id) = *active {
             return Ok(SyncBegin::Existing(run_id));
         }
@@ -151,13 +152,7 @@ pub async fn start_sync(
 
     match tauri::async_runtime::spawn_blocking(move || {
         let _lease = lease;
-        execute_sync(
-            &database,
-            spotify,
-            &source_refresh,
-            &sync,
-            run_id,
-        )
+        execute_sync(&database, spotify, &source_refresh, &sync, run_id)
     })
     .await
     {
@@ -254,10 +249,12 @@ fn run_initial_sync(
     let settings = database
         .get_settings()
         .map_err(|error| failed(empty_counts, "load sync settings", error))?;
-    let client_id = settings.spotify_client_id.ok_or_else(|| SyncExecutionFailure::Failed {
-        counts: empty_counts,
-        message: "Connect Spotify before starting synchronization.".into(),
-    })?;
+    let client_id = settings
+        .spotify_client_id
+        .ok_or_else(|| SyncExecutionFailure::Failed {
+            counts: empty_counts,
+            message: "Connect Spotify before starting synchronization.".into(),
+        })?;
     let source_guard = source_refresh.begin().map_err(|error| {
         if sync.is_cancelled() {
             SyncExecutionFailure::Cancelled(empty_counts)
@@ -331,12 +328,10 @@ fn run_initial_sync(
             counts: empty_counts,
             message: error.to_string(),
         }),
-        Err(ReconciliationFailure::InvalidState(message)) => {
-            Err(SyncExecutionFailure::Failed {
-                counts: empty_counts,
-                message,
-            })
-        }
+        Err(ReconciliationFailure::InvalidState(message)) => Err(SyncExecutionFailure::Failed {
+            counts: empty_counts,
+            message,
+        }),
     }
 }
 
@@ -408,11 +403,8 @@ fn run_reconciliation_core(
             .and_then(|key| created_by_isrc.get(key))
             .filter(|candidates| !candidates.is_empty())
         {
-            let provisional = MatcherIndex::new(candidates.clone()).match_track(
-                &source,
-                None,
-                &HashSet::new(),
-            );
+            let provisional =
+                MatcherIndex::new(candidates.clone()).match_track(&source, None, &HashSet::new());
             if provisional.outcome == MatchOutcome::Automatic
                 && let Some(library_track_id) = provisional.selected_library_track_id
             {
@@ -616,7 +608,10 @@ mod tests {
         let second_counts = run_core(&database);
         assert_eq!(second_counts.missing, 2);
         assert_eq!(database.library_track_count().unwrap(), 1);
-        let page = database.source_collection_page(collection_id, 0, 10).unwrap().unwrap();
+        let page = database
+            .source_collection_page(collection_id, 0, 10)
+            .unwrap()
+            .unwrap();
         assert_eq!(page.entries.len(), 3);
         assert_eq!(page.entries[0].position, 0);
         assert_eq!(page.entries[1].position, 1);
