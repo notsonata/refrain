@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 11 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, and Issues and Manual Resolution UI.
+Milestones 1 through 11 are complete. Milestone 12 is implemented locally and awaiting its final native UI smoke check. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, Issues and Manual Resolution UI, and the provider-neutral Acquisition Provider Boundary.
 
 The application includes:
 
@@ -22,13 +22,18 @@ The application includes:
 - paginated Library and Issues views backed by durable local-library and reconciliation state
 - issue projections for ambiguous matches, missing local files, inaccessible Spotify collections, and invalid local files
 - match-review controls for confirming, rejecting, and clearing persisted manual decisions, with resolved issues disappearing from the projection automatically
+- durable `acquisition_jobs` persistence with provider-neutral candidate/job types and a fake-provider-tested acquisition coordinator
+- bounded acquisition attempts, cooperative provider cancellation, Refrain-controlled staging directories, and a `staged` terminal state that still requires later verification/import
+- acquisition status IPC plus failed acquisition jobs projected into the Issues view
+- native Library root folder selection through the Tauri dialog plugin
+- a fixed-height Issues workspace whose queue and detail panes scroll independently instead of clipping at the supported desktop window sizes
 - typed sync-run Tauri commands and frontend wrappers for starting, cancelling, reading, and listing synchronization runs
 
 Milestones 7 through 9 remain non-destructive with respect to user audio. Milestone 10 may move confidently resolved preferred files into the canonical library structure, but it preserves each file's ownership classification and does not automatically delete external files.
 
 ## Active Work
 
-No milestone implementation is currently active. Milestone 11 is complete; Milestone 12 is next.
+Milestone 12 implementation is complete locally. The remaining work is a short native smoke check for the repaired Issues layout and Library root folder picker before the milestone is treated as fully verified.
 
 ## Recent Changes
 
@@ -45,6 +50,12 @@ No milestone implementation is currently active. Milestone 11 is complete; Miles
 - added durable issue projections for ambiguous matches, missing/invalid local files, and inaccessible Spotify collections without introducing a separate issue table
 - added match-review candidate inspection and persisted confirm/reject/clear actions that refresh the issue projection after resolution
 - added frontend and Rust coverage for issue projection behavior and automatic issue removal after durable state repair
+- manually verified local-library scanning with 478 indexed files: 477 present, 0 missing, and 1 invalid
+- added migration 6 for durable acquisition jobs with one durable job per logical library track
+- added provider-neutral acquisition types, health checks, staging, bounded retries, cancellation, status projection, and deterministic fake-provider integration coverage
+- kept provider success at `staged`, preserving the later verification/import boundary instead of treating a provider download as synced audio
+- projected failed acquisition jobs into Issues and repaired the Issues desktop layout so the queue and detail panes remain independently scrollable
+- replaced manual Library root entry with the native operating-system folder picker while retaining explicit Save path / Scan library actions
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
@@ -55,7 +66,7 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Begin **Milestone 12: Acquisition Provider Boundary** according to `docs/IMPLEMENTATION.md`.
+Run the final native smoke check for the Milestone 12 Issues layout and Library root folder picker. After that, begin **Milestone 13: Sockseek Sidecar Provider** according to `docs/IMPLEMENTATION.md`.
 
 ## Blockers
 

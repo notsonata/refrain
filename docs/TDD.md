@@ -587,6 +587,16 @@ updated_at            INTEGER NOT NULL
 
 Provider-specific payloads remain opaque JSON at the persistence boundary.
 
+Milestone 12 uses the following durable acquisition job lifecycle:
+
+- `queued` — durable missing-track work exists but has not started
+- `running` — a provider candidate/job is currently active
+- `staged` — the provider completed successfully and candidate output remains in Refrain-controlled staging pending verification/import
+- `failed` — bounded acquisition attempts ended without acceptable provider completion
+- `cancelled` — acquisition was cooperatively cancelled
+
+`staged` is deliberately not equivalent to synced or imported audio. Verification and canonical-library import remain Refrain responsibilities in the later acquisition verification milestone.
+
 ### `playlist_exports`
 
 ```text

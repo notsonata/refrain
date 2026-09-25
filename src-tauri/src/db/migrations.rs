@@ -6,6 +6,7 @@ const MIGRATION_ARRAY: &[M] = &[
     M::up(include_str!("../../migrations/0003_local_library.sql")),
     M::up(include_str!("../../migrations/0004_matching.sql")),
     M::up(include_str!("../../migrations/0005_reconciliation.sql")),
+    M::up(include_str!("../../migrations/0006_acquisition.sql")),
 ];
 
 pub static MIGRATIONS: Migrations = Migrations::from_slice(MIGRATION_ARRAY);

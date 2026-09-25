@@ -1,3 +1,6 @@
+// Milestone 12 persistence is exercised by the acquisition boundary before production wiring.
+#[allow(dead_code)]
+mod acquisition;
 mod issues;
 mod local_library;
 mod matching;
@@ -268,7 +271,7 @@ mod tests {
 
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
-        assert_eq!(user_version, 5);
+        assert_eq!(user_version, 6);
 
         for table in [
             "library_tracks",
@@ -276,6 +279,7 @@ mod tests {
             "track_links",
             "track_rejections",
             "sync_runs",
+            "acquisition_jobs",
         ] {
             let exists: i64 = connection
                 .query_row(

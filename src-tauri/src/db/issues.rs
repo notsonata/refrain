@@ -14,6 +14,7 @@ impl Database {
             issues.extend(missing_unlinked_file_issues(connection)?);
             issues.extend(inaccessible_collection_issues(connection)?);
             issues.extend(invalid_local_file_issues(connection)?);
+            issues.extend(acquisition_failure_issues(connection)?);
             Ok(issues)
         })
     }
@@ -176,6 +177,57 @@ fn invalid_local_file_issues(connection: &Connection) -> Result<Vec<IssueRow>, r
                 candidate_count: None,
                 confidence: None,
                 path: Some(path),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn acquisition_failure_issues(connection: &Connection) -> Result<Vec<IssueRow>, rusqlite::Error> {
+    let mut statement = connection.prepare(
+        "SELECT
+            job.id,
+            job.library_track_id,
+            track.title,
+            track.artists_json,
+            job.provider,
+            job.error_code,
+            job.error_message,
+            job.staging_path
+         FROM acquisition_jobs AS job
+         JOIN library_tracks AS track ON track.id = job.library_track_id
+         WHERE job.status = 'failed'
+         ORDER BY job.updated_at DESC, job.id DESC",
+    )?;
+    statement
+        .query_map([], |row| {
+            let job_id = row.get::<_, i64>(0)?;
+            let artists_json = row.get::<_, String>(3)?;
+            let artists = serde_json::from_str::<Vec<String>>(&artists_json).unwrap_or_default();
+            let provider = row.get::<_, String>(4)?;
+            let error_code = row.get::<_, Option<String>>(5)?;
+            let error_message = row.get::<_, Option<String>>(6)?;
+            let detail = match (error_code, error_message) {
+                (Some(code), Some(message)) => Some(format!("{message} ({code})")),
+                (None, Some(message)) => Some(message),
+                (Some(code), None) => Some(format!("Acquisition failed with {code}.")),
+                (None, None) => {
+                    Some("The acquisition provider could not obtain this track.".into())
+                }
+            };
+            Ok(IssueRow {
+                id: format!("acquisition:{job_id}"),
+                kind: IssueKind::AcquisitionFailed,
+                title: row.get(2)?,
+                subtitle: artists_subtitle(&artists)
+                    .or_else(|| Some(format!("{provider} acquisition failed"))),
+                detail,
+                source_track_id: None,
+                library_track_id: Some(row.get(1)?),
+                local_file_id: None,
+                collection_id: None,
+                candidate_count: None,
+                confidence: None,
+                path: row.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()

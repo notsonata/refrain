@@ -7,7 +7,8 @@ export type IssueKind =
   | 'matchReview'
   | 'missingLocalFile'
   | 'inaccessibleCollection'
-  | 'invalidLocalFile';
+  | 'invalidLocalFile'
+  | 'acquisitionFailed';
 
 export interface IssueRow {
   id: string;
@@ -29,6 +30,7 @@ export interface IssueCounts {
   missingLocalFile: number;
   inaccessibleCollection: number;
   invalidLocalFile: number;
+  acquisitionFailed: number;
 }
 
 export interface IssuePage {

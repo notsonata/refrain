@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+pub(crate) mod acquisition;
 pub(crate) mod issues;
 pub(crate) mod library;
 pub(crate) mod matching;
@@ -5,6 +7,10 @@ pub(crate) mod reconciliation;
 mod settings;
 mod source;
 
+pub use acquisition::{
+    AcquisitionCandidate, AcquisitionJob, AcquisitionJobPage, AcquisitionRequest, ProviderHealth,
+    ProviderJob, ProviderJobStatus, TrackQuery,
+};
 pub use issues::{
     IssueCounts, IssueKind, IssuePage, IssueRow, MatchReview, MatchReviewCandidate,
     MatchReviewTrack,

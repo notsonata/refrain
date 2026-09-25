@@ -17,6 +17,7 @@ const issuePage: IssuePage = {
     missingLocalFile: 0,
     inaccessibleCollection: 0,
     invalidLocalFile: 0,
+    acquisitionFailed: 0,
   },
 };
 

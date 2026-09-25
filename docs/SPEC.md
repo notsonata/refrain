@@ -154,6 +154,10 @@ A mounted filesystem location that receives a synchronized copy of the normalize
 
 A user should not need to paste a new short-lived access token for every session.
 
+### Configure the Local Library Root
+
+The user selects the local music-library root from Settings. Activating the Library root path field should open the operating system's native folder picker. Selecting a directory populates the setting with that directory so normal setup does not require manually typing an absolute filesystem path.
+
 ### Browse Spotify State
 
 The user can browse:

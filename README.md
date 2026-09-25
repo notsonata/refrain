@@ -8,7 +8,7 @@ It is being built to import Spotify playlists, Liked Songs, and saved albums, re
 
 Refrain v0.1.0 was released on 2026-09-25, completing Milestones 1 through 6. The project remains under active development toward v1.0.0.
 
-**Milestones 7 through 11** are implemented. **Milestone 12: Acquisition Provider Boundary** is next in the v1.0.0 roadmap.
+**Milestones 7 through 11** are complete. **Milestone 12: Acquisition Provider Boundary** is implemented locally and awaiting the final native UI smoke check before **Milestone 13: Sockseek Sidecar Provider** begins.
 
 For current project state, see [`docs/STATUS.md`](docs/STATUS.md).
 
@@ -163,6 +163,6 @@ The repository documentation is the source of truth for planned behavior and arc
 
 ## Development Roadmap
 
-Milestones 1 through 11 are complete. **Milestone 12: Acquisition Provider Boundary** is next.
+Milestones 1 through 11 are complete. **Milestone 12: Acquisition Provider Boundary** is implemented locally and pending its final native UI smoke check; **Milestone 13: Sockseek Sidecar Provider** follows.
 
 See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the full path through v0.1.0 and v1.0.0.

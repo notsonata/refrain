@@ -20,6 +20,8 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src/components/LibraryView.svelte` — dense paginated logical-library table with preferred/local-file state
 - `src/components/IssuesView.svelte` — unresolved issue queue, issue details, candidate review, and manual match-decision controls
 - `src/lib/app-info.ts` — application-info Tauri command wrapper
+- `src/lib/acquisition.ts` — acquisition job/status projection types and Tauri command wrapper
+- `src/lib/dialog.ts` — native Library root folder-picker wrapper
 - `src/lib/settings.ts` — settings command wrapper
 - `src/lib/library.ts` — local-library overview, logical-track projection, paginated file, scan, hash, and preferred-file command wrappers
 - `src/lib/issues.ts` — issue projection/count types, match-review data, and issue command wrappers
@@ -33,6 +35,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 
 - `src-tauri/src/main.rs` — native binary entry point
 - `src-tauri/src/lib.rs` — Tauri application builder and command registration
+- `src-tauri/src/acquisition.rs` — provider-neutral acquisition interface, coordinator, staging, retry/cancellation behavior, and fake-provider integration tests
 - `src-tauri/src/app.rs` — application initialization, data directory, logging, database, and shared state
 - `src-tauri/src/commands/mod.rs` — Tauri command boundary exposed to the frontend
 - `src-tauri/src/spotify.rs` — Spotify PKCE authentication, token lifecycle, and Spotify client behavior
@@ -45,11 +48,13 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/normalization.rs` — canonical library paths, portable filename sanitization, collision handling, safe moves, ownership-safe normalization, and guarded platform Trash integration
 - `src-tauri/src/security.rs` — OS credential-store abstraction for Spotify refresh credentials
 - `src-tauri/src/domain/library.rs` — local-file and logical-library projection types
+- `src-tauri/src/domain/acquisition.rs` — provider-neutral query/candidate/job/health types and persisted acquisition projection types
 - `src-tauri/src/domain/issues.rs` — issue, issue-count, and match-review projection types
 
 ## Persistence
 
 - `src-tauri/src/db/mod.rs` — SQLite initialization, migration execution, shared database behavior, and core persistence tests
+- `src-tauri/src/db/acquisition.rs` — acquisition job queueing, status persistence, logical-track query projection, and paginated job reads
 - `src-tauri/src/db/settings.rs` — application settings persistence
 - `src-tauri/src/db/source.rs` — source account/collection/track persistence
 - `src-tauri/src/db/source_refresh.rs` — transactional Spotify refresh persistence
@@ -63,6 +68,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/migrations/0003_local_library.sql` — `library_tracks` and `local_files` v1 schema/indexes
 - `src-tauri/migrations/0004_matching.sql` — `track_links` and `track_rejections` schema/indexes
 - `src-tauri/migrations/0005_reconciliation.sql` — `sync_runs` persistence and chronological index
+- `src-tauri/migrations/0006_acquisition.sql` — durable provider-neutral `acquisition_jobs` persistence and indexes
 - `src-tauri/migrations/` — SQLite migrations
 
 ## Packaging and configuration
@@ -95,6 +101,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 | Local library scanning/indexing | `src-tauri/src/local_library.rs`, `src-tauri/src/db/local_library.rs`, `src/lib/library.ts`, `src/App.svelte` |
 | Browse logical library | `src-tauri/src/db/issues.rs`, `src/lib/library.ts`, `src/components/LibraryView.svelte`, `src/App.svelte` |
 | Issues and manual resolution | `src-tauri/src/issues.rs`, `src-tauri/src/db/issues.rs`, `src/lib/issues.ts`, `src/components/IssuesView.svelte`, `src/App.svelte` |
+| Acquisition provider boundary/status | `src-tauri/src/acquisition.rs`, `src-tauri/src/db/acquisition.rs`, `src-tauri/src/domain/acquisition.rs`, `src/lib/acquisition.ts` |
 | Matching and manual decisions | `src-tauri/src/matching.rs`, `src-tauri/src/db/matching.rs`, `src/lib/matching.ts` |
 | Full sync through normalization | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src/lib/sync.ts` |
 | Filesystem normalization / ownership safety | `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src-tauri/src/db/local_library.rs` |

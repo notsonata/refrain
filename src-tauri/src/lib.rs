@@ -1,3 +1,6 @@
+// Milestone 12 defines this boundary before Milestone 13 supplies the production provider.
+#[allow(dead_code)]
+mod acquisition;
 mod app;
 mod commands;
 mod db;
@@ -17,6 +20,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|application| {
             let app_data_dir = application.path().app_data_dir()?;
             let state = app::initialize(app_data_dir)?;
@@ -39,6 +43,7 @@ pub fn run() {
             commands::clear_match_decision,
             commands::list_issues,
             commands::get_match_review,
+            commands::list_acquisition_jobs,
             reconciliation::start_sync,
             reconciliation::cancel_sync,
             reconciliation::get_sync_run,

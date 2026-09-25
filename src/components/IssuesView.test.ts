@@ -128,6 +128,7 @@ describe('IssuesView', () => {
           missingLocalFile: 1,
           invalidLocalFile: 1,
           inaccessibleCollection: 1,
+          acquisitionFailed: 0,
         },
       },
     });
@@ -148,6 +149,7 @@ describe('IssuesView', () => {
           missingLocalFile: 0,
           invalidLocalFile: 0,
           inaccessibleCollection: 0,
+          acquisitionFailed: 0,
         },
         selectedIssueId: 'match:7',
         review,

@@ -50,7 +50,7 @@ See `docs/reference/spotify-auth.md` for authentication behavior and the real-ac
 
 Milestone 7 adds observational local-library indexing. In **Settings → Local library**:
 
-1. Enter the absolute path to the music-library root.
+1. Select the **Library root** field and choose the music-library folder from the native operating-system folder picker.
 2. Choose **Save path** to persist it without scanning, or **Scan library** to save and scan it.
 3. Review the present, missing, invalid, and total indexed counts while/after the scan.
 

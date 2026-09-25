@@ -7,8 +7,9 @@ use crate::{
     app::AppState,
     db::{Database, DatabaseError},
     domain::{
-        AppSettings, IssuePage, LibraryTrackPage, LocalFilePage, LocalLibraryOverview, MatchResult,
-        MatchReview, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview,
+        AcquisitionJobPage, AppSettings, IssuePage, LibraryTrackPage, LocalFilePage,
+        LocalLibraryOverview, MatchResult, MatchReview, SourceCollectionListPage,
+        SourceCollectionPage, SpotifySourceOverview,
     },
     issues::{get_match_review as load_match_review, list_issues as load_issues},
     local_library::{
@@ -231,6 +232,18 @@ pub fn get_match_review(
     load_match_review(&state.database, source_track_id)
         .map_err(|error| command_database_error("load match review", error))?
         .ok_or_else(|| "Source track was not found.".to_owned())
+}
+
+#[tauri::command]
+pub fn list_acquisition_jobs(
+    offset: u32,
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<AcquisitionJobPage, String> {
+    state
+        .database
+        .acquisition_jobs_page(offset, limit)
+        .map_err(|error| command_database_error("load acquisition jobs", error))
 }
 
 #[tauri::command]

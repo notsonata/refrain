@@ -147,6 +147,7 @@ fn issue_counts(issues: &[IssueRow]) -> IssueCounts {
             IssueKind::MissingLocalFile => counts.missing_local_file += 1,
             IssueKind::InaccessibleCollection => counts.inaccessible_collection += 1,
             IssueKind::InvalidLocalFile => counts.invalid_local_file += 1,
+            IssueKind::AcquisitionFailed => counts.acquisition_failed += 1,
         }
     }
     counts
@@ -157,6 +158,7 @@ fn issue_priority(kind: IssueKind) -> u8 {
         IssueKind::MatchReview => 0,
         IssueKind::MissingLocalFile => 1,
         IssueKind::InvalidLocalFile => 2,
-        IssueKind::InaccessibleCollection => 3,
+        IssueKind::AcquisitionFailed => 3,
+        IssueKind::InaccessibleCollection => 4,
     }
 }

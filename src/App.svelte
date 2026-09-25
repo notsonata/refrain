@@ -5,6 +5,7 @@
   import LibraryView from './components/LibraryView.svelte';
   import TrackList from './components/TrackList.svelte';
   import { getAppInfo, type AppInfo } from './lib/app-info';
+  import { chooseLibraryRoot } from './lib/dialog';
   import {
     getMatchReview,
     listIssues,
@@ -105,6 +106,7 @@
     missingLocalFile: 0,
     inaccessibleCollection: 0,
     invalidLocalFile: 0,
+    acquisitionFailed: 0,
   };
   let issuesLoading = false;
   let issuesLoadingMore = false;
@@ -306,6 +308,19 @@
       libraryProgress = null;
     } finally {
       libraryBusy = false;
+    }
+  }
+
+  async function pickLibraryRoot() {
+    if (libraryBusy) return;
+    libraryError = null;
+    try {
+      const selected = await chooseLibraryRoot(libraryRoot.trim() || undefined);
+      if (selected) {
+        libraryRoot = selected;
+      }
+    } catch (error) {
+      libraryError = operationError(error, 'Could not open the folder picker.');
     }
   }
 
@@ -1192,10 +1207,18 @@
                     id="library-root"
                     bind:value={libraryRoot}
                     disabled={libraryBusy}
+                    readonly
+                    onclick={() => void pickLibraryRoot()}
+                    onkeydown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        void pickLibraryRoot();
+                      }
+                    }}
                     autocomplete="off"
                     spellcheck="false"
-                    placeholder="/path/to/music"
-                    class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 font-mono text-sm outline-none transition focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    placeholder="Click to choose a music folder"
+                    class="cursor-pointer rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 font-mono text-sm outline-none transition focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </div>
 

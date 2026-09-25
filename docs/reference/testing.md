@@ -84,6 +84,19 @@ Milestone 10 filesystem tests use temporary directories and cover:
 
 Normalization moves only confidently resolved preferred files. It preserves managed/external ownership, does not automatically delete external duplicates, and checks cancellation between file operations so an in-progress move can finish safely.
 
+### Acquisition provider boundary
+
+Milestone 12 acquisition tests use a deterministic fake provider and temporary application-data directories. Coverage includes:
+
+- multiple Spotify source references producing one durable acquisition job for the same logical library track
+- retryable provider failure advancing to a distinct candidate with a bounded attempt count
+- cooperative provider cancellation persisting a cancelled job
+- successful provider completion stopping at the durable `staged` state without creating or promoting a local audio file
+- failed provider jobs appearing automatically in the Issues projection
+- migration 6 creating the acquisition job table and indexes
+
+The native Milestone 12 smoke check should also verify that the Issues queue/detail panes remain visible and independently scrollable at the configured minimum window size, and that activating the Library root field opens the operating system folder picker and populates the selected path.
+
 ### Issues and manual resolution
 
 Milestone 11 coverage verifies the Issues UI as a projection over durable repository state rather than a separate ticket table. Coverage includes:

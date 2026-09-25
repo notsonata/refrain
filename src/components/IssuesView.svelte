@@ -15,6 +15,7 @@
     missingLocalFile: 0,
     inaccessibleCollection: 0,
     invalidLocalFile: 0,
+    acquisitionFailed: 0,
   };
   export let selectedIssueId: string | null = null;
   export let review: MatchReview | null = null;
@@ -48,6 +49,8 @@
         return 'Inaccessible';
       case 'invalidLocalFile':
         return 'Invalid file';
+      case 'acquisitionFailed':
+        return 'Acquisition failed';
     }
   }
 
@@ -59,6 +62,7 @@
       case 'inaccessibleCollection':
         return 'bg-amber-950 text-amber-300';
       case 'invalidLocalFile':
+      case 'acquisitionFailed':
         return 'bg-rose-950 text-rose-300';
     }
   }
@@ -74,7 +78,7 @@
   }
 </script>
 
-<div class="min-w-0">
+<div class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
   <div class="mb-5 flex flex-wrap items-end justify-between gap-4">
     <div>
       <p class="text-xs uppercase tracking-wider text-slate-600">
@@ -97,6 +101,9 @@
       >
       <span class="rounded bg-slate-900 px-2 py-1"
         >{counts.inaccessibleCollection} inaccessible</span
+      >
+      <span class="rounded bg-slate-900 px-2 py-1"
+        >{counts.acquisitionFailed} acquisition</span
       >
     </div>
   </div>
@@ -126,11 +133,13 @@
       </p>
     </div>
   {:else}
-    <div class="grid min-w-0 gap-5 xl:grid-cols-[20rem_minmax(0,1fr)]">
+    <div
+      class="grid min-h-0 min-w-0 flex-1 grid-cols-[14rem_minmax(0,1fr)] gap-4 overflow-hidden"
+    >
       <aside
-        class="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40"
+        class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40"
       >
-        <div class="max-h-[42rem] overflow-y-auto p-2">
+        <div class="min-h-0 flex-1 overflow-y-auto p-2">
           {#each issues as issue (issue.id)}
             <button
               type="button"
@@ -171,7 +180,9 @@
         {/if}
       </aside>
 
-      <section class="min-w-0 rounded-xl border border-slate-800 p-5">
+      <section
+        class="min-h-0 min-w-0 overflow-y-auto rounded-xl border border-slate-800 p-5"
+      >
         {#if selectedIssue}
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0">

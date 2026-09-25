@@ -9,6 +9,7 @@ pub enum IssueKind {
     MissingLocalFile,
     InaccessibleCollection,
     InvalidLocalFile,
+    AcquisitionFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +36,7 @@ pub struct IssueCounts {
     pub missing_local_file: usize,
     pub inaccessible_collection: usize,
     pub invalid_local_file: usize,
+    pub acquisition_failed: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

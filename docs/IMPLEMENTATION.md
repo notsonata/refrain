@@ -14,11 +14,11 @@ This plan records the implementation sequence from the initial project foundatio
 
 ## Current State
 
-Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 11 are complete.
+Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 11 are complete. Milestone 12 is implemented locally and awaiting final native UI smoke verification.
 
 The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, automated validation, native bundle configuration, and tag-triggered release packaging.
 
-Milestones 7 through 11, Local Library Index, Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, and Issues and Manual Resolution UI, are implemented. Milestone 12, Acquisition Provider Boundary, is next. Provider integration, exports, and scheduling remain future v1 work.
+Milestones 7 through 11, Local Library Index, Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, and Issues and Manual Resolution UI, are complete. Milestone 12, Acquisition Provider Boundary, now has its provider-neutral persistence/orchestration boundary, fake-provider coverage, acquisition status projection, failed-job issue projection, staging lifecycle, retry/cancellation behavior, and the two carried UI fixes implemented locally. Milestone 13, Sockseek Sidecar Provider, follows after the final native UI smoke check. Provider verification/import, exports, and scheduling remain future v1 work.
 
 The approved v1 direction remains:
 
@@ -641,6 +641,11 @@ Add:
 
 Create a fake provider for deterministic integration testing before implementing Sockseek.
 
+Carry forward the Milestone 11 manual-smoke-test UI follow-ups:
+
+- fix the Issues view desktop layout so issue-list and detail content remain fully visible and scrollable instead of being clipped
+- make the Library root path field open a native filesystem folder picker and populate the selected directory
+
 ### Dependencies
 
 Milestone 9.
@@ -655,6 +660,8 @@ With the fake provider, prove:
 - cancellation works
 - a successful provider job does not bypass Refrain verification
 - failed jobs become visible issues
+- Issues content remains visible and usable at supported desktop window sizes, with scrolling where needed
+- activating the Library root path field opens the native folder picker and applies the selected directory without requiring manual path entry
 
 ### Exit Criteria
 
