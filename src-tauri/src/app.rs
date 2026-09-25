@@ -2,13 +2,19 @@ use std::{error::Error, fs, path::PathBuf, sync::Arc};
 
 use tracing_subscriber::EnvFilter;
 
-use crate::{db::Database, source_sync::SourceRefreshControl, spotify::SpotifyClient};
+use crate::{
+    db::Database,
+    reconciliation::SyncCoordinator,
+    source_sync::SourceRefreshControl,
+    spotify::SpotifyClient,
+};
 
 pub struct AppState {
     pub app_data_dir: PathBuf,
     pub database: Arc<Database>,
     pub spotify: Arc<SpotifyClient>,
     pub source_refresh: Arc<SourceRefreshControl>,
+    pub sync: Arc<SyncCoordinator>,
 }
 
 impl AppState {
@@ -22,6 +28,7 @@ impl AppState {
             database,
             spotify,
             source_refresh: Arc::new(SourceRefreshControl::default()),
+            sync: Arc::new(SyncCoordinator::default()),
         }
     }
 }
