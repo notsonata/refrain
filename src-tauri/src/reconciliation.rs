@@ -13,6 +13,7 @@ use crate::{
     domain::{MatchOutcome, MatchTrackDescriptor, ReconciliationCounts, SyncRun, SyncRunPage},
     local_library::scan_library,
     matching::MatcherIndex,
+    normalization::{NormalizationError, normalize_resolved_files},
     saved_albums::{
         cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
         refresh_spotify_saved_albums,
@@ -319,18 +320,45 @@ fn run_initial_sync(
     }
     let reconciliation = run_reconciliation_core(database, run_id, || sync.is_cancelled());
     drop(source_guard);
-    match reconciliation {
-        Ok(counts) => Ok(counts),
+    let counts = match reconciliation {
+        Ok(counts) => counts,
         Err(ReconciliationFailure::Cancelled(counts)) => {
-            Err(SyncExecutionFailure::Cancelled(counts))
+            return Err(SyncExecutionFailure::Cancelled(counts));
         }
-        Err(ReconciliationFailure::Database(error)) => Err(SyncExecutionFailure::Failed {
-            counts: empty_counts,
+        Err(ReconciliationFailure::Database(error)) => {
+            return Err(SyncExecutionFailure::Failed {
+                counts: empty_counts,
+                message: error.to_string(),
+            });
+        }
+        Err(ReconciliationFailure::InvalidState(message)) => {
+            return Err(SyncExecutionFailure::Failed {
+                counts: empty_counts,
+                message,
+            });
+        }
+    };
+
+    if sync.is_cancelled() {
+        return Err(SyncExecutionFailure::Cancelled(counts));
+    }
+    database
+        .update_sync_run_phase(run_id, "normalizeFiles")
+        .map_err(|error| failed(counts, "update sync phase", error))?;
+    match normalize_resolved_files(database, Path::new(&library_root), || sync.is_cancelled()) {
+        Ok(summary) => {
+            tracing::info!(
+                run_id,
+                moved = summary.moved,
+                unchanged = summary.unchanged,
+                "filesystem normalization completed"
+            );
+            Ok(counts)
+        }
+        Err(NormalizationError::Cancelled) => Err(SyncExecutionFailure::Cancelled(counts)),
+        Err(error) => Err(SyncExecutionFailure::Failed {
+            counts,
             message: error.to_string(),
-        }),
-        Err(ReconciliationFailure::InvalidState(message)) => Err(SyncExecutionFailure::Failed {
-            counts: empty_counts,
-            message,
         }),
     }
 }
