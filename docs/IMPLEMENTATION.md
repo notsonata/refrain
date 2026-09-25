@@ -10,20 +10,19 @@ Use these documents for detail rather than duplicating them here:
 - `docs/SPEC.md` for product behavior and acceptance criteria
 - `docs/TDD.md` for architecture, schema, algorithms, interfaces, security, and testing strategy
 
-This plan covers the path from the current documentation-only repository through v0.1.0 and v1.0.0.
+This plan records the implementation sequence from the initial project foundation through v0.1.0 and the planned path to v1.0.0.
 
 ## Current State
 
-The repository currently contains project documentation only.
+Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 6 are complete.
 
-There is no application scaffold, database, frontend, Rust backend, CI workflow, packaging configuration, or test suite yet.
+The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, automated validation, native bundle configuration, and tag-triggered release packaging.
 
-The approved implementation direction is:
+Milestone 7, Local Library Index, is the next implementation milestone. Local-library indexing, matching, reconciliation, acquisition, normalization, exports, and scheduling remain future v1 work.
 
-- Tauri 2 desktop application
-- Svelte 5 + TypeScript + Vite frontend
-- Rust application core
-- SQLite persistence
+The approved v1 direction remains:
+
+- Rust application core with SQLite persistence
 - direct Spotify integration using Authorization Code with PKCE
 - provider-neutral acquisition layer with Sockseek as the initial provider
 - normalized local library owned and reconciled by Refrain

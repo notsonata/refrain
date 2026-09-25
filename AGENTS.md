@@ -10,9 +10,9 @@
 
 ### Current State
 
-Milestones 1 through 5 of the v0.1.0 development line are implemented and verified. The Saved Albums scope extension, its virtualized track-list regression fix, and the native desktop resize correction are merged and manually verified on macOS.
+Milestones 1 through 6 are complete for the v0.1.0 development line. Refrain v0.1.0 was released on 2026-09-25 with the Spotify-only desktop experience, release packaging, cross-platform build smoke checks, and tag-triggered GitHub Release automation in place.
 
-Milestone 6, v0.1 Hardening and Release, is active. The current release-hardening work adds native bundle metadata, cross-platform Tauri build smoke checks, tag-triggered GitHub Release packaging, stable setup/testing/release references, and the initial release changelog.
+Milestone 7, Local Library Index, is the next implementation milestone. No local-library indexing or file-normalization work has been implemented yet.
 
 The repository currently includes:
 

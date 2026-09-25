@@ -2,7 +2,7 @@
 
 All notable released changes to Refrain are documented here.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-09-25
 
 ### Added
 

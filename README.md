@@ -6,11 +6,9 @@ It is being built to import Spotify playlists, Liked Songs, and saved albums, re
 
 ## Project Status
 
-Refrain is under active development and does not have a released version yet.
+Refrain v0.1.0 was released on 2026-09-25, completing Milestones 1 through 6. The project remains under active development toward v1.0.0.
 
-Milestones 1 through 5 of the v0.1.0 development line are implemented and verified. The Saved Albums scope extension, its virtualized-list regression fix, and the native window resize correction are also merged and manually verified on macOS.
-
-**Milestone 6: v0.1 Hardening and Release** is active. Current work covers native packaging, cross-platform build checks, release automation, final error/log review, stable reference documentation, and the first v0.1.0 release artifacts.
+**Milestone 7: Local Library Index** is the next implementation milestone.
 
 For current project state, see [`docs/STATUS.md`](docs/STATUS.md).
 

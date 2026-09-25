@@ -2,11 +2,9 @@
 
 ## Current State
 
-Milestones 1 through 5 are merged and verified for the v0.1.0 development line. The Saved Albums v0.1 scope extension, virtualized track-list regression fix, and native desktop resize correction are also merged and manually verified on macOS.
+Milestones 1 through 6 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release.
 
-Milestone 6, **v0.1 Hardening and Release**, is now active.
-
-The application includes:
+The released application includes:
 
 - the Tauri/Svelte/Rust application foundation
 - SQLite persistence for v0.1 source state and application settings
@@ -31,29 +29,26 @@ The application includes:
 - restart hydration from SQLite without requiring a source refresh
 - lazy artwork loading and a virtualized track list with paginated backend reads
 - a viewport-bound desktop shell with panel-local scrolling and track virtualization that follows the available window height
+- native application bundles and cross-platform Tauri build smoke checks
+- tag-triggered GitHub Release packaging
+
+The real Spotify authentication, source-refresh, desktop browsing, Saved Albums refresh/browse, and native resize smoke tests passed on macOS for the v0.1 development line.
 
 ## Active Work
 
-Complete Milestone 6 release hardening:
+Milestone 7, **Local Library Index**, is the next implementation milestone. No Milestone 7 implementation work is currently recorded.
 
-- enable native installer/application bundles
-- add Windows, macOS, and Linux Tauri build smoke checks
-- add tag-triggered GitHub Release packaging
-- harden fallback Spotify error messaging
-- verify clean-database migration, restart persistence, and log-secret handling
-- stabilize setup, testing, release, and codebase reference documentation
-- prepare the initial `CHANGELOG.md`
-
-The real Spotify authentication smoke test for Milestone 3, source-refresh smoke test for Milestone 4, desktop browsing smoke test for Milestone 5, remaining Saved Albums refresh/browse checks, and native resize checks have passed on macOS.
+Its existing scope is defined in `docs/IMPLEMENTATION.md` and begins with observational local-library indexing without moving or normalizing user files.
 
 ## Recent Changes
 
-- completed the remaining Saved Albums smoke test, including album ordering, restart hydration, rendering, and unsaved-album removal behavior
-- verified native window resizing at the configured minimum size and larger sizes across the browsing and Settings views
-- merged first-class Spotify Saved Albums support through PR #16
-- merged the stale virtual-scroll fix through PR #17
-- merged the native viewport sizing correction through PR #19
-- recorded the saved-album source-model decision in `docs/decisions/002-saved-albums-as-source-collections.md`
+- released Refrain v0.1.0 on 2026-09-25
+- completed Milestone 6 release hardening and tagged-release packaging
+- added Windows, macOS, and Linux Tauri build smoke checks
+- added native application bundle metadata and version-tag GitHub Release automation
+- hardened fallback Spotify error messaging
+- stabilized setup, testing, release, and codebase reference documentation
+- completed the Saved Albums smoke test, native resize verification, and virtualized track-list regression fix
 
 ## Known Issues
 
@@ -63,19 +58,15 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Finish the Milestone 6 validation set, merge the release-hardening work, then tag `v0.1.0` to produce the first GitHub Release packages.
-
-After v0.1.0 is released, begin **Milestone 7: Local Library Index**.
+Begin **Milestone 7: Local Library Index** according to `docs/IMPLEMENTATION.md`.
 
 ## Blockers
 
-No implementation blocker is currently known.
+No implementation blocker is currently documented.
 
 Public code signing and macOS notarization remain credential-dependent and are not required for local unsigned development builds.
 
 ## Open Decisions
-
-No unresolved product or architectural decision blocks Milestone 6.
 
 The saved-album source-model decision is recorded in ADR 002. The deferred technical questions in `docs/TDD.md` remain deferred until their affected implementation areas begin.
 
