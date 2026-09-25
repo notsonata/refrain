@@ -3,11 +3,7 @@ import type { InvokeFn } from './app-info';
 
 export type SyncTrigger = 'manual' | 'startup' | 'scheduled';
 export type SyncStatus =
-  | 'running'
-  | 'succeeded'
-  | 'partial'
-  | 'failed'
-  | 'cancelled';
+  'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled';
 
 export interface SyncRun {
   id: number;
