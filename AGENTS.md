@@ -504,36 +504,40 @@ Do not claim verification that was not performed.
 
 ## Documentation Updates
 
-Documentation review is part of completing meaningful work.
+Documentation review is required for every completed project task.
 
-Before considering a substantial task, milestone, or release complete, review the repository documentation and update any document whose owned knowledge changed.
+Before any project work is considered complete, review the repository documentation and update every document whose owned knowledge changed. Do this after implementation and validation are finished so the docs describe the final project state.
+
+When work is completed during the current task, perform a final documentation sync before reporting completion. This applies regardless of whether the work used a pull request, direct local changes, milestone work, release work, or another workflow. In particular, remove stale descriptions of completed work as active, update the current milestone or next work, and make sure release state is accurate.
 
 At minimum:
 
-- update `docs/STATUS.md` whenever current state, active work, recent meaningful changes, known issues, next work, blockers, open decisions, or relevant context changed
-- update `AGENTS.md` when repository-wide instructions, commands, stack, important paths, or current high-level implementation state changed
+- update `docs/STATUS.md` after completed project work when current state, active work, recent meaningful changes, known issues, next work, blockers, open decisions, or relevant context changed
+- update `AGENTS.md` when repository-wide instructions, commands, stack, important paths, current milestone, release state, or high-level implementation state changed
 - update the codebase map when navigation-relevant structure changes
-- update planning docs when documented product or technical decisions change
+- update planning docs when documented product or technical decisions, milestone state, or implementation assumptions change
 - create or update ADRs for significant durable decisions
 - update reference docs when their subject changes
-- update `CHANGELOG.md` only when meaningful released changes exist
+- update `CHANGELOG.md` when a release is published or released behavior changes
 
-Do not leave documentation knowingly stale after implementation work.
+Project work that changes documented project state is not complete while the corresponding docs still describe the previous state.
 
-Do not update documentation merely because files were touched.
+Do not update documentation merely because files were touched. If a document was reviewed and no owned knowledge changed, leave it unchanged.
 
 Avoid duplicating the same information across documents.
 
 ## Done Criteria
 
-A task is complete when:
+A project task is complete when:
 
 1. requested behavior is implemented
 2. relevant validation passed, or skipped validation is explained
-3. a final documentation review was performed and necessary documentation is updated
-4. current project context is accurate
-5. no required follow-up is hidden
-6. completion reporting accurately describes the work
+3. a final documentation review was performed after implementation and validation
+4. all docs affected by the work reflect the final completed state
+5. `docs/STATUS.md` no longer presents completed or merged work as active when the project state changed
+6. current project context, milestone state, and release state are accurate
+7. no required follow-up is hidden
+8. completion reporting accurately describes the work
 
 ## Communication
 
