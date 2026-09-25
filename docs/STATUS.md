@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 8 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, and a Milestone 9 Reconciliation Core implementation on the current development branch.
+Milestones 1 through 9 are complete and merged. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, and a Milestone 10 Filesystem Normalization and Ownership Safety implementation on the current development branch.
 
 The application includes:
 
@@ -12,29 +12,32 @@ The application includes:
 - `track_links` and `track_rejections` persistence for matching decisions
 - deterministic metadata normalization, bounded candidate generation, compatibility rules, scoring, and automatic/review/unresolved match outcomes
 - persisted user confirmations and rejections exposed through Tauri commands and typed frontend wrappers
-- `sync_runs` persistence with prepare-through-matching phase tracking
+- `sync_runs` persistence with prepare-through-normalization phase tracking
 - one-active-sync coordination with cooperative cancellation at synchronization phase boundaries
 - source-to-library reconciliation that reuses persisted links, creates stable `LibraryTrack` records, resolves preferred present files, and classifies desired tracks as matched, missing, or needing review
+- canonical filesystem normalization for confidently resolved preferred files, using Spotify track metadata for stable artist/album/track paths
+- cross-platform filename sanitization, case-insensitive collision handling, stable collision suffixes, case-only rename staging, and verified copy fallback for cross-filesystem moves
+- path-boundary validation plus ownership-preserving moves that keep external files external and never automatically delete external duplicates
+- Trash / Recycle Bin integration guarded to managed files for future cleanup work
 - typed sync-run Tauri commands and frontend wrappers for starting, cancelling, reading, and listing synchronization runs
 
-Milestones 7 through 9 remain non-destructive with respect to library ownership. Milestone 9 does not acquire, move, normalize, or delete user audio files.
+Milestones 7 through 9 remain non-destructive with respect to user audio. Milestone 10 may move confidently resolved preferred files into the canonical library structure, but it preserves each file's ownership classification and does not automatically delete external files.
 
 ## Active Work
 
-Milestone 9, **Reconciliation Core**, is implemented on the current development branch. The implementation includes dedicated reconciliation coverage for idempotency, shared library-track identity, duplicate playlist positions, manual decisions, cross-collection references, and cancellation-preserved committed state.
+Milestone 10, **Filesystem Normalization and Ownership Safety**, is implemented on the current development branch. The implementation extends synchronization with a `normalizeFiles` phase after reconciliation and includes focused filesystem coverage for sanitization, stable collisions, case-only renames, path traversal rejection, move fallback failures, and ownership preservation.
 
-Static, type, lint, formatting, and build validation should pass before merge. The dedicated test suites remain part of pull-request/CI validation.
+Local validation passes frontend formatting, lint, Svelte/TypeScript checks, 23 frontend tests, the production build, Rust formatting and Clippy, all 62 non-Spotify Rust tests, the 9 focused normalization tests, and the native Tauri no-bundle build. The full Rust suite was also attempted; six Spotify loopback-listener tests cannot run in this sandbox because local socket binding is denied.
 
 ## Recent Changes
 
-- added `sync_runs` persistence and paginated run history
-- added one-active-sync coordination and cancellation across source refresh and reconciliation boundaries
-- added initial synchronization phases for Spotify refresh, local-library scan, persisted-link resolution, matching, and missing-library-track creation
-- added stable canonical `LibraryTrack` creation and preferred-present-file resolution
-- added matched, missing, and needs-review reconciliation classification
-- added `start_sync`, `cancel_sync`, `get_sync_run`, and `list_sync_runs` Tauri commands plus typed frontend wrappers
-- added focused reconciliation integration coverage for the Milestone 9 verification cases
-- retained the Milestone 7 observational local-library safeguards and Milestone 8 matching behavior
+- merged Milestone 9 Reconciliation Core with durable sync runs, one-active-sync coordination, stable source-to-library reconciliation, and cancellation-preserved committed state
+- added canonical normalized path construction with single-disc and multi-disc filenames plus unknown album/year fallbacks
+- added NFKC filesystem sanitization, Windows reserved-name protection, deterministic component shortening, and case-insensitive collision suffixing
+- added atomic rename behavior, case-only rename staging, verified cross-filesystem copy-and-move fallback, and safe path-boundary checks
+- preserved preferred-file and managed/external ownership state after moves; external files are never automatically deleted
+- added managed-file Trash / Recycle Bin integration for future cleanup workflows
+- added Milestone 10 filesystem normalization tests covering the implementation-plan verification cases
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
@@ -45,7 +48,7 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Validate and merge **Milestone 9: Reconciliation Core**, then begin **Milestone 10: Filesystem Normalization and Ownership Safety** according to `docs/IMPLEMENTATION.md`.
+Validate and merge **Milestone 10: Filesystem Normalization and Ownership Safety**, then begin **Milestone 11: Issues and Manual Resolution UI** according to `docs/IMPLEMENTATION.md`.
 
 ## Blockers
 
@@ -65,7 +68,7 @@ The saved-album source-model decision is recorded in ADR 002. The deferred techn
 - `docs/IMPLEMENTATION.md` defines milestone order and verification gates.
 - `docs/reference/codebase-map.md` maps the current source structure.
 - `docs/reference/setup.md` documents local setup and library-root configuration.
-- `docs/reference/testing.md` documents validation coverage, including local-library, matcher, and reconciliation tests.
+- `docs/reference/testing.md` documents validation coverage, including local-library, matcher, reconciliation, and filesystem-normalization tests.
 - `docs/reference/release.md` documents tag-driven release packaging.
 - `docs/decisions/001-fixed-spotify-callback-port.md` records the fixed callback-port decision.
 - `docs/decisions/002-saved-albums-as-source-collections.md` records the saved-album persistence and identity model.

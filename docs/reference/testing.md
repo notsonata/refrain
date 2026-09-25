@@ -66,7 +66,21 @@ Milestone 9 reconciliation tests cover:
 - cancellation while preserving already committed valid state
 - typed frontend sync command wrappers
 
-Reconciliation remains non-destructive at this milestone: it may scan and update persisted state, but it does not download, move, normalize, or delete user audio files.
+The Milestone 9 reconciliation core itself does not download, move, normalize, or delete user audio files. Later sync phases may act on its confidently resolved output.
+
+### Filesystem normalization
+
+Milestone 10 filesystem tests use temporary directories and cover:
+
+- Windows-invalid characters and reserved device names
+- consistent Unicode normalization and deterministic long-component shortening
+- single-disc and multi-disc canonical paths plus unknown album/year fallbacks
+- case-insensitive path collisions, stable suffixing, and case-only rename staging
+- atomic rename failures and verified cross-filesystem copy failures
+- path traversal and library-root boundary rejection
+- preservation of external ownership and preferred-file state after normalization
+
+Normalization moves only confidently resolved preferred files. It preserves managed/external ownership, does not automatically delete external duplicates, and checks cancellation between file operations so an in-progress move can finish safely.
 
 ### Desktop build smoke checks
 

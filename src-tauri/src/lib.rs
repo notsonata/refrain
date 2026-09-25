@@ -4,6 +4,7 @@ mod db;
 mod domain;
 mod local_library;
 mod matching;
+mod normalization;
 mod reconciliation;
 mod saved_albums;
 mod security;

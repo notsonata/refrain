@@ -37,7 +37,8 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/saved_albums.rs` — saved-album retrieval and refresh integration
 - `src-tauri/src/local_library.rs` — observational local-library scanner, metadata extraction, lazy hashing, moved-file recovery, and scan progress
 - `src-tauri/src/matching.rs` — deterministic metadata normalization, candidate indexing, compatibility checks, scoring, and match classification
-- `src-tauri/src/reconciliation.rs` — sync coordination, initial sync orchestration, reconciliation commands, cancellation, and matched/missing/review classification
+- `src-tauri/src/reconciliation.rs` — sync coordination, initial sync orchestration through filesystem normalization, reconciliation commands, cancellation, and matched/missing/review classification
+- `src-tauri/src/normalization.rs` — canonical library paths, portable filename sanitization, collision handling, safe moves, ownership-safe normalization, and guarded platform Trash integration
 - `src-tauri/src/security.rs` — OS credential-store abstraction for Spotify refresh credentials
 
 ## Persistence
@@ -51,6 +52,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/db/local_library.rs` — local-file persistence, overview/pages, hash persistence, missing-state updates, and preferred-file selection
 - `src-tauri/src/db/matching.rs` — source/library match descriptors plus persisted confirmations and rejections
 - `src-tauri/src/db/reconciliation.rs` — sync-run persistence, accessible-source projection, library-track materialization, automatic links, and preferred-file resolution
+- `src-tauri/src/db/normalization.rs` — confidently resolved preferred-file projection and post-normalization path persistence
 - `src-tauri/migrations/0003_local_library.sql` — `library_tracks` and `local_files` v1 schema/indexes
 - `src-tauri/migrations/0004_matching.sql` — `track_links` and `track_rejections` schema/indexes
 - `src-tauri/migrations/0005_reconciliation.sql` — `sync_runs` persistence and chronological index
@@ -85,7 +87,8 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 | Browse persisted collections | `src-tauri/src/db/source_browse.rs`, `src/lib/source.ts`, `src/App.svelte` |
 | Local library scanning/indexing | `src-tauri/src/local_library.rs`, `src-tauri/src/db/local_library.rs`, `src/lib/library.ts`, `src/App.svelte` |
 | Matching and manual decisions | `src-tauri/src/matching.rs`, `src-tauri/src/db/matching.rs`, `src/lib/matching.ts` |
-| Full sync through reconciliation | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src/lib/sync.ts` |
+| Full sync through normalization | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src/lib/sync.ts` |
+| Filesystem normalization / ownership safety | `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src-tauri/src/db/local_library.rs` |
 | Database migrations | `src-tauri/migrations/`, `src-tauri/src/db/mod.rs` |
 | Window/layout behavior | `src/App.svelte`, `src/app.css`, `src-tauri/tauri.conf.json` |
 | CI/build validation | `.github/workflows/ci.yml`, `docs/reference/testing.md` |

@@ -1,6 +1,7 @@
 mod local_library;
 mod matching;
 mod migrations;
+mod normalization;
 mod reconciliation;
 mod saved_albums;
 mod settings;
@@ -22,6 +23,7 @@ use crate::domain::{AppSettings, CollectionEntry, SourceAccount, SourceCollectio
 
 pub(crate) use local_library::LocalFileWrite;
 use migrations::MIGRATIONS;
+pub(crate) use normalization::NormalizationCandidate;
 
 #[derive(Debug)]
 pub struct Database {
