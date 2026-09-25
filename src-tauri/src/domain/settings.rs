@@ -27,6 +27,14 @@ impl Default for AppSettings {
 impl AppSettings {
     pub fn validate(&self) -> Result<(), &'static str> {
         if self
+            .library_root
+            .as_deref()
+            .is_some_and(|root| root.trim().is_empty())
+        {
+            return Err("Library root cannot be empty");
+        }
+
+        if self
             .sync_interval_minutes
             .is_some_and(|minutes| minutes <= 0)
         {
@@ -72,6 +80,16 @@ mod tests {
             settings.validate(),
             Err("sync interval must be greater than zero")
         );
+    }
+
+    #[test]
+    fn library_root_cannot_be_blank() {
+        let settings = AppSettings {
+            library_root: Some("   ".into()),
+            ..AppSettings::default()
+        };
+
+        assert_eq!(settings.validate(), Err("Library root cannot be empty"));
     }
 
     #[test]

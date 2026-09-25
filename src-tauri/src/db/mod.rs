@@ -1,3 +1,4 @@
+mod local_library;
 mod migrations;
 mod saved_albums;
 mod settings;
@@ -17,6 +18,7 @@ use rusqlite::Connection;
 
 use crate::domain::{AppSettings, CollectionEntry, SourceAccount, SourceCollection, SourceTrack};
 
+pub(crate) use local_library::LocalFileWrite;
 use migrations::MIGRATIONS;
 
 #[derive(Debug)]
@@ -126,6 +128,7 @@ pub enum DatabaseError {
     Sqlite(rusqlite::Error),
     Migration(rusqlite_migration::Error),
     LockPoisoned,
+    InvalidState(String),
 }
 
 impl fmt::Display for DatabaseError {
@@ -135,6 +138,7 @@ impl fmt::Display for DatabaseError {
             Self::Sqlite(error) => write!(formatter, "sqlite error: {error}"),
             Self::Migration(error) => write!(formatter, "database migration error: {error}"),
             Self::LockPoisoned => formatter.write_str("database connection lock is poisoned"),
+            Self::InvalidState(message) => formatter.write_str(message),
         }
     }
 }
@@ -259,7 +263,18 @@ mod tests {
 
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
-        assert_eq!(user_version, 2);
+        assert_eq!(user_version, 3);
+
+        for table in ["library_tracks", "local_files"] {
+            let exists: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("library table lookup should succeed");
+            assert_eq!(exists, 1, "{table} should exist after migration");
+        }
         assert_eq!(database.path(), test_path.path.as_path());
     }
 

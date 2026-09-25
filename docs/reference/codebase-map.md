@@ -14,11 +14,12 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 ## Frontend
 
 - `src/main.ts` — frontend entry point
-- `src/App.svelte` — desktop shell, navigation, Spotify connect/refresh flows, and collection views
+- `src/App.svelte` — desktop shell, navigation, Spotify connect/refresh flows, collection views, and local-library Settings controls
 - `src/app.css` — application shell and viewport/layout rules
 - `src/components/TrackList.svelte` — virtualized track rows and lazy artwork
 - `src/lib/app-info.ts` — application-info Tauri command wrapper
 - `src/lib/settings.ts` — settings command wrapper
+- `src/lib/library.ts` — local-library overview, paginated file, scan, hash, and preferred-file command wrappers
 - `src/lib/spotify.ts` — Spotify auth/refresh command wrappers and user-facing error formatting
 - `src/lib/source.ts` — persisted source browse command wrappers and types
 - `src/**/*.test.ts` — Vitest coverage for frontend helpers/components
@@ -32,6 +33,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/spotify.rs` — Spotify PKCE authentication, token lifecycle, and Spotify client behavior
 - `src-tauri/src/source_sync.rs` — Spotify profile, Liked Songs, playlists, retry/rate-limit handling, progress, and cancellation
 - `src-tauri/src/saved_albums.rs` — saved-album retrieval and refresh integration
+- `src-tauri/src/local_library.rs` — observational local-library scanner, metadata extraction, lazy hashing, moved-file recovery, and scan progress
 - `src-tauri/src/security.rs` — OS credential-store abstraction for Spotify refresh credentials
 
 ## Persistence
@@ -41,7 +43,9 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/db/source.rs` — source account/collection/track persistence
 - `src-tauri/src/db/source_refresh.rs` — transactional Spotify refresh persistence
 - `src-tauri/src/db/saved_albums.rs` — saved-album replacement/removal persistence
-- `src-tauri/src/db/source_browse.rs` — paginated browse projections used by the desktop UI
+- `src-tauri/src/db/source_browse.rs` — paginated Spotify browse projections used by the desktop UI
+- `src-tauri/src/db/local_library.rs` — local-file persistence, overview/pages, hash persistence, missing-state updates, and preferred-file selection
+- `src-tauri/migrations/0003_local_library.sql` — `library_tracks` and `local_files` v1 schema/indexes
 - `src-tauri/migrations/` — SQLite migrations
 
 ## Packaging and configuration
@@ -71,6 +75,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 | Spotify sign-in / reconnect | `src-tauri/src/spotify.rs`, `src-tauri/src/commands/mod.rs`, `src/lib/spotify.ts` |
 | Spotify source refresh | `src-tauri/src/source_sync.rs`, `src-tauri/src/saved_albums.rs` |
 | Browse persisted collections | `src-tauri/src/db/source_browse.rs`, `src/lib/source.ts`, `src/App.svelte` |
+| Local library scanning/indexing | `src-tauri/src/local_library.rs`, `src-tauri/src/db/local_library.rs`, `src/lib/library.ts`, `src/App.svelte` |
 | Database migrations | `src-tauri/migrations/`, `src-tauri/src/db/mod.rs` |
 | Window/layout behavior | `src/App.svelte`, `src/app.css`, `src-tauri/tauri.conf.json` |
 | CI/build validation | `.github/workflows/ci.yml`, `docs/reference/testing.md` |

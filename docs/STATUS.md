@@ -2,53 +2,38 @@
 
 ## Current State
 
-Milestones 1 through 6 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release.
+Milestones 1 through 7 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index.
 
-The released application includes:
+The application includes:
 
-- the Tauri/Svelte/Rust application foundation
-- SQLite persistence for v0.1 source state and application settings
-- Spotify Client ID configuration
-- Authorization Code with PKCE
-- a fixed loopback OAuth callback at `http://127.0.0.1:43817/callback`
-- OS credential-store persistence for Spotify refresh credentials
-- in-memory Spotify access tokens with refresh and reconnect behavior
-- current-user profile retrieval
-- paginated Liked Songs, saved-album, playlist, and playlist-item retrieval
-- collection-level transactional source updates
-- playlist snapshot reuse when persisted entries are complete
-- saved albums represented as ordered `saved_album` source collections using shared Spotify track identities
-- inaccessible playlist and unavailable item preservation
-- bounded handling for 401, 429, transient network failures, and Spotify 5xx responses
-- manual source refresh progress and cooperative cancellation, including the saved-album phase
-- persisted-source read projections for desktop browsing
-- Liked Songs, Saved Albums, Playlists, and Settings navigation
-- saved-album and playlist detail with source ordering preserved
-- playlist detail with intentional duplicate entries preserved
-- loading, empty, inaccessible, disconnected, refresh, and error states
-- restart hydration from SQLite without requiring a source refresh
-- lazy artwork loading and a virtualized track list with paginated backend reads
-- a viewport-bound desktop shell with panel-local scrolling and track virtualization that follows the available window height
-- native application bundles and cross-platform Tauri build smoke checks
-- tag-triggered GitHub Release packaging
+- the released v0.1 Spotify authentication, synchronization, persisted browsing, desktop UI, packaging, and release automation
+- a configurable local-library root stored in application settings
+- `library_tracks` and `local_files` v1 persistence schema
+- recursive local audio scanning for FLAC, MP3, M4A/AAC, OGG, Opus, WAV, and ALAC paths supported by the metadata layer
+- `lofty` metadata/property extraction with invalid-file visibility
+- incremental rescans using file size and modification time
+- lazy BLAKE3 hashing with stale-hash invalidation after file changes
+- present, missing, and invalid local-file state
+- conservative moved/renamed-file recovery using known hashes or strong metadata
+- duplicate-safe physical-file indexing and preferred-file selection primitives
+- local-library scan progress events and paginated local-file queries
+- Settings controls for saving the library root, starting a scan, and viewing index counts/progress
 
-The real Spotify authentication, source-refresh, desktop browsing, Saved Albums refresh/browse, and native resize smoke tests passed on macOS for the v0.1 development line.
+Milestone 7 scanning is observational. It does not move, rename, normalize, delete, or acquire user audio files.
 
 ## Active Work
 
-Milestone 7, **Local Library Index**, is the next implementation milestone. No Milestone 7 implementation work is currently recorded.
+Milestone 7, **Local Library Index**, is implemented and passes its automated verification set.
 
-Its existing scope is defined in `docs/IMPLEMENTATION.md` and begins with observational local-library indexing without moving or normalizing user files.
+No Milestone 8 implementation work is currently recorded.
 
 ## Recent Changes
 
+- implemented Milestone 7 local-library schema, domain types, scanner, persistence, IPC commands, and Settings controls
+- added incremental scanning, lazy BLAKE3 hashing, moved-file recovery, invalid/missing state, preferred-file primitives, and paginated queries
+- added filesystem integration coverage for new, unchanged, changed, removed, moved, malformed, unsupported, symlink, duplicate, and large-directory cases
+- verified frontend format/lint/type checks, frontend tests/build, Rust format/Clippy/tests, and a native Tauri no-bundle release build
 - released Refrain v0.1.0 on 2026-09-25
-- completed Milestone 6 release hardening and tagged-release packaging
-- added Windows, macOS, and Linux Tauri build smoke checks
-- added native application bundle metadata and version-tag GitHub Release automation
-- hardened fallback Spotify error messaging
-- stabilized setup, testing, release, and codebase reference documentation
-- completed the Saved Albums smoke test, native resize verification, and virtualized track-list regression fix
 
 ## Known Issues
 
@@ -58,7 +43,7 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Begin **Milestone 7: Local Library Index** according to `docs/IMPLEMENTATION.md`.
+Begin **Milestone 8: Matching Engine** according to `docs/IMPLEMENTATION.md`.
 
 ## Blockers
 
@@ -74,11 +59,11 @@ The saved-album source-model decision is recorded in ADR 002. The deferred techn
 
 - `docs/BRIEF.md` defines project purpose and release boundaries.
 - `docs/SPEC.md` defines v0.1.0 and v1.0.0 behavior and acceptance criteria.
-- `docs/TDD.md` defines the baseline technical architecture and desktop data flow.
+- `docs/TDD.md` defines the technical architecture, local-library scanner design, and desktop data flow.
 - `docs/IMPLEMENTATION.md` defines milestone order and verification gates.
 - `docs/reference/codebase-map.md` maps the current source structure.
-- `docs/reference/setup.md` documents local setup and commands.
-- `docs/reference/testing.md` documents validation coverage.
+- `docs/reference/setup.md` documents local setup and library-root configuration.
+- `docs/reference/testing.md` documents validation coverage, including local-library scanner tests.
 - `docs/reference/release.md` documents tag-driven release packaging.
 - `docs/decisions/001-fixed-spotify-callback-port.md` records the fixed callback-port decision.
 - `docs/decisions/002-saved-albums-as-source-collections.md` records the saved-album persistence and identity model.

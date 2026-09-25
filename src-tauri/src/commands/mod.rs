@@ -6,7 +6,14 @@ use tauri::Emitter;
 use crate::{
     app::AppState,
     db::{Database, DatabaseError},
-    domain::{AppSettings, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview},
+    domain::{
+        AppSettings, LocalFilePage, LocalLibraryOverview, SourceCollectionListPage,
+        SourceCollectionPage, SpotifySourceOverview,
+    },
+    local_library::{
+        LOCAL_LIBRARY_SCAN_PROGRESS_EVENT, LocalLibraryError, LocalLibraryScanSummary,
+        ensure_local_file_hash, scan_library,
+    },
     saved_albums::{
         cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
         refresh_spotify_saved_albums,
@@ -50,6 +57,83 @@ pub fn update_settings(
         .database
         .update_settings(&settings)
         .map_err(|error| command_database_error("update settings", error))
+}
+
+#[tauri::command]
+pub fn get_local_library_overview(
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalLibraryOverview, String> {
+    state
+        .database
+        .local_library_overview()
+        .map_err(|error| command_database_error("load local library overview", error))
+}
+
+#[tauri::command]
+pub fn list_local_files(
+    offset: u32,
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalFilePage, String> {
+    state
+        .database
+        .local_files_page(offset, limit)
+        .map_err(|error| command_database_error("load local files", error))
+}
+
+#[tauri::command]
+pub async fn scan_local_library(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalLibraryScanSummary, String> {
+    let root = state
+        .database
+        .get_settings()
+        .map_err(|error| command_database_error("load library configuration", error))?
+        .library_root
+        .filter(|root| !root.trim().is_empty())
+        .ok_or_else(|| "Choose a local library folder in Settings before scanning.".to_owned())?;
+    let database = Arc::clone(&state.database);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_library(&database, Path::new(&root), |progress| {
+            if let Err(error) = app.emit(LOCAL_LIBRARY_SCAN_PROGRESS_EVENT, progress) {
+                tracing::warn!(%error, "local library scan progress event failed");
+            }
+        })
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "local library scan worker failed");
+        "Local library scan stopped unexpectedly.".to_owned()
+    })?
+    .map_err(local_library_error)
+}
+
+#[tauri::command]
+pub async fn hash_local_file(
+    local_file_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let database = Arc::clone(&state.database);
+    tauri::async_runtime::spawn_blocking(move || ensure_local_file_hash(&database, local_file_id))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "local file hash worker failed");
+            "Local file hashing stopped unexpectedly.".to_owned()
+        })?
+        .map_err(local_library_error)
+}
+
+#[tauri::command]
+pub fn set_preferred_local_file(
+    local_file_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .set_preferred_local_file(local_file_id)
+        .map_err(|error| command_database_error("set preferred local file", error))
 }
 
 #[tauri::command]
@@ -259,6 +343,11 @@ fn spotify_database_error(operation: &str, error: DatabaseError) -> SpotifyAuthE
 fn source_refresh_database_error(operation: &str, error: DatabaseError) -> SourceRefreshError {
     tracing::error!(%error, operation, "Spotify source refresh persistence command failed");
     SourceRefreshError::new("persistenceFailed", format!("Failed to {operation}."))
+}
+
+fn local_library_error(error: LocalLibraryError) -> String {
+    tracing::error!(%error, "local library command failed");
+    error.to_string()
 }
 
 fn command_database_error(operation: &str, error: DatabaseError) -> String {
