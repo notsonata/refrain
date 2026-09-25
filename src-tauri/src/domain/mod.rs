@@ -1,5 +1,6 @@
 pub(crate) mod library;
 pub(crate) mod matching;
+pub(crate) mod reconciliation;
 mod settings;
 mod source;
 
@@ -8,6 +9,8 @@ pub(crate) use matching::MatchTrackDescriptor;
 pub use matching::{
     MatchCandidateEvidence, MatchOutcome, MatchRelationship, MatchResult, MatchScoreBreakdown,
 };
+pub(crate) use reconciliation::ReconciliationCounts;
+pub use reconciliation::{SyncRun, SyncRunPage};
 pub use settings::AppSettings;
 pub use source::{
     CollectionEntry, SourceAccount, SourceAccountOverview, SourceCollection,

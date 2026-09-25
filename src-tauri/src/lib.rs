@@ -4,6 +4,7 @@ mod db;
 mod domain;
 mod local_library;
 mod matching;
+mod reconciliation;
 mod saved_albums;
 mod security;
 mod source_sync;
@@ -33,6 +34,10 @@ pub fn run() {
             commands::confirm_match,
             commands::reject_match,
             commands::clear_match_decision,
+            reconciliation::start_sync,
+            reconciliation::cancel_sync,
+            reconciliation::get_sync_run,
+            reconciliation::list_sync_runs,
             commands::get_spotify_auth_status,
             commands::connect_spotify,
             commands::disconnect_spotify,

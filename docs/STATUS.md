@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 8 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index and deterministic Matching Engine.
+Milestones 1 through 8 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, and a Milestone 9 Reconciliation Core implementation on the current development branch.
 
 The application includes:
 
@@ -10,28 +10,31 @@ The application includes:
 - a configurable observational local-library index with metadata extraction, incremental rescans, lazy hashing, file-state tracking, moved-file recovery, and paginated reads
 - `library_tracks` and `local_files` persistence from Milestone 7
 - `track_links` and `track_rejections` persistence for matching decisions
-- deterministic Unicode NFKC comparison normalization, punctuation/whitespace normalization, `&`/`and` equivalence, featured-artist extraction, and version qualifier parsing
-- bounded candidate generation using ISRC, normalized title, primary artist, duration buckets, and a trigram-bounded fuzzy title fallback
-- hard version/duration compatibility rules, exact-ISRC handling, weighted metadata scoring, and runner-up margin checks
-- automatic, review, and unresolved match outcomes with reusable per-candidate evidence
+- deterministic metadata normalization, bounded candidate generation, compatibility rules, scoring, and automatic/review/unresolved match outcomes
 - persisted user confirmations and rejections exposed through Tauri commands and typed frontend wrappers
+- `sync_runs` persistence with prepare-through-matching phase tracking
+- one-active-sync coordination with cooperative cancellation at synchronization phase boundaries
+- source-to-library reconciliation that reuses persisted links, creates stable `LibraryTrack` records, resolves preferred present files, and classifies desired tracks as matched, missing, or needing review
+- typed sync-run Tauri commands and frontend wrappers for starting, cancelling, reading, and listing synchronization runs
 
-Milestones 7 and 8 are observational with respect to the filesystem. They do not move, rename, normalize, delete, or acquire user audio files.
+Milestones 7 through 9 remain non-destructive with respect to library ownership. Milestone 9 does not acquire, move, normalize, or delete user audio files.
 
 ## Active Work
 
-Milestone 8, **Matching Engine**, is implemented and passes its automated verification set.
+Milestone 9, **Reconciliation Core**, is implemented on the current development branch. The implementation includes dedicated reconciliation coverage for idempotency, shared library-track identity, duplicate playlist positions, manual decisions, cross-collection references, and cancellation-preserved committed state.
 
-No Milestone 9 implementation work is currently recorded.
+Static, type, lint, formatting, and build validation should pass before merge. The dedicated test suites remain part of pull-request/CI validation.
 
 ## Recent Changes
 
-- implemented Milestone 8 matching schema, matcher domain evidence, persistence, Tauri commands, and frontend command wrappers
-- added deterministic metadata normalization and recognized version parsing
-- added bounded candidate indexes, hard compatibility checks, duration scoring, weighted metadata scoring, strong ISRC matching, and runner-up ambiguity handling
-- added persisted manual confirmation/rejection/clear behavior
-- added a representative matcher fixture corpus covering the Milestone 8 verification cases
-- retained the Milestone 7 observational local-library index and its filesystem safeguards
+- added `sync_runs` persistence and paginated run history
+- added one-active-sync coordination and cancellation across source refresh and reconciliation boundaries
+- added initial synchronization phases for Spotify refresh, local-library scan, persisted-link resolution, matching, and missing-library-track creation
+- added stable canonical `LibraryTrack` creation and preferred-present-file resolution
+- added matched, missing, and needs-review reconciliation classification
+- added `start_sync`, `cancel_sync`, `get_sync_run`, and `list_sync_runs` Tauri commands plus typed frontend wrappers
+- added focused reconciliation integration coverage for the Milestone 9 verification cases
+- retained the Milestone 7 observational local-library safeguards and Milestone 8 matching behavior
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
@@ -42,7 +45,7 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Begin **Milestone 9: Reconciliation Core** according to `docs/IMPLEMENTATION.md`.
+Validate and merge **Milestone 9: Reconciliation Core**, then begin **Milestone 10: Filesystem Normalization and Ownership Safety** according to `docs/IMPLEMENTATION.md`.
 
 ## Blockers
 
@@ -58,11 +61,11 @@ The saved-album source-model decision is recorded in ADR 002. The deferred techn
 
 - `docs/BRIEF.md` defines project purpose and release boundaries.
 - `docs/SPEC.md` defines v0.1.0 and v1.0.0 behavior and acceptance criteria.
-- `docs/TDD.md` defines the technical architecture, local-library scanner, matching engine, and desktop data flow.
+- `docs/TDD.md` defines the technical architecture, local-library scanner, matching engine, reconciliation engine, and desktop data flow.
 - `docs/IMPLEMENTATION.md` defines milestone order and verification gates.
 - `docs/reference/codebase-map.md` maps the current source structure.
 - `docs/reference/setup.md` documents local setup and library-root configuration.
-- `docs/reference/testing.md` documents validation coverage, including local-library and matcher tests.
+- `docs/reference/testing.md` documents validation coverage, including local-library, matcher, and reconciliation tests.
 - `docs/reference/release.md` documents tag-driven release packaging.
 - `docs/decisions/001-fixed-spotify-callback-port.md` records the fixed callback-port decision.
 - `docs/decisions/002-saved-albums-as-source-collections.md` records the saved-album persistence and identity model.

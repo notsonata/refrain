@@ -1,6 +1,7 @@
 mod local_library;
 mod matching;
 mod migrations;
+mod reconciliation;
 mod saved_albums;
 mod settings;
 mod source;
@@ -264,13 +265,14 @@ mod tests {
 
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
-        assert_eq!(user_version, 4);
+        assert_eq!(user_version, 5);
 
         for table in [
             "library_tracks",
             "local_files",
             "track_links",
             "track_rejections",
+            "sync_runs",
         ] {
             let exists: i64 = connection
                 .query_row(

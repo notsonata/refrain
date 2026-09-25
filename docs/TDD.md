@@ -9,7 +9,7 @@ It implements the behavior defined in:
 - `docs/BRIEF.md`
 - `docs/SPEC.md`
 
-The repository is currently documentation-first. Application code has not yet been scaffolded, so paths and module names in this document describe the intended implementation structure rather than existing code.
+The repository now contains the released v0.1 desktop application and the v1 Local Library Index, Matching Engine, and Reconciliation Core implementation. Paths and module names in later v1 sections remain design guidance until their owning milestones are implemented.
 
 ## Design Goals
 
