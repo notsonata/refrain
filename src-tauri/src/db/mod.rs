@@ -1,4 +1,5 @@
 mod local_library;
+mod matching;
 mod migrations;
 mod saved_albums;
 mod settings;
@@ -263,9 +264,14 @@ mod tests {
 
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
-        assert_eq!(user_version, 3);
+        assert_eq!(user_version, 4);
 
-        for table in ["library_tracks", "local_files"] {
+        for table in [
+            "library_tracks",
+            "local_files",
+            "track_links",
+            "track_rejections",
+        ] {
             let exists: i64 = connection
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
