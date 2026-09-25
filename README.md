@@ -8,7 +8,7 @@ It is being built to import Spotify playlists, Liked Songs, and saved albums, re
 
 Refrain v0.1.0 was released on 2026-09-25, completing Milestones 1 through 6. The project remains under active development toward v1.0.0.
 
-**Milestones 7 and 8** are implemented and verified. **Milestone 9: Reconciliation Core** is the next implementation milestone.
+**Milestones 7 and 8** are implemented and verified. **Milestone 9: Reconciliation Core** is implemented on the current development branch and is awaiting pull-request validation and merge.
 
 For current project state, see [`docs/STATUS.md`](docs/STATUS.md).
 
@@ -163,6 +163,6 @@ The repository documentation is the source of truth for planned behavior and arc
 
 ## Development Roadmap
 
-Milestones 1 through 8 are implemented. Development now proceeds to **Milestone 9: Reconciliation Core**.
+Milestones 1 through 8 are complete. **Milestone 9: Reconciliation Core** is implemented on the current development branch; **Milestone 10: Filesystem Normalization and Ownership Safety** follows after Milestone 9 is validated and merged.
 
 See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the full path through v0.1.0 and v1.0.0.

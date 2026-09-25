@@ -54,6 +54,20 @@ Matcher tests use a representative fixture corpus plus focused persistence tests
 
 The matcher tests do not mutate user files or perform acquisition. The fixture corpus lives in `src-tauri/tests/fixtures/matcher_cases.json`.
 
+### Reconciliation core
+
+Milestone 9 reconciliation tests cover:
+
+- repeated reconciliation without duplicate library-track creation
+- one library track serving multiple source tracks and collection entries
+- preservation of intentional duplicate playlist positions
+- persistence of manual match decisions across reconciliation passes
+- removal from one collection without affecting references from other collections
+- cancellation while preserving already committed valid state
+- typed frontend sync command wrappers
+
+Reconciliation remains non-destructive at this milestone: it may scan and update persisted state, but it does not download, move, normalize, or delete user audio files.
+
 ### Desktop build smoke checks
 
 ```bash
