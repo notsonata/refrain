@@ -1,6 +1,9 @@
 use rusqlite::{OptionalExtension, Row, params};
 
-use crate::domain::{LocalFile, LocalFilePage, LocalLibraryOverview};
+use crate::domain::{
+    LibraryTrackFileSummary, LibraryTrackPage, LibraryTrackRow, LocalFile, LocalFilePage,
+    LocalLibraryOverview,
+};
 
 use super::{Database, DatabaseError, now_ms};
 
@@ -26,6 +29,67 @@ pub(crate) struct LocalFileWrite {
 }
 
 impl Database {
+    pub fn library_tracks_page(
+        &self,
+        offset: u32,
+        limit: u32,
+    ) -> Result<LibraryTrackPage, DatabaseError> {
+        let limit = limit.clamp(1, MAX_PAGE_LIMIT);
+        self.with_connection(|connection| {
+            let total = connection.query_row("SELECT COUNT(*) FROM library_tracks", [], |row| {
+                row.get::<_, i64>(0)
+            })? as usize;
+            let mut statement = connection.prepare(
+                "SELECT
+                    track.id,
+                    track.title,
+                    track.artists_json,
+                    track.album,
+                    track.release_year,
+                    track.duration_ms,
+                    (SELECT COUNT(*) FROM track_links AS link
+                     WHERE link.library_track_id = track.id),
+                    (SELECT COUNT(*) FROM local_files AS file
+                     WHERE file.library_track_id = track.id),
+                    (SELECT COUNT(*) FROM local_files AS file
+                     WHERE file.library_track_id = track.id AND file.state = 'present'),
+                    (SELECT COUNT(*) FROM local_files AS file
+                     WHERE file.library_track_id = track.id AND file.state = 'missing'),
+                    (SELECT COUNT(*) FROM local_files AS file
+                     WHERE file.library_track_id = track.id AND file.state = 'invalid'),
+                    preferred.id,
+                    preferred.path,
+                    preferred.ownership,
+                    preferred.state,
+                    preferred.format
+                 FROM library_tracks AS track
+                 LEFT JOIN local_files AS preferred
+                   ON preferred.id = (
+                        SELECT file.id
+                        FROM local_files AS file
+                        WHERE file.library_track_id = track.id
+                          AND file.state = 'present'
+                        ORDER BY file.is_preferred DESC, file.id
+                        LIMIT 1
+                   )
+                 ORDER BY track.normalized_artists, track.normalized_title, track.id
+                 LIMIT ?1 OFFSET ?2",
+            )?;
+            let items = statement
+                .query_map(
+                    params![i64::from(limit), i64::from(offset)],
+                    library_track_row_from_row,
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(LibraryTrackPage {
+                items,
+                total,
+                offset,
+                limit,
+            })
+        })
+    }
+
     pub(crate) fn local_files_snapshot(&self) -> Result<Vec<LocalFile>, DatabaseError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -225,6 +289,26 @@ impl Database {
         })
     }
 
+    pub(crate) fn local_files_for_library_track(
+        &self,
+        library_track_id: i64,
+    ) -> Result<Vec<LocalFile>, DatabaseError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT
+                    id, library_track_id, path, ownership, is_preferred, state, format,
+                    file_size, modified_at, duration_ms, bitrate, sample_rate, channels,
+                    content_hash, tag_title, tag_artists_json, tag_album, tag_isrc, scan_error
+                 FROM local_files
+                 WHERE library_track_id = ?1
+                 ORDER BY is_preferred DESC, state = 'present' DESC, lower(path), id",
+            )?;
+            statement
+                .query_map([library_track_id], local_file_from_row)?
+                .collect::<Result<Vec<_>, _>>()
+        })
+    }
+
     pub(crate) fn update_local_file_hash(&self, id: i64, hash: &str) -> Result<(), DatabaseError> {
         self.with_connection(|connection| {
             connection.execute(
@@ -291,6 +375,36 @@ fn local_file_from_row(row: &Row<'_>) -> Result<LocalFile, rusqlite::Error> {
         tag_album: row.get(16)?,
         tag_isrc: row.get(17)?,
         scan_error: row.get(18)?,
+    })
+}
+
+fn library_track_row_from_row(row: &Row<'_>) -> Result<LibraryTrackRow, rusqlite::Error> {
+    let artists_json = row.get::<_, String>(2)?;
+    let preferred_file = row
+        .get::<_, Option<i64>>(11)?
+        .map(|id| -> Result<LibraryTrackFileSummary, rusqlite::Error> {
+            Ok(LibraryTrackFileSummary {
+                id,
+                path: row.get(12)?,
+                ownership: row.get(13)?,
+                state: row.get(14)?,
+                format: row.get(15)?,
+            })
+        })
+        .transpose()?;
+    Ok(LibraryTrackRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        artists: serde_json::from_str(&artists_json).unwrap_or_default(),
+        album: row.get(3)?,
+        release_year: row.get(4)?,
+        duration_ms: row.get(5)?,
+        source_track_count: row.get::<_, i64>(6)? as usize,
+        local_file_count: row.get::<_, i64>(7)? as usize,
+        present_file_count: row.get::<_, i64>(8)? as usize,
+        missing_file_count: row.get::<_, i64>(9)? as usize,
+        invalid_file_count: row.get::<_, i64>(10)? as usize,
+        preferred_file,
     })
 }
 

@@ -63,3 +63,39 @@ pub struct LocalLibraryOverview {
     pub missing: usize,
     pub invalid: usize,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryTrackFileSummary {
+    pub id: i64,
+    pub path: String,
+    pub ownership: String,
+    pub state: String,
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryTrackRow {
+    pub id: i64,
+    pub title: String,
+    pub artists: Vec<String>,
+    pub album: Option<String>,
+    pub release_year: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub source_track_count: usize,
+    pub local_file_count: usize,
+    pub present_file_count: usize,
+    pub missing_file_count: usize,
+    pub invalid_file_count: usize,
+    pub preferred_file: Option<LibraryTrackFileSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryTrackPage {
+    pub items: Vec<LibraryTrackRow>,
+    pub total: usize,
+    pub offset: u32,
+    pub limit: u32,
+}

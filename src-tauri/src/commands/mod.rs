@@ -7,9 +7,10 @@ use crate::{
     app::AppState,
     db::{Database, DatabaseError},
     domain::{
-        AppSettings, LocalFilePage, LocalLibraryOverview, MatchResult, SourceCollectionListPage,
-        SourceCollectionPage, SpotifySourceOverview,
+        AppSettings, IssuePage, LibraryTrackPage, LocalFilePage, LocalLibraryOverview, MatchResult,
+        MatchReview, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview,
     },
+    issues::{get_match_review as load_match_review, list_issues as load_issues},
     local_library::{
         LOCAL_LIBRARY_SCAN_PROGRESS_EVENT, LocalLibraryError, LocalLibraryScanSummary,
         ensure_local_file_hash, scan_library,
@@ -68,6 +69,18 @@ pub fn get_local_library_overview(
         .database
         .local_library_overview()
         .map_err(|error| command_database_error("load local library overview", error))
+}
+
+#[tauri::command]
+pub fn list_library_tracks(
+    offset: u32,
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<LibraryTrackPage, String> {
+    state
+        .database
+        .library_tracks_page(offset, limit)
+        .map_err(|error| command_database_error("load library tracks", error))
 }
 
 #[tauri::command]
@@ -198,6 +211,26 @@ pub fn clear_match_decision(
         .database
         .clear_match_decision(source_track_id, library_track_id)
         .map_err(|error| command_database_error("clear track match decision", error))
+}
+
+#[tauri::command]
+pub fn list_issues(
+    offset: u32,
+    limit: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<IssuePage, String> {
+    load_issues(&state.database, offset, limit)
+        .map_err(|error| command_database_error("load unresolved issues", error))
+}
+
+#[tauri::command]
+pub fn get_match_review(
+    source_track_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<MatchReview, String> {
+    load_match_review(&state.database, source_track_id)
+        .map_err(|error| command_database_error("load match review", error))?
+        .ok_or_else(|| "Source track was not found.".to_owned())
 }
 
 #[tauri::command]

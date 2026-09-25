@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 10 are complete and merged. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, and Filesystem Normalization and Ownership Safety.
+Milestones 1 through 11 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, and Issues and Manual Resolution UI.
 
 The application includes:
 
@@ -19,13 +19,16 @@ The application includes:
 - cross-platform filename sanitization, case-insensitive collision handling, stable collision suffixes, case-only rename staging, and verified copy fallback for cross-filesystem moves
 - path-boundary validation plus ownership-preserving moves that keep external files external and never automatically delete external duplicates
 - Trash / Recycle Bin integration guarded to managed files for future cleanup work
+- paginated Library and Issues views backed by durable local-library and reconciliation state
+- issue projections for ambiguous matches, missing local files, inaccessible Spotify collections, and invalid local files
+- match-review controls for confirming, rejecting, and clearing persisted manual decisions, with resolved issues disappearing from the projection automatically
 - typed sync-run Tauri commands and frontend wrappers for starting, cancelling, reading, and listing synchronization runs
 
 Milestones 7 through 9 remain non-destructive with respect to user audio. Milestone 10 may move confidently resolved preferred files into the canonical library structure, but it preserves each file's ownership classification and does not automatically delete external files.
 
 ## Active Work
 
-Post-Milestone-10 CI stabilization. GitHub Actions is being made deterministic with a committed npm lockfile and `npm ci` after hosted npm 10.9.8 crashed during fresh dependency resolution.
+No milestone implementation is currently active. Milestone 11 is complete; Milestone 12 is next.
 
 ## Recent Changes
 
@@ -38,6 +41,10 @@ Post-Milestone-10 CI stabilization. GitHub Actions is being made deterministic w
 - added Milestone 10 filesystem normalization tests covering the implementation-plan verification cases
 - merged Milestone 10 Filesystem Normalization and Ownership Safety
 - restored deterministic JavaScript dependency installation for CI with `package-lock.json` and `npm ci`
+- added dense Library and Issues desktop views with current issue counts, details, and paginated projections
+- added durable issue projections for ambiguous matches, missing/invalid local files, and inaccessible Spotify collections without introducing a separate issue table
+- added match-review candidate inspection and persisted confirm/reject/clear actions that refresh the issue projection after resolution
+- added frontend and Rust coverage for issue projection behavior and automatic issue removal after durable state repair
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
@@ -48,7 +55,7 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Begin **Milestone 11: Issues and Manual Resolution UI** according to `docs/IMPLEMENTATION.md` after CI is green.
+Begin **Milestone 12: Acquisition Provider Boundary** according to `docs/IMPLEMENTATION.md`.
 
 ## Blockers
 
@@ -68,7 +75,7 @@ The saved-album source-model decision is recorded in ADR 002. The deferred techn
 - `docs/IMPLEMENTATION.md` defines milestone order and verification gates.
 - `docs/reference/codebase-map.md` maps the current source structure.
 - `docs/reference/setup.md` documents local setup and library-root configuration.
-- `docs/reference/testing.md` documents validation coverage, including local-library, matcher, reconciliation, and filesystem-normalization tests.
+- `docs/reference/testing.md` documents validation coverage, including local-library, matcher, reconciliation, filesystem-normalization, and issue/manual-resolution tests.
 - `docs/reference/release.md` documents tag-driven release packaging.
 - `docs/decisions/001-fixed-spotify-callback-port.md` records the fixed callback-port decision.
 - `docs/decisions/002-saved-albums-as-source-collections.md` records the saved-album persistence and identity model.

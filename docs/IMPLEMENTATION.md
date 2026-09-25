@@ -14,11 +14,11 @@ This plan records the implementation sequence from the initial project foundatio
 
 ## Current State
 
-Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 10 are complete and merged.
+Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 11 are complete.
 
 The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, automated validation, native bundle configuration, and tag-triggered release packaging.
 
-Milestones 7 through 10, Local Library Index, Matching Engine, Reconciliation Core, and Filesystem Normalization and Ownership Safety, are implemented and merged. Milestone 11, Issues and Manual Resolution UI, is next. Acquisition, exports, and scheduling remain future v1 work.
+Milestones 7 through 11, Local Library Index, Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, and Issues and Manual Resolution UI, are implemented. Milestone 12, Acquisition Provider Boundary, is next. Provider integration, exports, and scheduling remain future v1 work.
 
 The approved v1 direction remains:
 

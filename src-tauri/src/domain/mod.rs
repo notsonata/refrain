@@ -1,10 +1,18 @@
+pub(crate) mod issues;
 pub(crate) mod library;
 pub(crate) mod matching;
 pub(crate) mod reconciliation;
 mod settings;
 mod source;
 
-pub use library::{LocalFile, LocalFilePage, LocalLibraryOverview};
+pub use issues::{
+    IssueCounts, IssueKind, IssuePage, IssueRow, MatchReview, MatchReviewCandidate,
+    MatchReviewTrack,
+};
+pub use library::{
+    LibraryTrackFileSummary, LibraryTrackPage, LibraryTrackRow, LocalFile, LocalFilePage,
+    LocalLibraryOverview,
+};
 pub(crate) use matching::MatchTrackDescriptor;
 pub use matching::{
     MatchCandidateEvidence, MatchOutcome, MatchRelationship, MatchResult, MatchScoreBreakdown,

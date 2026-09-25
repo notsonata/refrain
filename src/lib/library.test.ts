@@ -3,10 +3,12 @@ import type { InvokeFn } from './app-info';
 import {
   getLocalLibraryOverview,
   hashLocalFile,
+  listLibraryTracks,
   listLocalFiles,
   scanLocalLibrary,
   setPreferredLocalFile,
   type LocalFilePage,
+  type LibraryTrackPage,
   type LocalLibraryOverview,
   type LocalLibraryScanSummary,
 } from './library';
@@ -25,6 +27,13 @@ const page: LocalFilePage = {
   limit: 100,
 };
 
+const libraryTrackPage: LibraryTrackPage = {
+  items: [],
+  total: 0,
+  offset: 0,
+  limit: 100,
+};
+
 const summary: LocalLibraryScanSummary = {
   discovered: 2,
   added: 1,
@@ -36,10 +45,14 @@ const summary: LocalLibraryScanSummary = {
 };
 
 describe('local library commands', () => {
-  it('loads overview and paginated files', async () => {
+  it('loads overview, logical tracks, and paginated files', async () => {
     const invoke = vi.fn(
       async <T>(command: string, args?: Record<string, unknown>) => {
         if (command === 'get_local_library_overview') return overview as T;
+        if (command === 'list_library_tracks') {
+          expect(args).toEqual({ offset: 0, limit: 100 });
+          return libraryTrackPage as T;
+        }
         if (command === 'list_local_files') {
           expect(args).toEqual({ offset: 0, limit: 100 });
           return page as T;
@@ -49,6 +62,9 @@ describe('local library commands', () => {
     ) as InvokeFn;
 
     await expect(getLocalLibraryOverview(invoke)).resolves.toEqual(overview);
+    await expect(listLibraryTracks(0, 100, invoke)).resolves.toEqual(
+      libraryTrackPage,
+    );
     await expect(listLocalFiles(0, 100, invoke)).resolves.toEqual(page);
   });
 

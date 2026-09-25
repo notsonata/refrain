@@ -1,3 +1,4 @@
+mod issues;
 mod local_library;
 mod matching;
 mod migrations;

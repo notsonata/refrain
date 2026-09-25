@@ -14,12 +14,15 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 ## Frontend
 
 - `src/main.ts` — frontend entry point
-- `src/App.svelte` — desktop shell, navigation, Spotify connect/refresh flows, collection views, and local-library Settings controls
+- `src/App.svelte` — desktop shell, navigation, Spotify connect/refresh flows, collection views, Library/Issues orchestration, and local-library Settings controls
 - `src/app.css` — application shell and viewport/layout rules
 - `src/components/TrackList.svelte` — virtualized track rows and lazy artwork
+- `src/components/LibraryView.svelte` — dense paginated logical-library table with preferred/local-file state
+- `src/components/IssuesView.svelte` — unresolved issue queue, issue details, candidate review, and manual match-decision controls
 - `src/lib/app-info.ts` — application-info Tauri command wrapper
 - `src/lib/settings.ts` — settings command wrapper
-- `src/lib/library.ts` — local-library overview, paginated file, scan, hash, and preferred-file command wrappers
+- `src/lib/library.ts` — local-library overview, logical-track projection, paginated file, scan, hash, and preferred-file command wrappers
+- `src/lib/issues.ts` — issue projection/count types, match-review data, and issue command wrappers
 - `src/lib/matching.ts` — matching evidence and manual confirm/reject/clear command wrappers
 - `src/lib/sync.ts` — sync-run types plus start, cancel, get, and list command wrappers
 - `src/lib/spotify.ts` — Spotify auth/refresh command wrappers and user-facing error formatting
@@ -37,9 +40,12 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/saved_albums.rs` — saved-album retrieval and refresh integration
 - `src-tauri/src/local_library.rs` — observational local-library scanner, metadata extraction, lazy hashing, moved-file recovery, and scan progress
 - `src-tauri/src/matching.rs` — deterministic metadata normalization, candidate indexing, compatibility checks, scoring, and match classification
+- `src-tauri/src/issues.rs` — issue and match-review application services exposed through Tauri commands
 - `src-tauri/src/reconciliation.rs` — sync coordination, initial sync orchestration through filesystem normalization, reconciliation commands, cancellation, and matched/missing/review classification
 - `src-tauri/src/normalization.rs` — canonical library paths, portable filename sanitization, collision handling, safe moves, ownership-safe normalization, and guarded platform Trash integration
 - `src-tauri/src/security.rs` — OS credential-store abstraction for Spotify refresh credentials
+- `src-tauri/src/domain/library.rs` — local-file and logical-library projection types
+- `src-tauri/src/domain/issues.rs` — issue, issue-count, and match-review projection types
 
 ## Persistence
 
@@ -49,7 +55,8 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/db/source_refresh.rs` — transactional Spotify refresh persistence
 - `src-tauri/src/db/saved_albums.rs` — saved-album replacement/removal persistence
 - `src-tauri/src/db/source_browse.rs` — paginated Spotify browse projections used by the desktop UI
-- `src-tauri/src/db/local_library.rs` — local-file persistence, overview/pages, hash persistence, missing-state updates, and preferred-file selection
+- `src-tauri/src/db/local_library.rs` — local-file persistence, overview/pages, logical-library rows, hash persistence, missing-state updates, and preferred-file selection
+- `src-tauri/src/db/issues.rs` — computed non-match unresolved-state projections for missing/invalid files and inaccessible collections
 - `src-tauri/src/db/matching.rs` — source/library match descriptors plus persisted confirmations and rejections
 - `src-tauri/src/db/reconciliation.rs` — sync-run persistence, accessible-source projection, library-track materialization, automatic links, and preferred-file resolution
 - `src-tauri/src/db/normalization.rs` — confidently resolved preferred-file projection and post-normalization path persistence
@@ -86,6 +93,8 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 | Spotify source refresh | `src-tauri/src/source_sync.rs`, `src-tauri/src/saved_albums.rs` |
 | Browse persisted collections | `src-tauri/src/db/source_browse.rs`, `src/lib/source.ts`, `src/App.svelte` |
 | Local library scanning/indexing | `src-tauri/src/local_library.rs`, `src-tauri/src/db/local_library.rs`, `src/lib/library.ts`, `src/App.svelte` |
+| Browse logical library | `src-tauri/src/db/issues.rs`, `src/lib/library.ts`, `src/components/LibraryView.svelte`, `src/App.svelte` |
+| Issues and manual resolution | `src-tauri/src/issues.rs`, `src-tauri/src/db/issues.rs`, `src/lib/issues.ts`, `src/components/IssuesView.svelte`, `src/App.svelte` |
 | Matching and manual decisions | `src-tauri/src/matching.rs`, `src-tauri/src/db/matching.rs`, `src/lib/matching.ts` |
 | Full sync through normalization | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src/lib/sync.ts` |
 | Filesystem normalization / ownership safety | `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src-tauri/src/db/local_library.rs` |

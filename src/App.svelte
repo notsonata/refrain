@@ -1,15 +1,31 @@
 <script lang="ts">
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
+  import IssuesView from './components/IssuesView.svelte';
+  import LibraryView from './components/LibraryView.svelte';
   import TrackList from './components/TrackList.svelte';
   import { getAppInfo, type AppInfo } from './lib/app-info';
   import {
+    getMatchReview,
+    listIssues,
+    type IssueCounts,
+    type IssueRow,
+    type MatchReview,
+  } from './lib/issues';
+  import {
     getLocalLibraryOverview,
+    listLibraryTracks,
     scanLocalLibrary,
+    type LibraryTrackRow,
     type LocalLibraryOverview,
     type LocalLibraryScanProgress,
     type LocalLibraryScanSummary,
   } from './lib/library';
+  import {
+    clearMatchDecision,
+    confirmMatch,
+    rejectMatch,
+  } from './lib/matching';
   import { getSettings, updateSettings } from './lib/settings';
   import {
     getSourceCollectionPage,
@@ -32,15 +48,18 @@
     type SpotifySourceRefreshSummary,
   } from './lib/spotify';
 
-  type AppView = 'liked' | 'albums' | 'playlists' | 'settings';
+  type AppView =
+    'library' | 'liked' | 'albums' | 'playlists' | 'issues' | 'settings';
 
   const fallbackRedirectUri = 'http://127.0.0.1:43817/callback';
   const sourceProgressEvent = 'spotify-source-refresh-progress';
   const libraryProgressEvent = 'local-library-scan-progress';
   const collectionPageSize = 200;
   const collectionListPageSize = 100;
+  const libraryTrackPageSize = 100;
+  const issuePageSize = 100;
 
-  let activeView: AppView = 'liked';
+  let activeView: AppView = 'library';
   let appInfo: AppInfo | null = null;
   let authStatus: SpotifyAuthStatus | null = null;
   let clientId = '';
@@ -74,6 +93,26 @@
   let libraryProgress: LocalLibraryScanProgress | null = null;
   let librarySummary: LocalLibraryScanSummary | null = null;
   let libraryOverview: LocalLibraryOverview | null = null;
+  let libraryTracks: LibraryTrackRow[] = [];
+  let libraryTrackTotal = 0;
+  let libraryTracksLoading = false;
+  let libraryTracksLoadingMore = false;
+  let libraryTracksError: string | null = null;
+  let issues: IssueRow[] = [];
+  let issueTotal = 0;
+  let issueCounts: IssueCounts = {
+    matchReview: 0,
+    missingLocalFile: 0,
+    inaccessibleCollection: 0,
+    invalidLocalFile: 0,
+  };
+  let issuesLoading = false;
+  let issuesLoadingMore = false;
+  let issueError: string | null = null;
+  let selectedIssueId: string | null = null;
+  let matchReview: MatchReview | null = null;
+  let matchReviewLoading = false;
+  let matchDecisionBusy = false;
 
   onMount(() => {
     let disposed = false;
@@ -122,6 +161,7 @@
       libraryOverview = localOverview;
       backendError = null;
       await hydrateSourceState();
+      await Promise.all([loadLibraryTracks(), loadIssues()]);
     } catch (error) {
       backendError = spotifyErrorMessage(error);
       sourceHydrating = false;
@@ -211,6 +251,7 @@
     try {
       sourceSummary = await refreshSpotifySource();
       await hydrateSourceState();
+      await loadIssues();
     } catch (error) {
       sourceError = spotifyErrorMessage(error);
     } finally {
@@ -259,6 +300,7 @@
       await persistLibraryRoot();
       librarySummary = await scanLocalLibrary();
       libraryOverview = await getLocalLibraryOverview();
+      await Promise.all([loadLibraryTracks(), loadIssues()]);
     } catch (error) {
       libraryError = spotifyErrorMessage(error);
       libraryProgress = null;
@@ -271,12 +313,161 @@
     activeView = view;
     collectionError = null;
 
-    if (view === 'liked' && sourceOverview?.likedSongs) {
+    if (view === 'library') {
+      await loadLibraryTracks();
+    } else if (view === 'liked' && sourceOverview?.likedSongs) {
       await loadCollection(sourceOverview.likedSongs);
     } else if (view === 'albums' && selectedSavedAlbum) {
       await loadCollection(selectedSavedAlbum);
     } else if (view === 'playlists' && selectedPlaylist) {
       await loadCollection(selectedPlaylist);
+    } else if (view === 'issues') {
+      await loadIssues();
+    }
+  }
+
+  async function loadLibraryTracks(append = false) {
+    const offset = append ? libraryTracks.length : 0;
+    if (append) {
+      libraryTracksLoadingMore = true;
+    } else {
+      libraryTracksLoading = true;
+      libraryTracksError = null;
+    }
+    try {
+      const page = await listLibraryTracks(offset, libraryTrackPageSize);
+      libraryTracks = append ? [...libraryTracks, ...page.items] : page.items;
+      libraryTrackTotal = page.total;
+    } catch (error) {
+      libraryTracksError = operationError(
+        error,
+        'Could not load the local library.',
+      );
+    } finally {
+      libraryTracksLoading = false;
+      libraryTracksLoadingMore = false;
+    }
+  }
+
+  async function loadMoreLibraryTracks() {
+    if (libraryTracksLoadingMore || libraryTracks.length >= libraryTrackTotal) {
+      return;
+    }
+    await loadLibraryTracks(true);
+  }
+
+  async function loadIssues(append = false) {
+    const offset = append ? issues.length : 0;
+    if (append) {
+      issuesLoadingMore = true;
+    } else {
+      issuesLoading = true;
+      issueError = null;
+    }
+    try {
+      const page = await listIssues(offset, issuePageSize);
+      issues = append ? [...issues, ...page.items] : page.items;
+      issueTotal = page.total;
+      issueCounts = page.counts;
+
+      if (!append) {
+        const selected =
+          issues.find((issue) => issue.id === selectedIssueId) ??
+          issues[0] ??
+          null;
+        selectedIssueId = selected?.id ?? null;
+        if (activeView === 'issues' && selected?.kind === 'matchReview') {
+          await loadMatchReview(selected);
+        } else if (!selected || selected.kind !== 'matchReview') {
+          matchReview = null;
+        }
+      }
+    } catch (error) {
+      issueError = operationError(error, 'Could not load unresolved issues.');
+    } finally {
+      issuesLoading = false;
+      issuesLoadingMore = false;
+    }
+  }
+
+  async function loadMoreIssues() {
+    if (issuesLoadingMore || issues.length >= issueTotal) {
+      return;
+    }
+    await loadIssues(true);
+  }
+
+  async function selectIssue(issue: IssueRow) {
+    selectedIssueId = issue.id;
+    if (issue.kind === 'matchReview') {
+      await loadMatchReview(issue);
+    } else {
+      matchReview = null;
+    }
+  }
+
+  async function loadMatchReview(issue: IssueRow) {
+    if (issue.sourceTrackId === null) {
+      matchReview = null;
+      return;
+    }
+    matchReviewLoading = true;
+    issueError = null;
+    try {
+      matchReview = await getMatchReview(issue.sourceTrackId);
+    } catch (error) {
+      matchReview = null;
+      issueError = operationError(error, 'Could not load match candidates.');
+    } finally {
+      matchReviewLoading = false;
+    }
+  }
+
+  async function confirmIssueMatch(
+    sourceTrackId: number,
+    libraryTrackId: number,
+  ) {
+    matchDecisionBusy = true;
+    issueError = null;
+    try {
+      await confirmMatch(sourceTrackId, libraryTrackId);
+      await Promise.all([loadIssues(), loadLibraryTracks()]);
+    } catch (error) {
+      issueError = operationError(error, 'Could not confirm the match.');
+    } finally {
+      matchDecisionBusy = false;
+    }
+  }
+
+  async function rejectIssueMatch(
+    sourceTrackId: number,
+    libraryTrackId: number,
+  ) {
+    matchDecisionBusy = true;
+    issueError = null;
+    try {
+      await rejectMatch(sourceTrackId, libraryTrackId);
+      await loadIssues();
+    } catch (error) {
+      issueError = operationError(error, 'Could not reject the match.');
+    } finally {
+      matchDecisionBusy = false;
+    }
+  }
+
+  async function clearIssueRejection(
+    sourceTrackId: number,
+    libraryTrackId: number,
+  ) {
+    matchDecisionBusy = true;
+    issueError = null;
+    try {
+      await clearMatchDecision(sourceTrackId, libraryTrackId);
+      await loadIssues();
+    } catch (error) {
+      issueError = operationError(error, 'Could not clear the match decision.');
+    } finally {
+      matchDecisionBusy = false;
     }
   }
 
@@ -392,6 +583,24 @@
       timeStyle: 'short',
     }).format(new Date(value));
   }
+
+  function operationError(error: unknown, fallback: string): string {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof error.message === 'string'
+    ) {
+      return error.message;
+    }
+    if (typeof error === 'string' && error.trim()) {
+      return error;
+    }
+    return fallback;
+  }
 </script>
 
 <svelte:head>
@@ -479,6 +688,16 @@
       <nav class="space-y-1" aria-label="Primary">
         <button
           type="button"
+          onclick={() => openView('library')}
+          class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${activeView === 'library' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
+        >
+          <span>Library</span>
+          <span class="font-mono text-xs text-slate-600"
+            >{libraryTrackTotal}</span
+          >
+        </button>
+        <button
+          type="button"
           onclick={() => openView('liked')}
           class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${activeView === 'liked' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
         >
@@ -508,6 +727,22 @@
             <span class="font-mono text-xs text-slate-600">
               {sourceOverview.playlistCount}
             </span>
+          {/if}
+        </button>
+        <button
+          type="button"
+          onclick={() => openView('issues')}
+          class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${activeView === 'issues' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
+        >
+          <span>Issues</span>
+          {#if issueTotal > 0}
+            <span
+              class="rounded bg-amber-950 px-1.5 py-0.5 font-mono text-[10px] text-amber-300"
+            >
+              {issueTotal}
+            </span>
+          {:else}
+            <span class="font-mono text-xs text-slate-700">0</span>
           {/if}
         </button>
         <button
@@ -554,6 +789,15 @@
             <p class="font-medium">Could not load persisted Spotify state.</p>
             <p class="mt-1 text-amber-300/80">{sourceHydrationError}</p>
           </div>
+        {:else if activeView === 'library'}
+          <LibraryView
+            tracks={libraryTracks}
+            total={libraryTrackTotal}
+            loading={libraryTracksLoading}
+            loadingMore={libraryTracksLoadingMore}
+            error={libraryTracksError}
+            onLoadMore={loadMoreLibraryTracks}
+          />
         {:else if activeView === 'liked'}
           <div>
             <div class="mb-5 flex items-end justify-between gap-4">
@@ -795,6 +1039,24 @@
               {/if}
             </div>
           </div>
+        {:else if activeView === 'issues'}
+          <IssuesView
+            {issues}
+            total={issueTotal}
+            counts={issueCounts}
+            {selectedIssueId}
+            review={matchReview}
+            loading={issuesLoading}
+            loadingMore={issuesLoadingMore}
+            reviewLoading={matchReviewLoading}
+            decisionBusy={matchDecisionBusy}
+            error={issueError}
+            onSelect={selectIssue}
+            onLoadMore={loadMoreIssues}
+            onConfirm={confirmIssueMatch}
+            onReject={rejectIssueMatch}
+            onClearRejection={clearIssueRejection}
+          />
         {:else}
           <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
             <div class="grid gap-5">

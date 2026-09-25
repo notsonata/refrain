@@ -84,6 +84,18 @@ Milestone 10 filesystem tests use temporary directories and cover:
 
 Normalization moves only confidently resolved preferred files. It preserves managed/external ownership, does not automatically delete external duplicates, and checks cancellation between file operations so an in-progress move can finish safely.
 
+### Issues and manual resolution
+
+Milestone 11 coverage verifies the Issues UI as a projection over durable repository state rather than a separate ticket table. Coverage includes:
+
+- frontend Library and Issues states, counts, selection, and match-decision interactions
+- ambiguous-match issues tracking persisted confirmations and rejections
+- missing-file, invalid-file, and inaccessible-collection issue projection
+- automatic issue removal when the underlying durable condition is repaired
+- logical-library projection and preferred/local-file status used by the Library view
+
+Manual match decisions continue to use the existing matching persistence and reconciliation rules. Resolving an issue does not require deleting an issue record.
+
 ### Desktop build smoke checks
 
 ```bash

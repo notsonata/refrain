@@ -2,6 +2,7 @@ mod app;
 mod commands;
 mod db;
 mod domain;
+mod issues;
 mod local_library;
 mod matching;
 mod normalization;
@@ -27,6 +28,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::get_local_library_overview,
+            commands::list_library_tracks,
             commands::list_local_files,
             commands::scan_local_library,
             commands::hash_local_file,
@@ -35,6 +37,8 @@ pub fn run() {
             commands::confirm_match,
             commands::reject_match,
             commands::clear_match_decision,
+            commands::list_issues,
+            commands::get_match_review,
             reconciliation::start_sync,
             reconciliation::cancel_sync,
             reconciliation::get_sync_run,
