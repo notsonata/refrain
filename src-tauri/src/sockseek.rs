@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     error::Error,
     fmt, fs,
-    io::Write,
     net::TcpListener,
     path::{Path, PathBuf},
     sync::{
@@ -12,6 +11,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::io::Write;
 
 use reqwest::blocking::{Client, Response};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};

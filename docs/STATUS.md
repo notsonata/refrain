@@ -70,6 +70,7 @@ Milestone 13 implementation is complete locally. Static/build validation is bein
 - added OS credential-store persistence for Soulseek credentials with restricted transient Sockseek configuration and secret-redacted sidecar logs
 - wired acquisition-enabled synchronization through the production Sockseek provider while preserving `staged` as the pre-verification boundary
 - added acquisition Settings controls and third-party AGPL/source notices for distributed Sockseek builds
+- fixed the Windows Rust CI Clippy failure by platform-gating the Unix-only `std::io::Write` import used for restricted Sockseek runtime configuration writes
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
