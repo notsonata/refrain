@@ -13,7 +13,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "lint": "eslint src vite.config.ts svelte.config.js",
     "format": "prettier --write \"src/**/*.{ts,svelte,css}\" \"*.{js,ts,json,html}\"",
-    "format:check": "prettier --write \"src/**/*.{ts,svelte,css}\" \"*.{js,ts,json,html}\" && git diff -- src/lib/sync.ts && exit 1",
+    "format:check": "prettier --check \"src/**/*.{ts,svelte,css}\" \"*.{js,ts,json,html}\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",

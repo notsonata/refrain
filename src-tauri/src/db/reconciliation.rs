@@ -394,8 +394,7 @@ fn existing_library_track_for_local_seed(
         .content_hash
         .as_deref()
         .filter(|value| !value.is_empty())
-    {
-        if let Some(id) = transaction
+        && let Some(id) = transaction
             .query_row(
                 "SELECT library_track_id
                  FROM local_files
@@ -408,9 +407,8 @@ fn existing_library_track_for_local_seed(
                 |row| row.get::<_, i64>(0),
             )
             .optional()?
-        {
-            return Ok(Some(id));
-        }
+    {
+        return Ok(Some(id));
     }
 
     if let Some(isrc) = seed
