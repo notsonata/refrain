@@ -979,6 +979,8 @@ Candidate sets are the union of relevant index hits.
 
 Fall back to a bounded fuzzy title search only when the indexed set is empty.
 
+The current matcher bounds that fallback through an in-memory normalized-title trigram index before applying string similarity.
+
 ### Manual Decisions
 
 User confirmation creates or updates a `track_links` row with:

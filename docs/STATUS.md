@@ -2,37 +2,36 @@
 
 ## Current State
 
-Milestones 1 through 7 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index.
+Milestones 1 through 8 are complete. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index and deterministic Matching Engine.
 
 The application includes:
 
 - the released v0.1 Spotify authentication, synchronization, persisted browsing, desktop UI, packaging, and release automation
-- a configurable local-library root stored in application settings
-- `library_tracks` and `local_files` v1 persistence schema
-- recursive local audio scanning for FLAC, MP3, M4A/AAC, OGG, Opus, WAV, and ALAC paths supported by the metadata layer
-- `lofty` metadata/property extraction with invalid-file visibility
-- incremental rescans using file size and modification time
-- lazy BLAKE3 hashing with stale-hash invalidation after file changes
-- present, missing, and invalid local-file state
-- conservative moved/renamed-file recovery using known hashes or strong metadata
-- duplicate-safe physical-file indexing and preferred-file selection primitives
-- local-library scan progress events and paginated local-file queries
-- Settings controls for saving the library root, starting a scan, and viewing index counts/progress
+- a configurable observational local-library index with metadata extraction, incremental rescans, lazy hashing, file-state tracking, moved-file recovery, and paginated reads
+- `library_tracks` and `local_files` persistence from Milestone 7
+- `track_links` and `track_rejections` persistence for matching decisions
+- deterministic Unicode NFKC comparison normalization, punctuation/whitespace normalization, `&`/`and` equivalence, featured-artist extraction, and version qualifier parsing
+- bounded candidate generation using ISRC, normalized title, primary artist, duration buckets, and a trigram-bounded fuzzy title fallback
+- hard version/duration compatibility rules, exact-ISRC handling, weighted metadata scoring, and runner-up margin checks
+- automatic, review, and unresolved match outcomes with reusable per-candidate evidence
+- persisted user confirmations and rejections exposed through Tauri commands and typed frontend wrappers
 
-Milestone 7 scanning is observational. It does not move, rename, normalize, delete, or acquire user audio files.
+Milestones 7 and 8 are observational with respect to the filesystem. They do not move, rename, normalize, delete, or acquire user audio files.
 
 ## Active Work
 
-Milestone 7, **Local Library Index**, is implemented and passes its automated verification set.
+Milestone 8, **Matching Engine**, is implemented and passes its automated verification set.
 
-No Milestone 8 implementation work is currently recorded.
+No Milestone 9 implementation work is currently recorded.
 
 ## Recent Changes
 
-- implemented Milestone 7 local-library schema, domain types, scanner, persistence, IPC commands, and Settings controls
-- added incremental scanning, lazy BLAKE3 hashing, moved-file recovery, invalid/missing state, preferred-file primitives, and paginated queries
-- added filesystem integration coverage for new, unchanged, changed, removed, moved, malformed, unsupported, symlink, duplicate, and large-directory cases
-- verified frontend format/lint/type checks, frontend tests/build, Rust format/Clippy/tests, and a native Tauri no-bundle release build
+- implemented Milestone 8 matching schema, matcher domain evidence, persistence, Tauri commands, and frontend command wrappers
+- added deterministic metadata normalization and recognized version parsing
+- added bounded candidate indexes, hard compatibility checks, duration scoring, weighted metadata scoring, strong ISRC matching, and runner-up ambiguity handling
+- added persisted manual confirmation/rejection/clear behavior
+- added a representative matcher fixture corpus covering the Milestone 8 verification cases
+- retained the Milestone 7 observational local-library index and its filesystem safeguards
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
@@ -43,7 +42,7 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Begin **Milestone 8: Matching Engine** according to `docs/IMPLEMENTATION.md`.
+Begin **Milestone 9: Reconciliation Core** according to `docs/IMPLEMENTATION.md`.
 
 ## Blockers
 
@@ -59,11 +58,11 @@ The saved-album source-model decision is recorded in ADR 002. The deferred techn
 
 - `docs/BRIEF.md` defines project purpose and release boundaries.
 - `docs/SPEC.md` defines v0.1.0 and v1.0.0 behavior and acceptance criteria.
-- `docs/TDD.md` defines the technical architecture, local-library scanner design, and desktop data flow.
+- `docs/TDD.md` defines the technical architecture, local-library scanner, matching engine, and desktop data flow.
 - `docs/IMPLEMENTATION.md` defines milestone order and verification gates.
 - `docs/reference/codebase-map.md` maps the current source structure.
 - `docs/reference/setup.md` documents local setup and library-root configuration.
-- `docs/reference/testing.md` documents validation coverage, including local-library scanner tests.
+- `docs/reference/testing.md` documents validation coverage, including local-library and matcher tests.
 - `docs/reference/release.md` documents tag-driven release packaging.
 - `docs/decisions/001-fixed-spotify-callback-port.md` records the fixed callback-port decision.
 - `docs/decisions/002-saved-albums-as-source-collections.md` records the saved-album persistence and identity model.

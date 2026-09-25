@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod domain;
 mod local_library;
+mod matching;
 mod saved_albums;
 mod security;
 mod source_sync;
@@ -28,6 +29,10 @@ pub fn run() {
             commands::scan_local_library,
             commands::hash_local_file,
             commands::set_preferred_local_file,
+            commands::get_match_candidates,
+            commands::confirm_match,
+            commands::reject_match,
+            commands::clear_match_decision,
             commands::get_spotify_auth_status,
             commands::connect_spotify,
             commands::disconnect_spotify,

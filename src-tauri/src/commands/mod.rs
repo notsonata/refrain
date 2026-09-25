@@ -7,13 +7,14 @@ use crate::{
     app::AppState,
     db::{Database, DatabaseError},
     domain::{
-        AppSettings, LocalFilePage, LocalLibraryOverview, SourceCollectionListPage,
+        AppSettings, LocalFilePage, LocalLibraryOverview, MatchResult, SourceCollectionListPage,
         SourceCollectionPage, SpotifySourceOverview,
     },
     local_library::{
         LOCAL_LIBRARY_SCAN_PROGRESS_EVENT, LocalLibraryError, LocalLibraryScanSummary,
         ensure_local_file_hash, scan_library,
     },
+    matching::MatcherIndex,
     saved_albums::{
         cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
         refresh_spotify_saved_albums,
@@ -134,6 +135,69 @@ pub fn set_preferred_local_file(
         .database
         .set_preferred_local_file(local_file_id)
         .map_err(|error| command_database_error("set preferred local file", error))
+}
+
+#[tauri::command]
+pub fn get_match_candidates(
+    source_track_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<MatchResult, String> {
+    let source = state
+        .database
+        .source_match_track(source_track_id)
+        .map_err(|error| command_database_error("load source track for matching", error))?
+        .ok_or_else(|| "Source track was not found.".to_owned())?;
+    let library_tracks = state
+        .database
+        .library_match_tracks()
+        .map_err(|error| command_database_error("load library tracks for matching", error))?;
+    let existing_link = state
+        .database
+        .persisted_track_link(source_track_id)
+        .map_err(|error| command_database_error("load persisted track link", error))?;
+    let rejected = state
+        .database
+        .rejected_library_track_ids(source_track_id)
+        .map_err(|error| command_database_error("load rejected track matches", error))?;
+
+    Ok(MatcherIndex::new(library_tracks).match_track(&source, existing_link.as_ref(), &rejected))
+}
+
+#[tauri::command]
+pub fn confirm_match(
+    source_track_id: i64,
+    library_track_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .confirm_match(source_track_id, library_track_id)
+        .map_err(|error| command_database_error("confirm track match", error))
+}
+
+#[tauri::command]
+pub fn reject_match(
+    source_track_id: i64,
+    library_track_id: i64,
+    reason: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .reject_match(source_track_id, library_track_id, reason.as_deref())
+        .map_err(|error| command_database_error("reject track match", error))
+}
+
+#[tauri::command]
+pub fn clear_match_decision(
+    source_track_id: i64,
+    library_track_id: Option<i64>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .clear_match_decision(source_track_id, library_track_id)
+        .map_err(|error| command_database_error("clear track match decision", error))
 }
 
 #[tauri::command]

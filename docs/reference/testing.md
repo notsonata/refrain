@@ -24,7 +24,7 @@ npm run rust:clippy
 npm run rust:test
 ```
 
-Rust tests cover persistence, migrations, Spotify authentication, source synchronization, and local-library scanning behavior. The database suite includes opening a previously absent SQLite database, applying migrations, configuring SQLite pragmas, reopening persisted state, transactional source replacement, local-file pagination, and preferred-file selection.
+Rust tests cover persistence, migrations, Spotify authentication, source synchronization, local-library scanning, and matching behavior. The database suite includes opening a previously absent SQLite database, applying migrations, configuring SQLite pragmas, reopening persisted state, transactional source replacement, local-file pagination, and preferred-file selection.
 
 ### Local library scanner
 
@@ -39,6 +39,20 @@ Filesystem integration tests use temporary directories and cover:
 - large-directory incremental rescans and paginated reads
 
 Scanner tests must remain observational: they may create/change files only inside their temporary fixtures and must not normalize, move, or delete user library files.
+
+### Matching engine
+
+Matcher tests use a representative fixture corpus plus focused persistence tests. Coverage includes:
+
+- album vs single and compilation vs album identity
+- live, remix, acoustic, demo, instrumental, explicit/clean, and remaster handling
+- compatible and incompatible duration evidence
+- exact and conflicting ISRCs, including duplicate-ISRC ambiguity
+- weak metadata and runner-up ambiguity
+- bounded fuzzy-title candidate fallback
+- persisted manual confirmations, rejections, and decision clearing
+
+The matcher tests do not mutate user files or perform acquisition. The fixture corpus lives in `src-tauri/tests/fixtures/matcher_cases.json`.
 
 ### Desktop build smoke checks
 

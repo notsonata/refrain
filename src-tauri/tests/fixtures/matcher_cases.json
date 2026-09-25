@@ -1,0 +1,83 @@
+[
+  {
+    "name": "album vs single with same ISRC",
+    "source": {"id":1,"title":"Signal","artists":["North"],"album":"Signal - Single","isrc":"USAAA0000001","durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":101,"title":"Signal","artists":["North"],"album":"Long Road","isrc":"USAAA0000001","durationMs":180500,"discNumber":1,"trackNumber":4,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"automatic","selectedLibraryTrackId":101
+  },
+  {
+    "name": "compilation vs album with same ISRC",
+    "source": {"id":2,"title":"Harbor","artists":["North"],"album":"Greatest Tracks","isrc":"USAAA0000002","durationMs":210000,"discNumber":1,"trackNumber":8,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":102,"title":"Harbor","artists":["North"],"album":"First Light","isrc":"USAAA0000002","durationMs":210000,"discNumber":1,"trackNumber":2,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"automatic","selectedLibraryTrackId":102
+  },
+  {
+    "name": "live vs studio",
+    "source": {"id":3,"title":"Signal (Live)","artists":["North"],"album":"Live Hall","isrc":null,"durationMs":190000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":103,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":190000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"unresolved","selectedLibraryTrackId":null
+  },
+  {
+    "name": "remix vs original",
+    "source": {"id":4,"title":"Signal (Club Remix)","artists":["North"],"album":"Signal Remixes","isrc":null,"durationMs":200000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":104,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":200000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"unresolved","selectedLibraryTrackId":null
+  },
+  {
+    "name": "acoustic vs original",
+    "source": {"id":5,"title":"Signal - Acoustic","artists":["North"],"album":"Sessions","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":105,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"unresolved","selectedLibraryTrackId":null
+  },
+  {
+    "name": "demo vs release",
+    "source": {"id":6,"title":"Signal (Demo)","artists":["North"],"album":"Demos","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":106,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"unresolved","selectedLibraryTrackId":null
+  },
+  {
+    "name": "explicit vs clean",
+    "source": {"id":7,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":true,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":107,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"unresolved","selectedLibraryTrackId":null
+  },
+  {
+    "name": "remaster requires review without strong identifier",
+    "source": {"id":8,"title":"Signal (2011 Remaster)","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":108,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"review","selectedLibraryTrackId":null
+  },
+  {
+    "name": "compatible duration drift",
+    "source": {"id":9,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":109,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":183000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"automatic","selectedLibraryTrackId":109
+  },
+  {
+    "name": "conflicting ISRC caps at review",
+    "source": {"id":10,"title":"Signal","artists":["North"],"album":"Signal","isrc":"USAAA0000010","durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":110,"title":"Signal","artists":["North"],"album":"Signal","isrc":"USBBB0000010","durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":false,"versionKind":null,"versionDetail":null}],
+    "expected":"review","selectedLibraryTrackId":null
+  },
+  {
+    "name": "weak metadata unresolved",
+    "source": {"id":11,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":null,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":111,"title":"Distant","artists":["South"],"album":"Elsewhere","isrc":null,"durationMs":181000,"discNumber":2,"trackNumber":8,"explicit":null,"versionKind":null,"versionDetail":null}],
+    "expected":"unresolved","selectedLibraryTrackId":null
+  },
+  {
+    "name": "runner-up ambiguity requires review",
+    "source": {"id":12,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":null,"versionKind":null,"versionDetail":null},
+    "candidates": [
+      {"id":112,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":null,"versionKind":null,"versionDetail":null},
+      {"id":113,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180500,"discNumber":1,"trackNumber":1,"explicit":null,"versionKind":null,"versionDetail":null}
+    ],
+    "expected":"review","selectedLibraryTrackId":null
+  },
+  {
+    "name": "instrumental vs vocal",
+    "source": {"id":13,"title":"Signal (Instrumental)","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":null,"versionKind":null,"versionDetail":null},
+    "candidates": [{"id":114,"title":"Signal","artists":["North"],"album":"Signal","isrc":null,"durationMs":180000,"discNumber":1,"trackNumber":1,"explicit":null,"versionKind":null,"versionDetail":null}],
+    "expected":"unresolved","selectedLibraryTrackId":null
+  }
+]
