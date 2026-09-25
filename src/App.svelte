@@ -4,6 +4,14 @@
   import TrackList from './components/TrackList.svelte';
   import { getAppInfo, type AppInfo } from './lib/app-info';
   import {
+    getLocalLibraryOverview,
+    scanLocalLibrary,
+    type LocalLibraryOverview,
+    type LocalLibraryScanProgress,
+    type LocalLibraryScanSummary,
+  } from './lib/library';
+  import { getSettings, updateSettings } from './lib/settings';
+  import {
     getSourceCollectionPage,
     hydrateSpotifySource,
     listSpotifyPlaylists,
@@ -28,6 +36,7 @@
 
   const fallbackRedirectUri = 'http://127.0.0.1:43817/callback';
   const sourceProgressEvent = 'spotify-source-refresh-progress';
+  const libraryProgressEvent = 'local-library-scan-progress';
   const collectionPageSize = 200;
   const collectionListPageSize = 100;
 
@@ -59,10 +68,17 @@
   let collectionLoading = false;
   let collectionLoadingMore = false;
   let collectionError: string | null = null;
+  let libraryRoot = '';
+  let libraryBusy = false;
+  let libraryError: string | null = null;
+  let libraryProgress: LocalLibraryScanProgress | null = null;
+  let librarySummary: LocalLibraryScanSummary | null = null;
+  let libraryOverview: LocalLibraryOverview | null = null;
 
   onMount(() => {
     let disposed = false;
-    let unlisten: UnlistenFn | undefined;
+    let sourceUnlisten: UnlistenFn | undefined;
+    let libraryUnlisten: UnlistenFn | undefined;
 
     void listen<SpotifySourceRefreshProgress>(sourceProgressEvent, (event) => {
       sourceProgress = event.payload;
@@ -70,26 +86,40 @@
       if (disposed) {
         stopListening();
       } else {
-        unlisten = stopListening;
+        sourceUnlisten = stopListening;
+      }
+    });
+    void listen<LocalLibraryScanProgress>(libraryProgressEvent, (event) => {
+      libraryProgress = event.payload;
+    }).then((stopListening) => {
+      if (disposed) {
+        stopListening();
+      } else {
+        libraryUnlisten = stopListening;
       }
     });
     void initialize();
 
     return () => {
       disposed = true;
-      unlisten?.();
+      sourceUnlisten?.();
+      libraryUnlisten?.();
     };
   });
 
   async function initialize() {
     try {
-      const [info, status] = await Promise.all([
+      const [info, status, settings, localOverview] = await Promise.all([
         getAppInfo(),
         getSpotifyAuthStatus(),
+        getSettings(),
+        getLocalLibraryOverview(),
       ]);
       appInfo = info;
       authStatus = status;
       clientId = status.clientId ?? '';
+      libraryRoot = settings.libraryRoot ?? '';
+      libraryOverview = localOverview;
       backendError = null;
       await hydrateSourceState();
     } catch (error) {
@@ -193,6 +223,47 @@
       await cancelSpotifySourceRefresh();
     } catch (error) {
       sourceError = spotifyErrorMessage(error);
+    }
+  }
+
+  async function persistLibraryRoot() {
+    const current = await getSettings();
+    const normalized = libraryRoot.trim();
+    await updateSettings({ ...current, libraryRoot: normalized || null });
+    libraryRoot = normalized;
+  }
+
+  async function saveLibraryRoot() {
+    libraryBusy = true;
+    libraryError = null;
+    try {
+      await persistLibraryRoot();
+    } catch (error) {
+      libraryError = spotifyErrorMessage(error);
+    } finally {
+      libraryBusy = false;
+    }
+  }
+
+  async function scanLibraryRoot() {
+    libraryBusy = true;
+    libraryError = null;
+    librarySummary = null;
+    libraryProgress = {
+      phase: 'starting',
+      completed: 0,
+      total: null,
+      message: 'Preparing local library scan',
+    };
+    try {
+      await persistLibraryRoot();
+      librarySummary = await scanLocalLibrary();
+      libraryOverview = await getLocalLibraryOverview();
+    } catch (error) {
+      libraryError = spotifyErrorMessage(error);
+      libraryProgress = null;
+    } finally {
+      libraryBusy = false;
     }
   }
 
@@ -726,118 +797,195 @@
           </div>
         {:else}
           <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
-            <div class="rounded-xl border border-slate-800 p-6">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <p class="text-xs uppercase tracking-wider text-slate-600">
-                    Spotify
-                  </p>
-                  <h2 class="mt-1 text-xl font-semibold">Connection</h2>
-                  <p class="mt-2 max-w-xl text-sm leading-6 text-slate-500">
-                    The Client ID is saved locally. Refresh credentials are
-                    stored in your operating system credential store.
-                  </p>
+            <div class="grid gap-5">
+              <div class="rounded-xl border border-slate-800 p-6">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-xs uppercase tracking-wider text-slate-600">
+                      Spotify
+                    </p>
+                    <h2 class="mt-1 text-xl font-semibold">Connection</h2>
+                    <p class="mt-2 max-w-xl text-sm leading-6 text-slate-500">
+                      The Client ID is saved locally. Refresh credentials are
+                      stored in your operating system credential store.
+                    </p>
+                  </div>
+                  {#if authStatus?.connected}
+                    <span
+                      class="rounded-full bg-emerald-950 px-3 py-1 text-xs text-emerald-300"
+                    >
+                      Connected
+                    </span>
+                  {:else}
+                    <span
+                      class="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-400"
+                    >
+                      Not connected
+                    </span>
+                  {/if}
                 </div>
-                {#if authStatus?.connected}
-                  <span
-                    class="rounded-full bg-emerald-950 px-3 py-1 text-xs text-emerald-300"
+
+                <div class="mt-6 grid gap-2">
+                  <label for="spotify-client-id" class="text-sm font-medium">
+                    Spotify Client ID
+                  </label>
+                  <input
+                    id="spotify-client-id"
+                    bind:value={clientId}
+                    disabled={authBusy || sourceBusy || authStatus?.connected}
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="Paste your Spotify Client ID"
+                    class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 font-mono text-sm outline-none transition focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+
+                <div
+                  class="mt-5 rounded-lg border border-slate-800 bg-slate-900/60 p-4"
+                >
+                  <p
+                    class="text-xs font-medium uppercase tracking-wider text-slate-600"
                   >
-                    Connected
-                  </span>
-                {:else}
-                  <span
-                    class="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-400"
+                    Spotify redirect URI
+                  </p>
+                  <code class="mt-2 block break-all text-sm text-slate-200">
+                    {authStatus?.registeredRedirectUri ?? fallbackRedirectUri}
+                  </code>
+                </div>
+
+                {#if authError}
+                  <div
+                    class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
                   >
-                    Not connected
-                  </span>
+                    {authError}
+                  </div>
+                {/if}
+
+                <div class="mt-6 flex flex-wrap items-center gap-3">
+                  {#if authStatus?.connected}
+                    <button
+                      type="button"
+                      onclick={disconnect}
+                      disabled={authBusy || sourceBusy}
+                      class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {authBusy ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                    <button
+                      type="button"
+                      onclick={refreshSource}
+                      disabled={authBusy || sourceBusy}
+                      class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Refresh Spotify
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      onclick={connect}
+                      disabled={authBusy || !clientId.trim()}
+                      class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {authBusy ? 'Waiting for Spotify…' : 'Connect Spotify'}
+                    </button>
+                  {/if}
+                </div>
+
+                {#if sourceSummary}
+                  <div
+                    class="mt-6 rounded-lg border border-slate-800 bg-slate-900/60 p-4"
+                  >
+                    <p class="text-sm font-medium text-slate-200">
+                      Spotify source refreshed
+                    </p>
+                    <p class="mt-2 text-xs leading-5 text-slate-500">
+                      {sourceSummary.likedSongs} Liked Songs · {savedAlbumTotal} saved
+                      albums ·
+                      {sourceSummary.playlists} playlists ·
+                      {sourceSummary.refreshedPlaylists} refreshed ·
+                      {sourceSummary.unchangedPlaylists} unchanged
+                      {#if sourceSummary.inaccessiblePlaylists > 0}
+                        · {sourceSummary.inaccessiblePlaylists} inaccessible
+                      {/if}
+                    </p>
+                  </div>
                 {/if}
               </div>
 
-              <div class="mt-6 grid gap-2">
-                <label for="spotify-client-id" class="text-sm font-medium">
-                  Spotify Client ID
-                </label>
-                <input
-                  id="spotify-client-id"
-                  bind:value={clientId}
-                  disabled={authBusy || sourceBusy || authStatus?.connected}
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder="Paste your Spotify Client ID"
-                  class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 font-mono text-sm outline-none transition focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
-                />
-              </div>
-
-              <div
-                class="mt-5 rounded-lg border border-slate-800 bg-slate-900/60 p-4"
-              >
-                <p
-                  class="text-xs font-medium uppercase tracking-wider text-slate-600"
-                >
-                  Spotify redirect URI
+              <div class="rounded-xl border border-slate-800 p-6">
+                <p class="text-xs uppercase tracking-wider text-slate-600">
+                  Local library
                 </p>
-                <code class="mt-2 block break-all text-sm text-slate-200">
-                  {authStatus?.registeredRedirectUri ?? fallbackRedirectUri}
-                </code>
-              </div>
+                <h2 class="mt-1 text-xl font-semibold">Library index</h2>
+                <p class="mt-2 max-w-xl text-sm leading-6 text-slate-500">
+                  Refrain scans this folder without moving, renaming, or
+                  deleting your files.
+                </p>
 
-              {#if authError}
-                <div
-                  class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
-                >
-                  {authError}
+                <div class="mt-6 grid gap-2">
+                  <label for="library-root" class="text-sm font-medium"
+                    >Library root</label
+                  >
+                  <input
+                    id="library-root"
+                    bind:value={libraryRoot}
+                    disabled={libraryBusy}
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="/path/to/music"
+                    class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 font-mono text-sm outline-none transition focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
                 </div>
-              {/if}
 
-              <div class="mt-6 flex flex-wrap items-center gap-3">
-                {#if authStatus?.connected}
+                <div class="mt-5 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onclick={disconnect}
-                    disabled={authBusy || sourceBusy}
+                    onclick={saveLibraryRoot}
+                    disabled={libraryBusy}
                     class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {authBusy ? 'Disconnecting…' : 'Disconnect'}
+                    Save path
                   </button>
                   <button
                     type="button"
-                    onclick={refreshSource}
-                    disabled={authBusy || sourceBusy}
+                    onclick={scanLibraryRoot}
+                    disabled={libraryBusy || !libraryRoot.trim()}
                     class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Refresh Spotify
+                    {libraryBusy ? 'Scanning…' : 'Scan library'}
                   </button>
-                {:else}
-                  <button
-                    type="button"
-                    onclick={connect}
-                    disabled={authBusy || !clientId.trim()}
-                    class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                </div>
+
+                {#if libraryProgress}
+                  <p class="mt-4 text-xs leading-5 text-slate-500">
+                    {libraryProgress.message}
+                  </p>
+                {/if}
+
+                {#if libraryOverview}
+                  <p class="mt-4 text-xs leading-5 text-slate-500">
+                    {libraryOverview.present} present · {libraryOverview.missing}
+                    missing ·
+                    {libraryOverview.invalid} invalid · {libraryOverview.total} indexed
+                  </p>
+                {/if}
+
+                {#if librarySummary}
+                  <p class="mt-2 text-xs leading-5 text-slate-600">
+                    Last scan: {librarySummary.added} added · {librarySummary.updated}
+                    updated ·
+                    {librarySummary.moved} moved · {librarySummary.unchanged} unchanged
+                  </p>
+                {/if}
+
+                {#if libraryError}
+                  <div
+                    class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
                   >
-                    {authBusy ? 'Waiting for Spotify…' : 'Connect Spotify'}
-                  </button>
+                    {libraryError}
+                  </div>
                 {/if}
               </div>
-
-              {#if sourceSummary}
-                <div
-                  class="mt-6 rounded-lg border border-slate-800 bg-slate-900/60 p-4"
-                >
-                  <p class="text-sm font-medium text-slate-200">
-                    Spotify source refreshed
-                  </p>
-                  <p class="mt-2 text-xs leading-5 text-slate-500">
-                    {sourceSummary.likedSongs} Liked Songs · {savedAlbumTotal} saved
-                    albums ·
-                    {sourceSummary.playlists} playlists ·
-                    {sourceSummary.refreshedPlaylists} refreshed ·
-                    {sourceSummary.unchangedPlaylists} unchanged
-                    {#if sourceSummary.inaccessiblePlaylists > 0}
-                      · {sourceSummary.inaccessiblePlaylists} inaccessible
-                    {/if}
-                  </p>
-                </div>
-              {/if}
             </div>
 
             <aside class="rounded-xl border border-slate-800 p-5 text-sm">

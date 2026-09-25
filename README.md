@@ -8,7 +8,7 @@ It is being built to import Spotify playlists, Liked Songs, and saved albums, re
 
 Refrain v0.1.0 was released on 2026-09-25, completing Milestones 1 through 6. The project remains under active development toward v1.0.0.
 
-**Milestone 7: Local Library Index** is the next implementation milestone.
+**Milestone 7: Local Library Index** is implemented and verified. **Milestone 8: Matching Engine** is the next implementation milestone.
 
 For current project state, see [`docs/STATUS.md`](docs/STATUS.md).
 
@@ -163,6 +163,6 @@ The repository documentation is the source of truth for planned behavior and arc
 
 ## Development Roadmap
 
-Milestone 6 is the final v0.1.0 hardening and release stage. After v0.1.0 is packaged and released, development proceeds to **Milestone 7: Local Library Index**.
+Milestones 1 through 7 are implemented. Development now proceeds to **Milestone 8: Matching Engine**.
 
 See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the full path through v0.1.0 and v1.0.0.

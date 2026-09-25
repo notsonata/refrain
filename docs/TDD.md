@@ -1538,7 +1538,12 @@ list_collections
 get_collection
 list_collection_entries
 
-scan_library
+get_local_library_overview
+list_local_files
+scan_local_library
+hash_local_file
+set_preferred_local_file
+
 start_sync
 cancel_sync
 get_sync_run

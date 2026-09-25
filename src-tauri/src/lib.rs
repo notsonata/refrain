@@ -2,6 +2,7 @@ mod app;
 mod commands;
 mod db;
 mod domain;
+mod local_library;
 mod saved_albums;
 mod security;
 mod source_sync;
@@ -22,6 +23,11 @@ pub fn run() {
             commands::get_app_info,
             commands::get_settings,
             commands::update_settings,
+            commands::get_local_library_overview,
+            commands::list_local_files,
+            commands::scan_local_library,
+            commands::hash_local_file,
+            commands::set_preferred_local_file,
             commands::get_spotify_auth_status,
             commands::connect_spotify,
             commands::disconnect_spotify,

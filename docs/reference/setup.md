@@ -46,6 +46,16 @@ Then enter the Client ID in Refrain Settings and connect Spotify. Port `43817` m
 
 See `docs/reference/spotify-auth.md` for authentication behavior and the real-account smoke test.
 
+## Local library setup
+
+Milestone 7 adds observational local-library indexing. In **Settings → Local library**:
+
+1. Enter the absolute path to the music-library root.
+2. Choose **Save path** to persist it without scanning, or **Scan library** to save and scan it.
+3. Review the present, missing, invalid, and total indexed counts while/after the scan.
+
+The scanner reads supported audio metadata and filesystem properties but does not move, rename, normalize, delete, or acquire files. Directory symlinks are not followed. Unsupported file formats and hidden/system metadata paths are ignored.
+
 ## Common commands
 
 | Command | Purpose |

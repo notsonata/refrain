@@ -24,7 +24,21 @@ npm run rust:clippy
 npm run rust:test
 ```
 
-Rust tests cover persistence, migrations, Spotify authentication and source synchronization behavior. The database suite includes opening a previously absent SQLite database, applying migrations, configuring SQLite pragmas, reopening persisted state, and transactional source replacement.
+Rust tests cover persistence, migrations, Spotify authentication, source synchronization, and local-library scanning behavior. The database suite includes opening a previously absent SQLite database, applying migrations, configuring SQLite pragmas, reopening persisted state, transactional source replacement, local-file pagination, and preferred-file selection.
+
+### Local library scanner
+
+Filesystem integration tests use temporary directories and cover:
+
+- new, unchanged, changed, removed, and moved audio files
+- stale BLAKE3 hash invalidation after content changes
+- hash-assisted moved-file recovery without confusing copied duplicates for moves
+- malformed supported audio and unsupported extensions
+- directory symlinks remaining untraversed
+- multiple physical files for the same apparent recording
+- large-directory incremental rescans and paginated reads
+
+Scanner tests must remain observational: they may create/change files only inside their temporary fixtures and must not normalize, move, or delete user library files.
 
 ### Desktop build smoke checks
 
