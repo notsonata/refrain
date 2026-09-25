@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 9 are complete and merged. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, and a Milestone 10 Filesystem Normalization and Ownership Safety implementation on the current development branch.
+Milestones 1 through 10 are complete and merged. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, and Filesystem Normalization and Ownership Safety.
 
 The application includes:
 
@@ -25,9 +25,7 @@ Milestones 7 through 9 remain non-destructive with respect to user audio. Milest
 
 ## Active Work
 
-Milestone 10, **Filesystem Normalization and Ownership Safety**, is implemented on the current development branch. The implementation extends synchronization with a `normalizeFiles` phase after reconciliation and includes focused filesystem coverage for sanitization, stable collisions, case-only renames, path traversal rejection, move fallback failures, and ownership preservation.
-
-Local validation passes frontend formatting, lint, Svelte/TypeScript checks, 23 frontend tests, the production build, Rust formatting and Clippy, all 62 non-Spotify Rust tests, the 9 focused normalization tests, and the native Tauri no-bundle build. The full Rust suite was also attempted; six Spotify loopback-listener tests cannot run in this sandbox because local socket binding is denied.
+Post-Milestone-10 CI stabilization. GitHub Actions is being made deterministic with a committed npm lockfile and `npm ci` after hosted npm 10.9.8 crashed during fresh dependency resolution.
 
 ## Recent Changes
 
@@ -38,6 +36,8 @@ Local validation passes frontend formatting, lint, Svelte/TypeScript checks, 23 
 - preserved preferred-file and managed/external ownership state after moves; external files are never automatically deleted
 - added managed-file Trash / Recycle Bin integration for future cleanup workflows
 - added Milestone 10 filesystem normalization tests covering the implementation-plan verification cases
+- merged Milestone 10 Filesystem Normalization and Ownership Safety
+- restored deterministic JavaScript dependency installation for CI with `package-lock.json` and `npm ci`
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
@@ -48,7 +48,7 @@ Unsigned or ad-hoc-signed release packages may require platform security confirm
 
 ## Next
 
-Validate and merge **Milestone 10: Filesystem Normalization and Ownership Safety**, then begin **Milestone 11: Issues and Manual Resolution UI** according to `docs/IMPLEMENTATION.md`.
+Begin **Milestone 11: Issues and Manual Resolution UI** according to `docs/IMPLEMENTATION.md` after CI is green.
 
 ## Blockers
 

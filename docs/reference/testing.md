@@ -6,6 +6,8 @@ Use the lowest validation level that gives credible confidence for the change.
 
 ### Frontend
 
+CI installs JavaScript dependencies from the committed `package-lock.json` with `npm ci` so validation uses the exact dependency graph recorded by the repository.
+
 ```bash
 npm run format:check
 npm run lint
