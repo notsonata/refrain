@@ -17,6 +17,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - run: npm install --global npm@11.6.0 --no-audit --no-fund
       - run: npm install --no-audit --no-fund
       - run: npm run format:check
       - run: npm run lint
@@ -63,5 +64,6 @@ jobs:
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+      - run: npm install --global npm@11.6.0 --no-audit --no-fund
       - run: npm install --no-audit --no-fund
       - run: npm run tauri build -- --no-bundle
