@@ -56,6 +56,24 @@ Milestone 7 adds observational local-library indexing. In **Settings → Local l
 
 The scanner reads supported audio metadata and filesystem properties but does not move, rename, normalize, delete, or acquire files. Directory symlinks are not followed. Unsupported file formats and hidden/system metadata paths are ignored.
 
+## Sockseek acquisition setup
+
+Refrain pins Sockseek `3.0.5` as its first acquisition provider. For local development, fetch the checksum-verified sidecar for the current Rust host target before running a Tauri command that validates or launches the sidecar:
+
+```bash
+npm run sidecar:sockseek
+```
+
+In **Settings → Acquisition**:
+
+1. Use an existing Soulseek account. Sockseek does not require a separate account; Refrain runs Sockseek as a client of the Soulseek network.
+2. Enter the same Soulseek username and password used by that account and choose **Save Soulseek credentials**.
+3. Refrain stores the credentials in the operating system credential store. The password is not stored in SQLite.
+4. Use **Check Sockseek connection** to start the pinned sidecar and verify its version and Soulseek login.
+5. Enable **Acquire missing tracks during synchronization** and save the acquisition setting.
+
+The daemon binds to `127.0.0.1` on an available runtime-selected port. Refrain materializes a restricted temporary Sockseek configuration only for process startup and removes it after the daemon loads configuration.
+
 ## Common commands
 
 | Command | Purpose |
@@ -64,6 +82,7 @@ The scanner reads supported audio metadata and filesystem properties but does no
 | `npm run dev` | Run the Vite frontend |
 | `npm run build` | Build the frontend |
 | `npm run tauri build -- --no-bundle` | Compile the desktop app without installers |
+| `npm run sidecar:sockseek` | Fetch and verify Sockseek 3.0.5 for the current Rust host target |
 | `npm run format:check` | Check frontend formatting |
 | `npm run lint` | Run ESLint |
 | `npm run check` | Run Svelte/TypeScript checks |
@@ -74,4 +93,4 @@ The scanner reads supported audio metadata and filesystem properties but does no
 
 ## Local data
 
-Refrain creates its application-data directory through Tauri and stores SQLite state there. Spotify refresh credentials are stored through the operating system credential store rather than SQLite. Application logs are written under the application's data directory in `logs/`.
+Refrain creates its application-data directory through Tauri and stores SQLite state there. Spotify refresh credentials and Soulseek credentials are stored through the operating system credential store rather than SQLite. Sockseek downloads first enter Refrain-controlled staging under `runtime/acquisition/`. Application logs are written under the application's data directory in `logs/`.

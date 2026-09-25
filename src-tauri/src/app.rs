@@ -3,8 +3,8 @@ use std::{error::Error, fs, path::PathBuf, sync::Arc};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    db::Database, reconciliation::SyncCoordinator, source_sync::SourceRefreshControl,
-    spotify::SpotifyClient,
+    db::Database, reconciliation::SyncCoordinator, sockseek::SockseekManager,
+    source_sync::SourceRefreshControl, spotify::SpotifyClient,
 };
 
 pub struct AppState {
@@ -13,6 +13,7 @@ pub struct AppState {
     pub spotify: Arc<SpotifyClient>,
     pub source_refresh: Arc<SourceRefreshControl>,
     pub sync: Arc<SyncCoordinator>,
+    pub sockseek: Arc<SockseekManager>,
 }
 
 impl AppState {
@@ -27,6 +28,7 @@ impl AppState {
             spotify,
             source_refresh: Arc::new(SourceRefreshControl::default()),
             sync: Arc::new(SyncCoordinator::default()),
+            sockseek: Arc::new(SockseekManager::default()),
         }
     }
 }

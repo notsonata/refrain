@@ -4,11 +4,12 @@ use serde::Serialize;
 use tauri::Emitter;
 
 use crate::{
+    acquisition::AcquisitionProvider,
     app::AppState,
     db::{Database, DatabaseError},
     domain::{
         AcquisitionJobPage, AppSettings, IssuePage, LibraryTrackPage, LocalFilePage,
-        LocalLibraryOverview, MatchResult, MatchReview, SourceCollectionListPage,
+        LocalLibraryOverview, MatchResult, MatchReview, ProviderHealth, SourceCollectionListPage,
         SourceCollectionPage, SpotifySourceOverview,
     },
     issues::{get_match_review as load_match_review, list_issues as load_issues},
@@ -21,6 +22,7 @@ use crate::{
         cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
         refresh_spotify_saved_albums,
     },
+    sockseek::SoulseekCredentialStatus,
     source_sync::{
         SOURCE_REFRESH_PROGRESS_EVENT, SourceRefreshError, SourceRefreshProgress,
         SourceRefreshSummary, refresh_spotify_source as run_spotify_source_refresh,
@@ -244,6 +246,63 @@ pub fn list_acquisition_jobs(
         .database
         .acquisition_jobs_page(offset, limit)
         .map_err(|error| command_database_error("load acquisition jobs", error))
+}
+
+#[tauri::command]
+pub fn get_soulseek_credential_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<SoulseekCredentialStatus, String> {
+    state.sockseek.credential_status().map_err(|error| {
+        tracing::error!(%error, "load Soulseek credential status failed");
+        error.to_string()
+    })
+}
+
+#[tauri::command]
+pub fn set_soulseek_credentials(
+    username: String,
+    password: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<SoulseekCredentialStatus, String> {
+    state
+        .sockseek
+        .set_credentials(&username, &password)
+        .map_err(|error| error.to_string())?;
+    state
+        .sockseek
+        .credential_status()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn clear_soulseek_credentials(
+    state: tauri::State<'_, AppState>,
+) -> Result<SoulseekCredentialStatus, String> {
+    state
+        .sockseek
+        .clear_credentials()
+        .map_err(|error| error.to_string())?;
+    state
+        .sockseek
+        .credential_status()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn get_sockseek_provider_health(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ProviderHealth, String> {
+    let manager = Arc::clone(&state.sockseek);
+    let app_data_dir = state.app_data_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = manager
+            .provider(&app, &app_data_dir)
+            .map_err(|error| error.to_string())?;
+        provider.health().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Sockseek health worker stopped unexpectedly: {error}"))?
 }
 
 #[tauri::command]

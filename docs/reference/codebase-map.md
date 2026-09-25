@@ -10,11 +10,14 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `.github/workflows/release.yml` — version-tag packaging and GitHub Release publishing
 - `docs/` — product, technical, status, decision, and reference documentation
 - `package.json` — frontend scripts, dependencies, and application version
+- `scripts/fetch-sockseek-sidecar.mjs` — pinned Sockseek release download, SHA-256 verification, extraction, and Tauri sidecar naming
+- `THIRD_PARTY_NOTICES.md` — distributed third-party version, source, and license notices
+- `third-party/sockseek/LICENSE` — bundled upstream Sockseek AGPL-3.0 license text
 
 ## Frontend
 
 - `src/main.ts` — frontend entry point
-- `src/App.svelte` — desktop shell, navigation, Spotify connect/refresh flows, collection views, Library/Issues orchestration, and local-library Settings controls
+- `src/App.svelte` — desktop shell, navigation, Spotify connect/refresh flows, collection views, Library/Issues orchestration, and local-library/acquisition Settings controls
 - `src/app.css` — application shell and viewport/layout rules
 - `src/components/TrackList.svelte` — virtualized track rows and lazy artwork
 - `src/components/LibraryView.svelte` — dense paginated logical-library table with preferred/local-file state
@@ -23,6 +26,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src/lib/acquisition.ts` — acquisition job/status projection types and Tauri command wrapper
 - `src/lib/dialog.ts` — native Library root folder-picker wrapper
 - `src/lib/settings.ts` — settings command wrapper
+- `src/lib/sockseek.ts` — Soulseek credential and Sockseek provider-health command wrappers
 - `src/lib/library.ts` — local-library overview, logical-track projection, paginated file, scan, hash, and preferred-file command wrappers
 - `src/lib/issues.ts` — issue projection/count types, match-review data, and issue command wrappers
 - `src/lib/matching.ts` — matching evidence and manual confirm/reject/clear command wrappers
@@ -47,6 +51,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/reconciliation.rs` — sync coordination, initial sync orchestration through filesystem normalization, reconciliation commands, cancellation, and matched/missing/review classification
 - `src-tauri/src/normalization.rs` — canonical library paths, portable filename sanitization, collision handling, safe moves, ownership-safe normalization, and guarded platform Trash integration
 - `src-tauri/src/security.rs` — OS credential-store abstraction for Spotify refresh credentials
+- `src-tauri/src/sockseek.rs` — Sockseek 3.0.5 sidecar lifecycle, HTTP adapter, SignalR wake/reconnect path, credential config materialization, staging, and version/health checks
 - `src-tauri/src/domain/library.rs` — local-file and logical-library projection types
 - `src-tauri/src/domain/acquisition.rs` — provider-neutral query/candidate/job/health types and persisted acquisition projection types
 - `src-tauri/src/domain/issues.rs` — issue, issue-count, and match-review projection types
@@ -74,6 +79,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 ## Packaging and configuration
 
 - `src-tauri/tauri.conf.json` — application identity, window/security settings, and desktop bundle metadata
+- `src-tauri/binaries/` — ignored target-specific Sockseek sidecar staging used by Tauri builds
 - `src-tauri/Cargo.toml` — Rust package metadata and dependencies
 - `src-tauri/icons/` — source application icons used by Tauri bundling
 - `src-tauri/capabilities/default.json` — Tauri IPC capability permissions
@@ -102,6 +108,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 | Browse logical library | `src-tauri/src/db/issues.rs`, `src/lib/library.ts`, `src/components/LibraryView.svelte`, `src/App.svelte` |
 | Issues and manual resolution | `src-tauri/src/issues.rs`, `src-tauri/src/db/issues.rs`, `src/lib/issues.ts`, `src/components/IssuesView.svelte`, `src/App.svelte` |
 | Acquisition provider boundary/status | `src-tauri/src/acquisition.rs`, `src-tauri/src/db/acquisition.rs`, `src-tauri/src/domain/acquisition.rs`, `src/lib/acquisition.ts` |
+| Sockseek acquisition provider | `src-tauri/src/sockseek.rs`, `src-tauri/src/security.rs`, `src/lib/sockseek.ts`, `scripts/fetch-sockseek-sidecar.mjs` |
 | Matching and manual decisions | `src-tauri/src/matching.rs`, `src-tauri/src/db/matching.rs`, `src/lib/matching.ts` |
 | Full sync through normalization | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src/lib/sync.ts` |
 | Filesystem normalization / ownership safety | `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src-tauri/src/db/local_library.rs` |

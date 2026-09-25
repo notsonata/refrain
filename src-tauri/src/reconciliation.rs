@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::{
+    acquisition::AcquisitionCoordinator,
     app::AppState,
     db::{Database, DatabaseError},
     domain::{MatchOutcome, MatchTrackDescriptor, ReconciliationCounts, SyncRun, SyncRunPage},
@@ -18,6 +19,7 @@ use crate::{
         cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
         refresh_spotify_saved_albums,
     },
+    sockseek::SockseekManager,
     source_sync::{SourceRefreshControl, refresh_spotify_source as refresh_source},
     spotify::SpotifyClient,
 };
@@ -113,6 +115,15 @@ enum ReconciliationFailure {
     InvalidState(String),
 }
 
+struct SyncExecutionContext<'a> {
+    database: &'a Database,
+    source_refresh: &'a Arc<SourceRefreshControl>,
+    sync: &'a SyncCoordinator,
+    sockseek: &'a Arc<SockseekManager>,
+    app: &'a tauri::AppHandle,
+    app_data_dir: &'a Path,
+}
+
 impl From<DatabaseError> for ReconciliationFailure {
     fn from(error: DatabaseError) -> Self {
         Self::Database(error)
@@ -122,6 +133,7 @@ impl From<DatabaseError> for ReconciliationFailure {
 #[tauri::command]
 pub async fn start_sync(
     trigger: Option<String>,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncRun, String> {
     let trigger = trigger.unwrap_or_else(|| "manual".into());
@@ -150,10 +162,20 @@ pub async fn start_sync(
     let spotify = Arc::clone(&state.spotify);
     let source_refresh = Arc::clone(&state.source_refresh);
     let sync = Arc::clone(&state.sync);
+    let sockseek = Arc::clone(&state.sockseek);
+    let app_data_dir = state.app_data_dir.clone();
 
     match tauri::async_runtime::spawn_blocking(move || {
         let _lease = lease;
-        execute_sync(&database, spotify, &source_refresh, &sync, run_id)
+        let context = SyncExecutionContext {
+            database: &database,
+            source_refresh: &source_refresh,
+            sync: &sync,
+            sockseek: &sockseek,
+            app: &app,
+            app_data_dir: &app_data_dir,
+        };
+        execute_sync(&context, spotify, run_id)
     })
     .await
     {
@@ -209,36 +231,41 @@ pub fn list_sync_runs(
 }
 
 fn execute_sync(
-    database: &Database,
+    context: &SyncExecutionContext<'_>,
     spotify: Arc<SpotifyClient>,
-    source_refresh: &Arc<SourceRefreshControl>,
-    sync: &SyncCoordinator,
     run_id: i64,
 ) -> Result<SyncRun, String> {
-    let outcome = run_initial_sync(database, spotify, source_refresh, sync, run_id);
-    let finish_result = match outcome {
-        Ok(counts) => database.finish_sync_run(run_id, "succeeded", counts, None),
-        Err(SyncExecutionFailure::Cancelled(counts)) => {
-            database.finish_sync_run(run_id, "cancelled", counts, None)
-        }
-        Err(SyncExecutionFailure::Failed { counts, message }) => {
-            database.finish_sync_run(run_id, "failed", counts, Some(&message))
-        }
-    };
+    let outcome = run_initial_sync(context, spotify, run_id);
+    let finish_result =
+        match outcome {
+            Ok(counts) => context
+                .database
+                .finish_sync_run(run_id, "succeeded", counts, None),
+            Err(SyncExecutionFailure::Cancelled(counts)) => {
+                context
+                    .database
+                    .finish_sync_run(run_id, "cancelled", counts, None)
+            }
+            Err(SyncExecutionFailure::Failed { counts, message }) => context
+                .database
+                .finish_sync_run(run_id, "failed", counts, Some(&message)),
+        };
     finish_result.map_err(|error| sync_database_error("finish sync run", error))?;
-    database
+    context
+        .database
         .sync_run(run_id)
         .map_err(|error| sync_database_error("load completed sync", error))?
         .ok_or_else(|| "Completed sync run could not be loaded.".to_owned())
 }
 
 fn run_initial_sync(
-    database: &Database,
+    context: &SyncExecutionContext<'_>,
     spotify: Arc<SpotifyClient>,
-    source_refresh: &Arc<SourceRefreshControl>,
-    sync: &SyncCoordinator,
     run_id: i64,
 ) -> Result<ReconciliationCounts, SyncExecutionFailure> {
+    let database = context.database;
+    let source_refresh = context.source_refresh;
+    let sync = context.sync;
     let empty_counts = ReconciliationCounts::default();
     if sync.is_cancelled() {
         return Err(SyncExecutionFailure::Cancelled(empty_counts));
@@ -342,6 +369,31 @@ fn run_initial_sync(
     if sync.is_cancelled() {
         return Err(SyncExecutionFailure::Cancelled(counts));
     }
+
+    if settings.acquisition_enabled {
+        database
+            .update_sync_run_phase(run_id, "acquireMissing")
+            .map_err(|error| failed(counts, "update sync phase", error))?;
+        let provider = context
+            .sockseek
+            .provider(context.app, context.app_data_dir)
+            .map_err(|error| SyncExecutionFailure::Failed {
+                counts,
+                message: error.to_string(),
+            })?;
+        AcquisitionCoordinator
+            .run_missing(database, context.app_data_dir, provider.as_ref(), || {
+                sync.is_cancelled()
+            })
+            .map_err(|error| SyncExecutionFailure::Failed {
+                counts,
+                message: error.to_string(),
+            })?;
+        if sync.is_cancelled() {
+            return Err(SyncExecutionFailure::Cancelled(counts));
+        }
+    }
+
     database
         .update_sync_run_phase(run_id, "normalizeFiles")
         .map_err(|error| failed(counts, "update sync phase", error))?;

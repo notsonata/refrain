@@ -29,6 +29,13 @@
   } from './lib/matching';
   import { getSettings, updateSettings } from './lib/settings';
   import {
+    clearSoulseekCredentials,
+    getSockseekProviderHealth,
+    getSoulseekCredentialStatus,
+    setSoulseekCredentials,
+    type ProviderHealth,
+  } from './lib/sockseek';
+  import {
     getSourceCollectionPage,
     hydrateSpotifySource,
     listSpotifyPlaylists,
@@ -64,6 +71,13 @@
   let appInfo: AppInfo | null = null;
   let authStatus: SpotifyAuthStatus | null = null;
   let clientId = '';
+  let acquisitionEnabled = false;
+  let soulseekUsername = '';
+  let soulseekPassword = '';
+  let soulseekConfigured = false;
+  let sockseekHealth: ProviderHealth | null = null;
+  let acquisitionBusy = false;
+  let acquisitionError: string | null = null;
   let backendError: string | null = null;
   let authError: string | null = null;
   let authBusy = false;
@@ -150,16 +164,21 @@
 
   async function initialize() {
     try {
-      const [info, status, settings, localOverview] = await Promise.all([
-        getAppInfo(),
-        getSpotifyAuthStatus(),
-        getSettings(),
-        getLocalLibraryOverview(),
-      ]);
+      const [info, status, settings, localOverview, soulseekStatus] =
+        await Promise.all([
+          getAppInfo(),
+          getSpotifyAuthStatus(),
+          getSettings(),
+          getLocalLibraryOverview(),
+          getSoulseekCredentialStatus(),
+        ]);
       appInfo = info;
       authStatus = status;
       clientId = status.clientId ?? '';
       libraryRoot = settings.libraryRoot ?? '';
+      acquisitionEnabled = settings.acquisitionEnabled;
+      soulseekConfigured = soulseekStatus.configured;
+      soulseekUsername = soulseekStatus.username ?? '';
       libraryOverview = localOverview;
       backendError = null;
       await hydrateSourceState();
@@ -285,6 +304,89 @@
       libraryError = spotifyErrorMessage(error);
     } finally {
       libraryBusy = false;
+    }
+  }
+
+  async function saveAcquisitionSettings() {
+    acquisitionBusy = true;
+    acquisitionError = null;
+    try {
+      if (acquisitionEnabled && !soulseekConfigured) {
+        throw new Error(
+          'Save your Soulseek account credentials before enabling acquisition.',
+        );
+      }
+      const current = await getSettings();
+      await updateSettings({ ...current, acquisitionEnabled });
+    } catch (error) {
+      acquisitionError = operationError(
+        error,
+        'Could not save acquisition settings.',
+      );
+    } finally {
+      acquisitionBusy = false;
+    }
+  }
+
+  async function saveSoulseekAccount() {
+    acquisitionBusy = true;
+    acquisitionError = null;
+    sockseekHealth = null;
+    try {
+      const status = await setSoulseekCredentials(
+        soulseekUsername.trim(),
+        soulseekPassword,
+      );
+      soulseekConfigured = status.configured;
+      soulseekUsername = status.username ?? '';
+      soulseekPassword = '';
+    } catch (error) {
+      acquisitionError = operationError(
+        error,
+        'Could not save Soulseek credentials.',
+      );
+    } finally {
+      acquisitionBusy = false;
+    }
+  }
+
+  async function clearSoulseekAccount() {
+    acquisitionBusy = true;
+    acquisitionError = null;
+    sockseekHealth = null;
+    try {
+      const status = await clearSoulseekCredentials();
+      soulseekConfigured = status.configured;
+      soulseekUsername = status.username ?? '';
+      soulseekPassword = '';
+      if (acquisitionEnabled) {
+        const current = await getSettings();
+        acquisitionEnabled = false;
+        await updateSettings({ ...current, acquisitionEnabled: false });
+      }
+    } catch (error) {
+      acquisitionError = operationError(
+        error,
+        'Could not clear Soulseek credentials.',
+      );
+    } finally {
+      acquisitionBusy = false;
+    }
+  }
+
+  async function checkSockseekHealth() {
+    acquisitionBusy = true;
+    acquisitionError = null;
+    sockseekHealth = null;
+    try {
+      sockseekHealth = await getSockseekProviderHealth();
+    } catch (error) {
+      acquisitionError = operationError(
+        error,
+        'Could not start the Sockseek provider.',
+      );
+    } finally {
+      acquisitionBusy = false;
     }
   }
 
@@ -1268,6 +1370,155 @@
                     class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
                   >
                     {libraryError}
+                  </div>
+                {/if}
+              </div>
+
+              <div class="rounded-xl border border-slate-800 p-6">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-xs uppercase tracking-wider text-slate-600">
+                      Acquisition
+                    </p>
+                    <h2 class="mt-1 text-xl font-semibold">
+                      Sockseek provider
+                    </h2>
+                    <p class="mt-2 max-w-xl text-sm leading-6 text-slate-500">
+                      Sockseek is bundled with Refrain and connects to the
+                      Soulseek network using your Soulseek account. There is no
+                      separate Sockseek account.
+                    </p>
+                  </div>
+                  <span
+                    class="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-400"
+                  >
+                    {soulseekConfigured
+                      ? 'Account configured'
+                      : 'Not configured'}
+                  </span>
+                </div>
+
+                <div
+                  class="mt-5 rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-sm"
+                >
+                  <p class="font-medium text-slate-200">Setup</p>
+                  <ol
+                    class="mt-2 list-decimal space-y-1 pl-5 leading-6 text-slate-500"
+                  >
+                    <li>
+                      Enter the same Soulseek username and password you use to
+                      sign in to Soulseek, then save them.
+                    </li>
+                    <li>
+                      Check the provider to start Sockseek and verify the
+                      Soulseek login.
+                    </li>
+                    <li>
+                      Enable acquisition so missing tracks can be downloaded
+                      during synchronization.
+                    </li>
+                  </ol>
+                  <p class="mt-2 text-xs leading-5 text-slate-600">
+                    Credentials are stored in your operating system credential
+                    store. Refrain starts and configures Sockseek automatically.
+                  </p>
+                </div>
+
+                <label class="mt-6 flex items-center gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    bind:checked={acquisitionEnabled}
+                    disabled={acquisitionBusy}
+                    class="size-4 accent-slate-100"
+                  />
+                  Acquire missing tracks during synchronization
+                </label>
+
+                <div class="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div class="grid gap-2">
+                    <label for="soulseek-username" class="text-sm font-medium">
+                      Soulseek username
+                    </label>
+                    <input
+                      id="soulseek-username"
+                      bind:value={soulseekUsername}
+                      disabled={acquisitionBusy}
+                      autocomplete="username"
+                      spellcheck="false"
+                      class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm outline-none transition focus:border-slate-500 disabled:opacity-60"
+                    />
+                  </div>
+                  <div class="grid gap-2">
+                    <label for="soulseek-password" class="text-sm font-medium">
+                      Soulseek password
+                    </label>
+                    <input
+                      id="soulseek-password"
+                      type="password"
+                      bind:value={soulseekPassword}
+                      disabled={acquisitionBusy}
+                      autocomplete="current-password"
+                      placeholder={soulseekConfigured
+                        ? 'Saved in credential store'
+                        : ''}
+                      class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm outline-none transition focus:border-slate-500 disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+
+                <div class="mt-5 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onclick={saveAcquisitionSettings}
+                    disabled={acquisitionBusy}
+                    class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:opacity-60"
+                  >
+                    Save acquisition setting
+                  </button>
+                  <button
+                    type="button"
+                    onclick={saveSoulseekAccount}
+                    disabled={acquisitionBusy ||
+                      !soulseekUsername.trim() ||
+                      !soulseekPassword}
+                    class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:opacity-50"
+                  >
+                    Save Soulseek credentials
+                  </button>
+                  <button
+                    type="button"
+                    onclick={checkSockseekHealth}
+                    disabled={acquisitionBusy || !soulseekConfigured}
+                    class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:opacity-60"
+                  >
+                    Check Sockseek connection
+                  </button>
+                  {#if soulseekConfigured}
+                    <button
+                      type="button"
+                      onclick={clearSoulseekAccount}
+                      disabled={acquisitionBusy}
+                      class="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-900 hover:text-slate-200 disabled:opacity-60"
+                    >
+                      Clear credentials
+                    </button>
+                  {/if}
+                </div>
+
+                {#if sockseekHealth}
+                  <p class="mt-4 text-xs leading-5 text-slate-500">
+                    Sockseek {sockseekHealth.version ?? 'unknown'} ·
+                    {sockseekHealth.available
+                      ? 'Soulseek ready'
+                      : (sockseekHealth.message ?? 'Unavailable')}
+                  </p>
+                {/if}
+
+                {#if acquisitionError}
+                  <div
+                    class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
+                  >
+                    {acquisitionError}
                   </div>
                 {/if}
               </div>

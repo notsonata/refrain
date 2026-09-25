@@ -1,5 +1,3 @@
-// Milestone 12 defines this boundary before Milestone 13 supplies the production provider.
-#[allow(dead_code)]
 mod acquisition;
 mod app;
 mod commands;
@@ -12,6 +10,7 @@ mod normalization;
 mod reconciliation;
 mod saved_albums;
 mod security;
+mod sockseek;
 mod source_sync;
 mod spotify;
 
@@ -21,6 +20,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|application| {
             let app_data_dir = application.path().app_data_dir()?;
             let state = app::initialize(app_data_dir)?;
@@ -44,6 +44,10 @@ pub fn run() {
             commands::list_issues,
             commands::get_match_review,
             commands::list_acquisition_jobs,
+            commands::get_soulseek_credential_status,
+            commands::set_soulseek_credentials,
+            commands::clear_soulseek_credentials,
+            commands::get_sockseek_provider_health,
             reconciliation::start_sync,
             reconciliation::cancel_sync,
             reconciliation::get_sync_run,

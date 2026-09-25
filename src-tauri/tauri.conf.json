@@ -31,6 +31,11 @@
     "homepage": "https://github.com/notsonata/refrain",
     "shortDescription": "Mirror Spotify source state into a desktop music-library workspace.",
     "longDescription": "Refrain imports and browses Spotify Liked Songs, saved albums, and playlists as the desired state for a normalized local music library.",
+    "externalBin": ["binaries/sockseek"],
+    "resources": [
+      "../THIRD_PARTY_NOTICES.md",
+      "../third-party/sockseek/LICENSE"
+    ],
     "icon": ["icons/icon.png", "icons/icon.ico"],
     "macOS": {
       "signingIdentity": "-"

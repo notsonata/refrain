@@ -1221,7 +1221,9 @@ Refrain does not use Sockseek's Spotify ingestion.
 
 ### Process Model
 
-Bundle an unmodified Sockseek executable as a Tauri sidecar for each supported release target.
+Refrain pins Sockseek `3.0.5` and bundles its unmodified executable as a Tauri sidecar for each supported release target.
+
+The release and CI workflows fetch the official platform archive and verify its pinned SHA-256 digest before Tauri packaging. The binary is not committed to the Refrain repository.
 
 Run:
 
@@ -1238,9 +1240,10 @@ The adapter owns sidecar lifecycle:
 - start when acquisition is first needed
 - perform health/version check
 - keep it alive while the application runs
-- gracefully stop it on application exit
-- kill it only if graceful shutdown fails
+- terminate the owned child process when the provider manager or application shuts down
 - capture stdout/stderr into Refrain logs with secret redaction
+
+Sockseek `3.0.5` does not expose a documented daemon-shutdown API, so Refrain owns the spawned child process and terminates that process directly on shutdown.
 
 ### API Boundary
 
@@ -1257,7 +1260,16 @@ Therefore:
 - use SignalR for progress/invalidation only
 - recover from SignalR disconnect by polling durable job state
 
-The adapter should use Sockseek's published OpenAPI description as the implementation reference for the pinned version.
+The `3.0.5` adapter uses Sockseek's published OpenAPI contract for:
+
+- `GET /api/server/info` and `GET /api/server/status` for compatibility and readiness
+- `POST /api/jobs/search/tracks` followed by `GET /api/jobs/{id}/results/files` for candidates
+- `POST /api/jobs/{searchJobId}/downloads/files` for the selected provider candidate
+- `GET /api/jobs/{id}` as the durable job-state authority
+- `POST /api/jobs/{id}/cancel` for cooperative cancellation
+- `/api/events` SignalR subscriptions for progress and invalidation wakeups
+
+Provider-specific search-job IDs and candidate file references remain serialized inside the opaque provider token and do not enter the core data model.
 
 ### Staging
 
@@ -1286,7 +1298,7 @@ Store them in the OS credential store.
 
 Do not persist the Soulseek password in SQLite.
 
-If the pinned Sockseek version requires file-based configuration:
+Sockseek `3.0.5` uses its normal configuration file for Soulseek credentials. Refrain therefore:
 
 1. materialize a per-run configuration file under Refrain's private runtime directory
 2. set owner-only permissions where the OS supports them
@@ -1904,6 +1916,8 @@ Test:
 
 Live Soulseek credentials are not required for normal CI.
 
+The documented mock daemon starts from a generated local fixture with `--mock-files-dir`. HTTP snapshots remain the source of truth in tests even when SignalR delivery is interrupted.
+
 ### Filesystem Integration Tests
 
 Use temporary directories.
@@ -2000,7 +2014,7 @@ Before a migration that can destructively rewrite significant data, create a bac
 
 ### Sidecar
 
-Pin one tested Sockseek version per Refrain release.
+Pin one tested Sockseek version per Refrain release. The current v1 development pin is Sockseek `3.0.5`.
 
 A Refrain update may update the sidecar only after adapter contract tests pass against that version.
 
@@ -2112,6 +2126,8 @@ Current Sockseek documentation as of September 2026 indicates:
 
 The Refrain adapter must remain pinned and isolated accordingly.
 
+For Sockseek `3.0.5`, Refrain uses an explicit loopback port, the HTTP job API, the `/api/events` SignalR hub, a restricted transient config file for credentials, and Refrain-controlled `outputParentDir` staging. Sockseek's Spotify input path is unused.
+
 ## Resolved Technical Decisions
 
 The following are considered decided for v1:
@@ -2130,7 +2146,9 @@ The following are considered decided for v1:
 - one canonical preferred local file per library track under normal operation
 - mandatory normalization for the canonical library
 - provider-neutral acquisition interface
-- bundled Sockseek daemon as initial provider
+- bundled Sockseek `3.0.5` daemon as initial provider
+- HTTP-authoritative Sockseek job state with SignalR progress/invalidation wakeups
+- OS credential storage plus restricted transient Sockseek configuration for Soulseek credentials
 - staging and verification before canonical import
 - M3U8 and portable bundle exports
 - manifest-based filesystem mirroring
@@ -2144,10 +2162,7 @@ None of these block scaffolding or v0.1.0.
 
 They should be resolved during implementation when the concrete library or platform behavior is known:
 
-- exact Tauri release target matrix where Sockseek binaries are available
-- exact platform installer formats for Linux
 - whether the chosen `keyring` backend needs platform-specific fallback guidance on Linux desktop environments
-- whether Sockseek's pinned version offers a safer credential transport than a restricted temporary config file
 - exact cover-art cache implementation and eviction policy
 - whether native full-app E2E coverage is practical on all three CI platforms
 

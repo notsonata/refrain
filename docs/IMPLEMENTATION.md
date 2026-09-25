@@ -677,6 +677,8 @@ Make Sockseek the first production acquisition provider.
 
 ### Work
 
+Implementation pin: Sockseek `3.0.5`, using official release archives verified against their published SHA-256 digests. Release binaries are fetched during CI/release packaging instead of being committed to Git.
+
 - select and pin a tested Sockseek release
 - bundle platform-specific sidecar binaries where available
 - implement sidecar startup and shutdown

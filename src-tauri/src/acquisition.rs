@@ -9,8 +9,8 @@ use crate::{
 };
 
 const MAX_ATTEMPTS: usize = 3;
-const MAX_STATUS_POLLS: usize = 1_000;
-const STATUS_POLL_DELAY: Duration = Duration::from_millis(10);
+const MAX_STATUS_POLLS: usize = 3_600;
+const STATUS_POLL_DELAY: Duration = Duration::from_millis(250);
 
 pub trait AcquisitionProvider: Send + Sync {
     fn id(&self) -> &'static str;
@@ -19,6 +19,10 @@ pub trait AcquisitionProvider: Send + Sync {
     fn acquire(&self, request: &AcquisitionRequest) -> Result<ProviderJob, ProviderError>;
     fn status(&self, provider_job_id: &str) -> Result<ProviderJobStatus, ProviderError>;
     fn cancel(&self, provider_job_id: &str) -> Result<(), ProviderError>;
+
+    fn wait_for_status_change(&self, _provider_job_id: &str, timeout: Duration) {
+        thread::sleep(timeout);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,7 +274,7 @@ fn wait_for_provider_job<P: AcquisitionProvider>(
                 return ProviderOutcome::Failed(ProviderError::new(code, message, retryable));
             }
             Ok(ProviderJobStatus::Pending | ProviderJobStatus::Running) => {
-                thread::sleep(STATUS_POLL_DELAY);
+                provider.wait_for_status_change(provider_job_id, STATUS_POLL_DELAY);
             }
             Err(error) => return ProviderOutcome::Failed(error),
         }

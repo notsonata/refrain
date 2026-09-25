@@ -95,7 +95,25 @@ Milestone 12 acquisition tests use a deterministic fake provider and temporary a
 - failed provider jobs appearing automatically in the Issues projection
 - migration 6 creating the acquisition job table and indexes
 
-The native Milestone 12 smoke check should also verify that the Issues queue/detail panes remain visible and independently scrollable at the configured minimum window size, and that activating the Library root field opens the operating system folder picker and populates the selected path.
+The Milestone 12 native smoke check passed on macOS: the Issues queue/detail panes remain usable after the clipping fix, and activating the Library root field opens the native folder picker and populates the selected path.
+
+### Sockseek sidecar provider
+
+Milestone 13 pins Sockseek `3.0.5`. Its documented mock-daemon mode should cover the production adapter without requiring a real Soulseek account:
+
+```bash
+python scripts/create_mock_music_library.py -o /tmp/sockseek-fixture
+sockseek daemon \
+  --mock-files-dir /tmp/sockseek-fixture/mock-library \
+  --mock-files-no-read-tags \
+  --mock-files-slow \
+  --server-port 5030 \
+  -o /tmp/sockseek-out
+```
+
+Provider integration verification should cover startup, exact-version rejection, search/job creation, durable HTTP polling, SignalR progress and reconnect fallback, cancellation, successful staging output, provider failure, and shutdown. HTTP job snapshots are authoritative after event disconnects.
+
+Before release packaging that enables acquisition, perform one real Soulseek download smoke test and inspect the staged output. Do not treat a successful provider download as an imported library file until Milestone 14 verification/import succeeds.
 
 ### Issues and manual resolution
 
@@ -116,6 +134,8 @@ npm run tauri build -- --no-bundle
 ```
 
 CI runs this build on Ubuntu, macOS, and Windows. Installer/application bundle generation is additionally exercised by the tag-driven release workflow.
+
+Tauri build jobs fetch the pinned Sockseek sidecar first because `externalBin` is validated during the Rust/Tauri build. The fetch script verifies the official v3.0.5 SHA-256 digest before installing the target-triple-named binary under `src-tauri/binaries/`.
 
 ## Manual v0.1 smoke tests
 
@@ -149,5 +169,7 @@ A release candidate should pass:
 - Spotify connect and refresh smoke test
 - restart persistence smoke test
 - representative log-secret inspection
+- Sockseek mock-daemon provider verification when acquisition code changes
+- real Soulseek acquisition smoke test before an acquisition-enabled release
 
 See `docs/reference/release.md` for packaging and tag behavior.

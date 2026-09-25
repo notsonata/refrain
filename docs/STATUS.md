@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 11 are complete. Milestone 12 is implemented locally and awaiting its final native UI smoke check. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, Issues and Manual Resolution UI, and the provider-neutral Acquisition Provider Boundary.
+Milestones 1 through 12 are complete. Milestone 13, Sockseek Sidecar Provider, is implemented locally and is awaiting its provider-level mock-daemon verification plus the required real Soulseek smoke test before release packaging. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, Issues and Manual Resolution UI, the provider-neutral Acquisition Provider Boundary, and the initial Sockseek production-provider integration.
 
 The application includes:
 
@@ -25,6 +25,14 @@ The application includes:
 - durable `acquisition_jobs` persistence with provider-neutral candidate/job types and a fake-provider-tested acquisition coordinator
 - bounded acquisition attempts, cooperative provider cancellation, Refrain-controlled staging directories, and a `staged` terminal state that still requires later verification/import
 - acquisition status IPC plus failed acquisition jobs projected into the Issues view
+- Sockseek `3.0.5` pinned as the first production acquisition provider, with checksum-verified sidecar fetching for supported release targets
+- lazy Sockseek daemon startup on an available loopback port, exact version/readiness checks, owned process shutdown, and credential-redacted sidecar logging
+- provider-specific HTTP search/download/status/cancel mapping kept behind the opaque acquisition-provider boundary
+- SignalR progress/invalidation wakeups with reconnect behavior while durable HTTP job snapshots remain authoritative
+- Soulseek credentials stored in the operating system credential store and materialized only into a restricted transient Sockseek configuration during daemon startup
+- Refrain-controlled Sockseek staging output that remains in the durable `staged` acquisition state pending Milestone 14 verification/import
+- Settings controls for enabling acquisition, saving/clearing Soulseek credentials, and checking Sockseek provider health
+- release packaging support for the Sockseek sidecar plus AGPL license/source notices
 - native Library root folder selection through the Tauri dialog plugin
 - a fixed-height Issues workspace whose queue and detail panes scroll independently instead of clipping at the supported desktop window sizes
 - typed sync-run Tauri commands and frontend wrappers for starting, cancelling, reading, and listing synchronization runs
@@ -33,7 +41,7 @@ Milestones 7 through 9 remain non-destructive with respect to user audio. Milest
 
 ## Active Work
 
-Milestone 12 implementation is complete locally. The remaining work is a short native smoke check for the repaired Issues layout and Library root folder picker before the milestone is treated as fully verified.
+Milestone 13 implementation is complete locally. Static/build validation is being completed against the pinned sidecar. The remaining milestone verification is Sockseek's documented mock-daemon provider flow plus one real Soulseek acquisition smoke test before an acquisition-enabled release is packaged.
 
 ## Recent Changes
 
@@ -56,6 +64,12 @@ Milestone 12 implementation is complete locally. The remaining work is a short n
 - kept provider success at `staged`, preserving the later verification/import boundary instead of treating a provider download as synced audio
 - projected failed acquisition jobs into Issues and repaired the Issues desktop layout so the queue and detail panes remain independently scrollable
 - replaced manual Library root entry with the native operating-system folder picker while retaining explicit Save path / Scan library actions
+- manually verified the Milestone 12 Issues layout and Library root folder-picker changes on macOS
+- pinned Sockseek `3.0.5` and added deterministic platform-sidecar download/extraction with published SHA-256 verification
+- added the Sockseek sidecar manager, loopback runtime port selection, version/readiness checks, HTTP acquisition adapter, SignalR wake/reconnect path, and owned process shutdown
+- added OS credential-store persistence for Soulseek credentials with restricted transient Sockseek configuration and secret-redacted sidecar logs
+- wired acquisition-enabled synchronization through the production Sockseek provider while preserving `staged` as the pre-verification boundary
+- added acquisition Settings controls and third-party AGPL/source notices for distributed Sockseek builds
 - released Refrain v0.1.0 on 2026-09-25
 
 ## Known Issues
@@ -64,9 +78,13 @@ Port `43817` must be available while starting Spotify authorization. Refrain rep
 
 Unsigned or ad-hoc-signed release packages may require platform security confirmation. Production signing/notarization depends on release credentials being available.
 
+Page-level layout dimensions and placements are not yet fully standardized across all desktop views. Functionality is intact; this remains UI polish rather than a current workflow blocker.
+
+Milestone 13 has not yet completed the documented Sockseek mock-daemon integration verification or the real Soulseek download smoke test. Do not treat the provider as release-verified until those checks pass.
+
 ## Next
 
-Run the final native smoke check for the Milestone 12 Issues layout and Library root folder picker. After that, begin **Milestone 13: Sockseek Sidecar Provider** according to `docs/IMPLEMENTATION.md`.
+Complete the Milestone 13 Sockseek provider verification using the documented mock daemon and one real Soulseek download smoke test. After the provider passes that gate, proceed to **Milestone 14: Acquisition Verification and Import**.
 
 ## Blockers
 
