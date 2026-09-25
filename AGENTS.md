@@ -1,454 +1,66 @@
 # AGENTS.md
 
-## Project
+## Purpose
 
-**Name:** Refrain
+This file defines durable repository-wide behavior for AI coding agents working on Refrain.
 
-**Purpose:** Refrain is a desktop application that mirrors Spotify playlists, Liked Songs, and saved albums to a normalized local music library.
+Keep changing project state and detailed project knowledge in the documents that own them. Do not duplicate that information here.
 
-## Project-Specific Instructions
+## Sources of Truth
 
-### Current State
+Use the existing documentation by responsibility:
 
-Milestones 1 through 6 are complete for the v0.1.0 development line. Refrain v0.1.0 was released on 2026-09-25 with the Spotify-only desktop experience, release packaging, cross-platform build smoke checks, and tag-triggered GitHub Release automation in place.
+| Source | Owns |
+| --- | --- |
+| `docs/STATUS.md` | Current project state, active work, recent changes, known issues, blockers, open decisions, release state, and next work |
+| `docs/BRIEF.md` | Product purpose, goals, scope, non-goals, constraints, and success criteria |
+| `docs/SPEC.md` | Product behavior, user flows, business rules, edge cases, and acceptance criteria |
+| `docs/TDD.md` | Architecture, technology choices, data model, interfaces, integrations, security, and technical design |
+| `docs/IMPLEMENTATION.md` | Milestones, implementation order, dependencies, verification expectations, and release sequence |
+| `docs/decisions/` | Durable architecture or product decisions whose rationale should be preserved |
+| `docs/reference/codebase-map.md` | Repository navigation, entry points, modules, configuration, tests, and common task areas |
+| `docs/reference/setup.md` | Requirements, install/run commands, local setup, environment details, and common commands |
+| `docs/reference/testing.md` | Validation strategy, automated checks, smoke tests, and release validation |
+| `docs/reference/release.md` | Versioning, packaging, tagging, signing, and release workflow |
+| `docs/reference/spotify-auth.md` | Spotify application setup, credential handling, and authentication smoke testing |
+| `CHANGELOG.md` | Released user-visible changes |
 
-Milestone 7, Local Library Index, is the next implementation milestone. No local-library indexing or file-normalization work has been implemented yet.
+Source code and configuration are authoritative for implemented behavior. If source and docs disagree, verify the implementation and update the stale document as part of the work.
 
-The repository currently includes:
-
-- the Tauri desktop scaffold and Svelte frontend
-- the Rust backend foundation and baseline CI
-- SQLite persistence for v0.1 source state and application settings
-- Spotify Client ID configuration
-- Authorization Code with PKCE
-- the fixed loopback OAuth callback at `http://127.0.0.1:43817/callback`
-- OS credential-store persistence for Spotify refresh credentials
-- in-memory Spotify access tokens with refresh and reconnect behavior
-- Spotify profile, Liked Songs, saved-album, playlist, and playlist-item synchronization
-- collection-level transactional source persistence with playlist snapshot reuse
-- saved albums represented as ordered `saved_album` source collections that reuse shared Spotify track identities
-- inaccessible/unavailable Spotify item preservation
-- bounded Spotify retry/rate-limit handling, manual refresh progress, and cancellation
-- persisted browse projections for Spotify collections and entries
-- v0.1 desktop navigation for Liked Songs, Saved Albums, Playlists, and Settings
-- ordered saved-album and playlist detail, with intentional playlist duplicate positions preserved
-- dense virtualized track rows with lazy Spotify album artwork
-- viewport-bound native window sizing with panel-local scrolling
-- Windows, macOS, and Linux Tauri build smoke checks
-- Tauri desktop bundle configuration and version-tag release automation
-
-The real Spotify authentication, source-refresh, desktop browsing, Saved Albums refresh/browse, and native resize smoke tests have passed on macOS for the v0.1 development line.
-
-Do not invent dependencies, commands, modules, or implementation details that do not exist in the repository or approved project documentation.
-
-### Stack
-
-- Desktop runtime: Tauri 2
-- Native backend: Rust
-- Frontend: Svelte 5 + TypeScript + Vite
-- Styling: Tailwind CSS 4
-- Package manager: npm
-
-### Commands
-
-```text
-Install:       npm install
-Dev:           npm run tauri dev
-Frontend:      npm run dev
-Build:         npm run build
-Desktop build: npm run tauri build -- --no-bundle
-Lint:          npm run lint
-Typecheck:     npm run check
-Test:          npm test
-Rust format:   npm run rust:fmt
-Rust lint:     npm run rust:clippy
-Rust test:     npm run rust:test
-```
-
-### Important Paths
-
-Keep this short. Detailed navigation belongs in `docs/reference/codebase-map.md`.
-
-```text
-AGENTS.md                         Repository-wide agent instructions
-src/                              Svelte frontend
-src-tauri/                        Tauri/Rust desktop backend
-src-tauri/src/source_sync.rs      Spotify source synchronization
-src-tauri/src/saved_albums.rs     Spotify saved-album synchronization
-src-tauri/src/db/source_browse.rs Persisted Spotify browse projections
-src-tauri/tauri.conf.json         Desktop bundle/application configuration
-.github/workflows/ci.yml          Baseline and cross-platform build CI
-.github/workflows/release.yml     Tag-triggered GitHub Release packaging
-CHANGELOG.md                      Released v0.1+ change history
-docs/                             Project documentation
-docs/BRIEF.md                     Product brief and project boundaries
-docs/SPEC.md                      Product behavior and acceptance criteria
-docs/TDD.md                       Technical design
-docs/IMPLEMENTATION.md            Implementation sequence
-docs/STATUS.md                    Current project context
-docs/reference/codebase-map.md    Source navigation map
-docs/reference/setup.md           Local development setup
-docs/reference/testing.md         Validation strategy and smoke tests
-docs/reference/release.md         Release workflow and packaging
-docs/reference/spotify-auth.md    Spotify authentication setup and smoke test
-```
-
-Update this section only when important repository locations actually exist.
-
-### Project Conventions
-
-- Treat Spotify as the source of desired library state.
-- Keep collection membership separate from audio-file identity.
-- A track referenced by multiple Spotify collections should normally resolve to one logical library track and one canonical local copy.
-- Keep logical library tracks separate from physical local files.
-- Matching must be conservative, explainable, and prefer unresolved results over incorrect automatic matches.
-- Persist user-confirmed match and rejection decisions so the same ambiguity is not repeatedly surfaced.
-- Downloads must pass through staging and verification before entering the canonical library.
-- Refrain owns synchronization, reconciliation, normalization, and library state.
-- Acquisition backends must remain modular. Sockseek is the initial provider, not the sync engine.
-- Refrain always normalizes managed library paths and filenames.
-- Playlist exports and mirrored libraries should use portable relative paths where applicable.
-- Automatic deletion must never remove unmanaged pre-existing user files.
-- Keep implementation focused on current requirements. Do not add speculative mobile, cloud, media-server, or multi-provider infrastructure without an approved requirement.
-
-### Project Constraints
-
-- Desktop only for now: Windows, macOS, and Linux.
-- Refrain must remain usable without Plex, Jellyfin, Navidrome, Lidarr, or another media server.
-- Refrain does not ship shared Spotify credentials. Users provide their own Spotify application credentials.
-- Spotify authentication must be suitable for a desktop application and must not require embedding a client secret.
-- Local-library normalization is required behavior.
-- Acquisition must remain provider-agnostic so additional providers can be added without changing core sync logic.
-- Tracks that cannot be acquired or confidently matched must remain visible as unresolved or failed state rather than being silently substituted.
-- Mobile support is out of scope until explicitly added to project documentation.
-
-## Documentation
-
-Project documentation currently uses the following layout:
-
-```text
-docs/
-├── BRIEF.md
-├── SPEC.md
-├── TDD.md
-├── IMPLEMENTATION.md
-├── STATUS.md
-│
-├── decisions/
-│   ├── 001-*.md
-│   └── 002-*.md
-│
-└── reference/
-    ├── spotify-auth.md
-    ├── codebase-map.md
-    ├── setup.md
-    ├── testing.md
-    ├── release.md
-    ├── api.md
-    └── ui.md
-```
-
-Not every optional decision or reference document must exist before it is useful.
-
-Do not invent files solely to make the documentation tree complete.
+Do not invent dependencies, commands, modules, behavior, infrastructure, or decisions that are absent from the repository or approved project documentation.
 
 ## Context Loading
 
-Do not ingest every document before every task.
+Load only the context needed for the task.
 
-### Normal substantial work
+For normal project work:
 
-Read:
+1. Read this `AGENTS.md`.
+2. Read `docs/STATUS.md` when current project context matters.
+3. Read `docs/reference/codebase-map.md` before broad source searching.
+4. Read only the planning, decision, or reference documents relevant to the requested work.
+5. Inspect the directly related source, tests, and configuration before editing.
 
-1. this `AGENTS.md`
-2. `docs/STATUS.md` when it exists
-3. `docs/reference/codebase-map.md` when it exists
-4. only the planning, ADR, or reference documents relevant to the requested work
-5. directly related source, tests, and configuration
+For a small isolated change, use the minimum relevant context. For major features, architecture changes, cross-cutting work, substantial planning, or unfamiliar areas, read the relevant planning and decision documents more broadly.
 
-### Small isolated work
-
-For trivial or clearly localized changes, read only the minimum context necessary.
-
-### Broad or unfamiliar work
-
-For:
-
-- major features
-- architecture changes
-- cross-cutting changes
-- substantial planning
-- unfamiliar areas of the repository
-
-read the relevant planning documents more broadly before proceeding.
-
-Do not load unrelated documentation for completeness.
-
-## Current Project Context
-
-`docs/STATUS.md`, when present, is the project's current working memory.
-
-It should remain concise and contain:
-
-```markdown
-# Project Status
-
-## Current State
-
-## Active Work
-
-## Recent Changes
-
-## Known Issues
-
-## Next
-
-## Blockers
-
-## Open Decisions
-
-## Relevant Context
-```
-
-Use it to understand what is happening in the repository now.
-
-After meaningful work, update it when the project's state materially changes.
-
-### Status rules
-
-- Keep recent changes only while they remain useful to future work.
-- Do not preserve a complete chronological history.
-- Do not duplicate the full backlog.
-- Do not copy planning documents into STATUS.
-- Link to issues or ADRs where appropriate.
-- Remove stale context.
-
-Historical implementation detail belongs in Git and pull requests.
-
-Individual work items belong in the issue tracker.
-
-Durable decision rationale belongs in `docs/decisions/`.
-
-Released changes belong in `CHANGELOG.md` when release history exists.
-
-## Codebase Map
-
-`docs/reference/codebase-map.md`, when present, is the project's navigation index.
-
-Consult it before broadly searching the repository.
-
-It should identify, as useful:
-
-- major directories
-- application entry points
-- modules or domains
-- routes
-- services
-- schemas and models
-- important configuration
-- test locations
-- common task areas
-
-Use the map to find likely files, then inspect those files directly.
-
-Do not assume the map is authoritative if source code disagrees.
-
-If the map does not identify what you need:
-
-1. perform targeted search
-2. inspect the relevant source
-3. update the map if the discovery is useful for future work
-
-Keep the map concise.
-
-Do not list every file.
-
-## Project Lifecycle
-
-Use:
-
-**Brief → Spec → Technical Design → Implementation Plan → Issues → Implementation → Verification → Release**
-
-Work only on the stage relevant to the project.
-
-### Brief
-
-`docs/BRIEF.md`
-
-Defines:
-
-- problem and users
-- proposed solution
-- goals
-- scope and non-goals
-- constraints
-- success criteria
-- unresolved questions
-
-**Complete when:** the project's purpose and boundaries are clear.
-
-### Product Spec
-
-`docs/SPEC.md`
-
-Defines, as relevant:
-
-- users and needs
-- core flows
-- features
-- expected behavior
-- important states and business rules
-- significant edge cases
-- acceptance criteria
-- unresolved product decisions
-
-**Complete when:** implementation should not require inventing major product behavior.
-
-### Technical Design
-
-`docs/TDD.md`
-
-Defines, as relevant:
-
-- architecture
-- technology choices
-- important data models
-- APIs and interfaces
-- integrations and background jobs
-- authentication and security
-- deployment
-- testing strategy
-- major tradeoffs
-- unresolved technical decisions
-
-Prefer the simplest design that satisfies the requirements.
-
-Do not add infrastructure, dependencies, abstractions, or services without concrete need.
-
-**Complete when:** implementation should not require inventing major architectural decisions.
-
-### Implementation Plan
-
-`docs/IMPLEMENTATION.md`
-
-Defines:
-
-- relevant current state
-- milestones or implementation phases
-- dependencies and ordering constraints
-- verification expectations
-- blockers or risks
-
-Do not duplicate the Spec or TDD.
-
-**Complete when:** work can proceed incrementally without rediscovering the overall sequence.
-
-### Issues
-
-Use the issue tracker for individual implementation work.
-
-Issues should normally define:
-
-- objective
-- necessary context
-- requirements
-- acceptance criteria
-
-Reference project documentation instead of copying it.
-
-If an issue requires an unresolved major product or architecture decision, update the appropriate planning document first.
-
-### Implementation
-
-Before making consequential changes, use the relevant sources of truth:
-
-1. this `AGENTS.md`
-2. `docs/STATUS.md` when it exists
-3. relevant planning documents
-4. relevant ADRs
-5. current issue or request
-6. source and tests
-
-Do not silently invent consequential decisions.
-
-Minor implementation details do not require documentation.
-
-### Verification
-
-Do not treat code completion as task completion.
-
-Verify as relevant:
-
-- acceptance criteria
-- static checks
-- targeted tests
-- integration behavior
-- user-visible flows
-- important edge cases
-- build output
-- regressions
-
-Validation should be proportional to the change.
-
-### Release
-
-Create `CHANGELOG.md` when the project has meaningful released changes to preserve.
-
-Do not create or maintain a changelog solely for unreleased milestone history. Until a release exists, use Git, pull requests, and `docs/STATUS.md` for implementation history and current context.
-
-Do not create unnecessary release overhead.
-
-## Architecture Decisions
-
-Store significant decisions in:
-
-```text
-docs/decisions/
-```
-
-Create an ADR only when the reasoning is worth preserving.
-
-Keep ADRs concise:
-
-- context
-- decision
-- reason
-- consequences
-
-Do not create ADRs for routine implementation choices.
-
-## Reference Documentation
-
-Use `docs/reference/` for information agents need to look up while working.
-
-Examples:
-
-- `codebase-map.md`
-- `setup.md`
-- `testing.md`
-- `api.md`
-- `ui.md`
-
-Create only what this project actually needs.
+Do not ingest unrelated documentation for completeness.
 
 ## Work Intake
 
 For requested work:
 
-1. understand the concrete goal
-2. read current project context
-3. use the codebase map when available to identify likely affected areas
-4. inspect the relevant source
-5. identify the smallest safe change
-6. preserve existing behavior unless change is required
+1. Identify the concrete goal.
+2. Check current project context when relevant.
+3. Use the codebase map to locate likely affected areas.
+4. Inspect the relevant source before editing.
+5. Make the smallest safe change that satisfies the request.
+6. Preserve existing behavior unless the task requires changing it.
 
-If ambiguity is minor, make the safest reasonable assumption.
+If ambiguity is minor, make the safest reasonable assumption. If it affects consequential product behavior or architecture, resolve it from the appropriate source of truth or surface the unresolved decision.
 
-If ambiguity affects consequential behavior or architecture, do not hide it behind an assumption.
+Do not silently invent consequential decisions.
 
 ## Implementation Rules
-
-Make the smallest safe change that satisfies the task.
 
 Prefer:
 
@@ -474,80 +86,58 @@ Avoid:
 
 Add complexity only when current requirements justify it.
 
-## Git Operations
+Use the issue tracker for individual implementation work when work is tracked there. Keep project-wide planning in `docs/IMPLEMENTATION.md`, current context in `docs/STATUS.md`, and durable decision rationale in `docs/decisions/`.
 
-- Use the `conventional-commits` skill whenever the user requests a commit, amend, or push.
-- Do not infer authorization to commit or push.
-- Commit or push only when explicitly requested.
-- Do not create, switch, rename, merge, rebase, delete, publish, push, set upstreams for, or otherwise modify branches unless explicitly requested.
-- Do not infer branch authorization from requests to implement, finish, commit, publish, or open a pull request.
+## Validation
 
-## Testing Strategy
+Follow `docs/reference/testing.md` and use the lowest level of validation that gives credible confidence for the change.
 
-Use the lowest level of validation that gives credible confidence.
-
-Typical order:
-
-1. static checks
-2. targeted unit tests
-3. integration tests
-4. E2E tests
-5. build checks
-
-Prefer focused validation over automatically running everything.
-
-Run broader validation when changes affect shared infrastructure, routing, authentication, data models, build configuration, test infrastructure, or other wide surfaces.
-
-Reuse existing testing frameworks and fixtures.
-
-Do not claim verification that was not performed.
+Do not claim verification that was not performed. If relevant validation cannot be run, state exactly what was skipped and why.
 
 ## Documentation Updates
 
-Documentation review is required for every completed project task.
+Documentation review is required for every completed project task, regardless of whether the work used a pull request, direct local changes, milestone work, release work, or another workflow.
 
-Before any project work is considered complete, review the repository documentation and update every document whose owned knowledge changed. Do this after implementation and validation are finished so the docs describe the final project state.
-
-When work is completed during the current task, perform a final documentation sync before reporting completion. This applies regardless of whether the work used a pull request, direct local changes, milestone work, release work, or another workflow. In particular, remove stale descriptions of completed work as active, update the current milestone or next work, and make sure release state is accurate.
+After implementation and validation, perform a final documentation sync before reporting completion. Update only documents whose owned knowledge changed.
 
 At minimum:
 
-- update `docs/STATUS.md` after completed project work when current state, active work, recent meaningful changes, known issues, next work, blockers, open decisions, or relevant context changed
-- update `AGENTS.md` when repository-wide instructions, commands, stack, important paths, current milestone, release state, or high-level implementation state changed
-- update the codebase map when navigation-relevant structure changes
-- update planning docs when documented product or technical decisions, milestone state, or implementation assumptions change
-- create or update ADRs for significant durable decisions
-- update reference docs when their subject changes
-- update `CHANGELOG.md` when a release is published or released behavior changes
+- update `docs/STATUS.md` whenever current state, active work, recent meaningful changes, known issues, next work, blockers, open decisions, release state, milestone state, or relevant context changed
+- update `docs/BRIEF.md` when product purpose, scope, constraints, or success criteria change
+- update `docs/SPEC.md` when product behavior, flows, rules, edge cases, or acceptance criteria change
+- update `docs/TDD.md` when architecture, data models, interfaces, integrations, security, or technical design change
+- update `docs/IMPLEMENTATION.md` when milestone scope, ordering, dependencies, verification expectations, or implementation assumptions change
+- create or update an ADR in `docs/decisions/` when significant decision rationale should be preserved
+- update `docs/reference/codebase-map.md` when navigation-relevant structure, entry points, or common task areas change
+- update the relevant reference document when setup, testing, release, or Spotify authentication procedures change
+- update `CHANGELOG.md` when a release is published or released user-visible behavior changes
+- update this `AGENTS.md` only when durable agent workflow or repository-wide operating rules change
 
-Project work that changes documented project state is not complete while the corresponding docs still describe the previous state.
+Do not leave documentation knowingly stale. Completed or merged work must not remain described as active in `docs/STATUS.md`.
 
-Do not update documentation merely because files were touched. If a document was reviewed and no owned knowledge changed, leave it unchanged.
+Do not update a document merely because related files were touched. If its owned knowledge did not change, leave it unchanged.
 
-Avoid duplicating the same information across documents.
+## Git Operations
+
+- Use the `conventional-commits` skill whenever the user requests a commit, amend, or push.
+- Do not infer authorization to commit or push. Perform those actions only when explicitly requested.
+- Do not create, switch, rename, merge, rebase, delete, publish, push, set an upstream for, or otherwise modify a branch unless the user explicitly requests that branch operation.
+- Do not infer branch authorization from requests to implement, finish, commit, publish, or open a pull request.
 
 ## Done Criteria
 
 A project task is complete when:
 
-1. requested behavior is implemented
-2. relevant validation passed, or skipped validation is explained
-3. a final documentation review was performed after implementation and validation
-4. all docs affected by the work reflect the final completed state
-5. `docs/STATUS.md` no longer presents completed or merged work as active when the project state changed
-6. current project context, milestone state, and release state are accurate
-7. no required follow-up is hidden
-8. completion reporting accurately describes the work
+1. The requested behavior is implemented.
+2. Relevant validation passed, or skipped validation is explained.
+3. A final documentation review was performed after implementation and validation.
+4. Every affected source-of-truth document reflects the completed state.
+5. `docs/STATUS.md` does not present completed work as active when project state changed.
+6. No required follow-up is hidden.
+7. The completion report accurately describes the work and validation.
 
 ## Communication
 
-Keep reports concise.
-
-Report:
-
-- what changed
-- important files affected
-- validation performed
-- required follow-up, if any
+Keep reports concise. Report what changed, important files affected, validation performed, and required follow-up if any.
 
 Do not present speculative improvements as required work.
