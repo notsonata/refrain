@@ -68,6 +68,7 @@
   let lastCollectionAutoLoadSection: SpotifySection | null = null;
   let collectionActionError: string | null = null;
   let coverDownloading = false;
+  let detailsSidebarOpen = true;
   let trackListController: TrackListSelectionController | undefined;
   let selectedTrackCount = 0;
   let selectableTrackCount = 0;
@@ -386,6 +387,12 @@
 <div
   class="screen"
   class:album-detail-screen={section !== 'liked' && !!displayedCollection}
+  class:details-sidebar-open={section !== 'liked' &&
+    !!displayedCollection &&
+    detailsSidebarOpen}
+  class:details-sidebar-closed={section !== 'liked' &&
+    !!displayedCollection &&
+    !detailsSidebarOpen}
 >
   {#if section !== 'liked' && displayedCollection}
     <div
@@ -427,8 +434,33 @@
 
     <div
       class="collection-detail-shell album-detail-shell"
-      style="padding-top:14px;"
+      class:details-sidebar-closed={!detailsSidebarOpen}
     >
+      <button
+        type="button"
+        class="icon-button detail-sidebar-toggle"
+        aria-label={detailsSidebarOpen
+          ? 'Hide details sidebar'
+          : 'Show details sidebar'}
+        title={detailsSidebarOpen ? 'Hide details' : 'Show details'}
+        onclick={() => (detailsSidebarOpen = !detailsSidebarOpen)}
+      >
+        <span
+          class="detail-toggle-icon"
+          class:hidden={!detailsSidebarOpen}
+          aria-hidden="true"
+        >
+          <Icon name="panel-right-close" size={16} />
+        </span>
+        <span
+          class="detail-toggle-icon"
+          class:hidden={detailsSidebarOpen}
+          aria-hidden="true"
+        >
+          <Icon name="panel-right-open" size={16} />
+        </span>
+      </button>
+
       <div class="collection-detail-main">
         <div class="album-detail-header">
           <div class="album-detail-title-row">
@@ -534,14 +566,21 @@
         {/key}
       </div>
 
-      <aside class="album-detail-inspector">
+      <aside
+        class="album-detail-inspector"
+        class:closed={!detailsSidebarOpen}
+        aria-hidden={!detailsSidebarOpen}
+        inert={!detailsSidebarOpen}
+      >
         <section class="album-inspector-section">
           <div class="album-inspector-heading">
             <h2 class="album-inspector-title">Details</h2>
-            <OverflowMenu
-              items={collectionMenuItems()}
-              ariaLabel={`${displayedCollection.name} details actions`}
-            />
+            <div class="album-inspector-actions">
+              <OverflowMenu
+                items={collectionMenuItems()}
+                ariaLabel={`${displayedCollection.name} details actions`}
+              />
+            </div>
           </div>
           <div class="album-info-list">
             {#if section === 'albums'}
@@ -831,11 +870,6 @@
           </div>
         </div>
       {/if}
-
-      <div class="content-label spotify-library-count">
-        {formatNumber(filteredCollectionCount)}
-        {section}
-      </div>
 
       <div class="collection-layout">
         <div class="collection-scroll">

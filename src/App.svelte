@@ -1036,6 +1036,28 @@
 
     <div class="sidebar-spacer"></div>
     <div class="sidebar-footer">
+      {#if syncError || sourceError || backendError}
+        <div class="sidebar-alerts" aria-live="polite">
+          {#if syncError}
+            <div class="sidebar-alert" title={syncError}>
+              <Icon name="warning" size={13} />
+              <span>{syncError}</span>
+            </div>
+          {/if}
+          {#if sourceError}
+            <div class="sidebar-alert" title={sourceError}>
+              <Icon name="warning" size={13} />
+              <span>{sourceError}</span>
+            </div>
+          {/if}
+          {#if backendError}
+            <div class="sidebar-alert" title={backendError}>
+              <Icon name="warning" size={13} />
+              <span>{backendError}</span>
+            </div>
+          {/if}
+        </div>
+      {/if}
       {#if sourceBusy && sourceProgress}
         <div class="sidebar-progress" aria-live="polite">
           <span title={sourceProgress.message}>
@@ -1106,14 +1128,6 @@
             >Cancel</button
           >
         </div>
-      {:else if syncError}
-        <div class="status-banner error">{syncError}</div>
-      {/if}
-      {#if sourceError}
-        <div class="status-banner error">{sourceError}</div>
-      {/if}
-      {#if backendError}
-        <div class="status-banner error">{backendError}</div>
       {/if}
     </div>
 

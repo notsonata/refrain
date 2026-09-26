@@ -434,8 +434,6 @@
     </div>
   {/if}
 
-  <div class="content-label">{formatNumber(filteredTracks.length)} tracks</div>
-
   {#if error}
     <div class="error-state">{error}</div>
   {:else if loading && tracks.length === 0}
@@ -553,21 +551,23 @@
             {/each}
           </article>
         {/each}
+        {#if hasMore}
+          <div class="table-load-more-row">
+            <button
+              type="button"
+              class="btn"
+              onclick={() => onLoadMore?.()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? 'Loading…' : 'Load More'}
+            </button>
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
 
   <footer class="table-footer">
     <span>Loaded {formatNumber(tracks.length)} of {formatNumber(total)}</span>
-    {#if tracks.length < total}
-      <button
-        type="button"
-        class="btn"
-        onclick={() => onLoadMore?.()}
-        disabled={loadingMore}
-      >
-        {loadingMore ? 'Loading…' : 'Load More'}
-      </button>
-    {/if}
   </footer>
 </div>

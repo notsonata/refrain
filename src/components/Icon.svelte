@@ -20,6 +20,8 @@
   import Info from '~icons/lucide/info';
   import ListMusic from '~icons/lucide/list-music';
   import Plus from '~icons/lucide/plus';
+  import PanelRightClose from '~icons/lucide/panel-right-close';
+  import PanelRightOpen from '~icons/lucide/panel-right-open';
   import RefreshCw from '~icons/lucide/refresh-cw';
   import Repeat2 from '~icons/lucide/repeat-2';
   import Search from '~icons/lucide/search';
@@ -45,6 +47,8 @@
     | 'back'
     | 'check'
     | 'plus'
+    | 'panel-right-close'
+    | 'panel-right-open'
     | 'cloud'
     | 'copy'
     | 'warning'
@@ -82,6 +86,8 @@
     back: ChevronLeft,
     check: Check,
     plus: Plus,
+    'panel-right-close': PanelRightClose,
+    'panel-right-open': PanelRightOpen,
     cloud: CloudDownload,
     copy: Copy,
     warning: TriangleAlert,

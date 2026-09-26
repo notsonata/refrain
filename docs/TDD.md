@@ -783,6 +783,7 @@ Relevant v1 endpoints currently include:
 GET /me
 GET /me/tracks
 GET /me/playlists
+GET /me/albums
 GET /playlists/{id}/items
 ```
 
@@ -796,6 +797,8 @@ The adapter must handle:
 - fields removed or renamed by Spotify
 - transient 5xx errors
 - cancelled syncs
+
+When Spotify returns `429`, Refrain records the `Retry-After` deadline in process memory. New Spotify requests fail locally with the remaining wait time until that deadline expires. Short waits of at most 60 seconds may still be retried automatically after sleeping; longer waits return immediately so repeated Refresh/Sync actions do not continue consuming Spotify requests during the cooldown.
 
 Do not assume old Spotify batch endpoints exist.
 
@@ -821,7 +824,7 @@ A Spotify refresh is atomic at the collection level.
 
 For playlists:
 
-1. fetch current playlist metadata
+1. fetch current playlist metadata, including the `images` returned by `/me/playlists`; do not issue a separate cover-image request per playlist
 2. compare `snapshot_id`
 3. if unchanged and prior entries are complete, retain existing entries
 4. if changed, fetch all accessible items
@@ -831,6 +834,12 @@ For Liked Songs:
 
 - fetch all saved tracks with pagination for correctness
 - replace the Liked Songs entry set transactionally after a successful fetch
+
+For saved albums:
+
+- use the album object already returned by `/me/albums` for album metadata, artwork, and the first track page
+- follow only the album track pagination links when an album has additional track pages
+- do not issue a redundant `/albums/{id}` request for every saved album
 
 A network failure must not erase the last known good collection state.
 

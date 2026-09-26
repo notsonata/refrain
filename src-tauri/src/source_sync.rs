@@ -4,10 +4,10 @@ use std::{
     fmt,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use reqwest::header::RETRY_AFTER;
@@ -29,6 +29,8 @@ const LIKED_SONGS_PROVIDER_ID: &str = "spotify:liked-songs";
 const PAGE_LIMIT: usize = 50;
 const MAX_REQUEST_ATTEMPTS: usize = 3;
 const MAX_RATE_LIMIT_WAIT_SECONDS: u64 = 60;
+
+static SPOTIFY_RATE_LIMIT_UNTIL_EPOCH_SECONDS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Default)]
 pub struct SourceRefreshControl {
@@ -143,6 +145,63 @@ impl fmt::Display for SourceRefreshError {
 }
 
 impl Error for SourceRefreshError {}
+
+fn unix_epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+pub(crate) fn register_spotify_rate_limit(retry_after_seconds: u64) {
+    if retry_after_seconds == 0 {
+        return;
+    }
+    let deadline = unix_epoch_seconds().saturating_add(retry_after_seconds);
+    SPOTIFY_RATE_LIMIT_UNTIL_EPOCH_SECONDS.fetch_max(deadline, Ordering::AcqRel);
+}
+
+pub(crate) fn spotify_rate_limit_remaining_seconds() -> u64 {
+    SPOTIFY_RATE_LIMIT_UNTIL_EPOCH_SECONDS
+        .load(Ordering::Acquire)
+        .saturating_sub(unix_epoch_seconds())
+}
+
+pub(crate) fn check_spotify_rate_limit() -> Result<(), SourceRefreshError> {
+    let remaining = spotify_rate_limit_remaining_seconds();
+    if remaining == 0 {
+        return Ok(());
+    }
+    Err(SourceRefreshError::new(
+        "spotifyRateLimited",
+        spotify_rate_limit_message(remaining),
+    ))
+}
+
+pub(crate) fn spotify_rate_limit_message(retry_after_seconds: u64) -> String {
+    let wait = if retry_after_seconds >= 3_600 {
+        let rounded_minutes = (retry_after_seconds + 30) / 60;
+        let hours = rounded_minutes / 60;
+        let minutes = rounded_minutes % 60;
+        if minutes > 0 {
+            format!("{hours} hr {minutes} min")
+        } else {
+            format!("{hours} hr")
+        }
+    } else {
+        let minutes = retry_after_seconds / 60;
+        let seconds = retry_after_seconds % 60;
+        if minutes > 0 && seconds > 0 {
+            format!("{minutes} min {seconds} sec")
+        } else if minutes > 0 {
+            format!("{minutes} min")
+        } else {
+            format!("{seconds} sec")
+        }
+    };
+
+    format!("Spotify rate limit reached. Try again in about {wait}.")
+}
 
 pub fn refresh_spotify_source(
     database: &Database,
@@ -592,6 +651,7 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifyApiClient<T, P> {
         url: &str,
         control: &SourceRefreshControl,
     ) -> Result<D, SourceRefreshError> {
+        check_spotify_rate_limit()?;
         let mut refreshed_after_unauthorized = false;
         for attempt in 0..MAX_REQUEST_ATTEMPTS {
             control.check_cancelled()?;
@@ -648,21 +708,22 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifyApiClient<T, P> {
                 }
                 429 if attempt + 1 < MAX_REQUEST_ATTEMPTS => {
                     let retry_after = response.retry_after_seconds.unwrap_or(1);
+                    register_spotify_rate_limit(retry_after);
                     if retry_after > MAX_RATE_LIMIT_WAIT_SECONDS {
                         return Err(SourceRefreshError::new(
                             "spotifyRateLimited",
-                            format!(
-                                "Spotify asked Refrain to retry after {retry_after} seconds. Try again later."
-                            ),
+                            spotify_rate_limit_message(retry_after),
                         ));
                     }
                     sleep_interruptibly(Duration::from_secs(retry_after), control)?;
                     continue;
                 }
                 429 => {
+                    let retry_after = response.retry_after_seconds.unwrap_or(1);
+                    register_spotify_rate_limit(retry_after);
                     return Err(SourceRefreshError::new(
                         "spotifyRateLimited",
-                        "Spotify rate limiting prevented the source refresh. Try again later.",
+                        spotify_rate_limit_message(retry_after),
                     ));
                 }
                 500..=599 if attempt + 1 < MAX_REQUEST_ATTEMPTS => {
@@ -685,27 +746,6 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifyApiClient<T, P> {
             "spotifyRequestFailed",
             "Spotify request failed after retrying.",
         ))
-    }
-
-    fn playlist_image_url(
-        &mut self,
-        playlist_id: &str,
-        fallback: Option<String>,
-        control: &SourceRefreshControl,
-    ) -> Result<Option<String>, SourceRefreshError> {
-        let url = format!("{}/playlists/{playlist_id}/images", self.api_base);
-        match self.request_json::<Vec<SpotifyImageDto>>(&url, control) {
-            Ok(images) => Ok(images.into_iter().find_map(|image| image.url).or(fallback)),
-            Err(error) if error.code == "refreshCancelled" => Err(error),
-            Err(error) => {
-                tracing::warn!(
-                    playlist_id,
-                    code = %error.code,
-                    "Failed to refresh Spotify playlist cover; using playlist-list artwork fallback"
-                );
-                Ok(fallback)
-            }
-        }
     }
 }
 
@@ -794,11 +834,7 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifySourceApi for SpotifyApiCl
                         "Spotify returned a playlist without an identifier.",
                     )
                 })?;
-                let image_url = self.playlist_image_url(
-                    &id,
-                    playlist.images.into_iter().find_map(|image| image.url),
-                    control,
-                )?;
+                let image_url = playlist.images.into_iter().find_map(|image| image.url);
                 playlists.push(SpotifyPlaylist {
                     id,
                     name: playlist.name.unwrap_or_else(|| "Untitled playlist".into()),
@@ -1141,6 +1177,18 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn rate_limit_message_formats_long_retry_after_readably() {
+        assert_eq!(
+            spotify_rate_limit_message(10_246),
+            "Spotify rate limit reached. Try again in about 2 hr 51 min."
+        );
+        assert_eq!(
+            spotify_rate_limit_message(75),
+            "Spotify rate limit reached. Try again in about 1 min 15 sec."
+        );
+    }
+
     #[derive(Default)]
     struct MockTransport {
         responses: Mutex<VecDeque<Result<HttpResponse, SourceRefreshError>>>,
@@ -1236,6 +1284,29 @@ mod tests {
                 .map(|track| track.provider_track_id.as_str()),
             Some("two")
         );
+    }
+
+    #[test]
+    fn playlists_use_list_response_artwork_without_extra_cover_request() {
+        let transport = MockTransport::with_responses([response(
+            200,
+            r#"{"items":[{"id":"playlist-one","name":"Playlist One","snapshot_id":"snap","owner":{"id":"account"},"tracks":{"total":3},"images":[{"url":"https://i.scdn.co/image/custom-cover"}],"external_urls":{"spotify":"https://open.spotify.com/playlist/playlist-one"}}],"next":null}"#,
+        )]);
+        let tokens = MockTokens::new();
+        let mut client = SpotifyApiClient::new(transport, tokens, "https://api.test");
+
+        let playlists = client
+            .playlists(&SourceRefreshControl::default())
+            .expect("playlists should load");
+
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(
+            playlists[0].image_url.as_deref(),
+            Some("https://i.scdn.co/image/custom-cover")
+        );
+        let calls = client.transport.calls.lock().expect("calls should lock");
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].0.contains("/me/playlists"));
     }
 
     #[test]

@@ -507,8 +507,6 @@
     {/if}
   {/if}
 
-  <div class="content-label">{formatNumber(filteredEntries.length)} tracks</div>
-
   {#if loading && entries.length === 0}
     <div class="data-table" aria-label="Loading tracks">
       {#each skeletonRows as row (row)}<div
@@ -683,6 +681,18 @@
             </div>
           {/each}
         </div>
+        {#if hasMore}
+          <div class="table-load-more-row">
+            <button
+              type="button"
+              class="btn"
+              onclick={() => onLoadMore?.()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? 'Loading…' : 'Load More'}
+            </button>
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -691,15 +701,5 @@
     <span
       >Showing {formatNumber(filteredEntries.length)} of {formatNumber(total)} tracks</span
     >
-    {#if hasMore}
-      <button
-        type="button"
-        class="btn"
-        onclick={() => onLoadMore?.()}
-        disabled={loadingMore}
-      >
-        {loadingMore ? 'Loading…' : 'Load More'}
-      </button>
-    {/if}
   </footer>
 </div>

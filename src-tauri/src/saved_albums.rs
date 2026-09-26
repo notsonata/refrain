@@ -13,7 +13,10 @@ use serde::Deserialize;
 use crate::{
     db::{Database, DatabaseError},
     domain::{SourceAlbumMetadata, SourceCollection, SourceCollectionItem, SourceTrack},
-    source_sync::SourceRefreshError,
+    source_sync::{
+        SourceRefreshError, check_spotify_rate_limit, register_spotify_rate_limit,
+        spotify_rate_limit_message,
+    },
     spotify::{SpotifyAuthError, SpotifyClient},
 };
 
@@ -87,21 +90,12 @@ fn load_saved_albums<T: SavedAlbumTransport>(
                     "Spotify returned a saved album without album metadata.",
                 )
             })?;
-            let album_id = saved_album.id.as_deref().ok_or_else(|| {
-                SourceRefreshError::new(
-                    "spotifyInvalidResponse",
-                    "Spotify returned a saved album without an identifier.",
-                )
-            })?;
-            let album_url = format!("{}/albums/{album_id}", api_base.trim_end_matches('/'));
-            let album =
-                request_json::<SpotifySavedAlbumObjectDto, _>(transport, &album_url, access_token)?;
             albums.push(map_saved_album(
                 transport,
                 access_token,
                 source_account_id,
                 saved.added_at.as_deref().and_then(parse_spotify_timestamp),
-                album,
+                saved_album,
             )?);
         }
         next = page.next;
@@ -358,6 +352,7 @@ fn request_json<D: for<'de> Deserialize<'de>, T: SavedAlbumTransport>(
     url: &str,
     access_token: &str,
 ) -> Result<D, SourceRefreshError> {
+    check_spotify_rate_limit()?;
     for attempt in 0..MAX_REQUEST_ATTEMPTS {
         check_cancelled()?;
         let response = match transport.get(url, access_token) {
@@ -394,20 +389,21 @@ fn request_json<D: for<'de> Deserialize<'de>, T: SavedAlbumTransport>(
             }
             429 if attempt + 1 < MAX_REQUEST_ATTEMPTS => {
                 let retry_after = response.retry_after_seconds.unwrap_or(1);
+                register_spotify_rate_limit(retry_after);
                 if retry_after > MAX_RATE_LIMIT_WAIT_SECONDS {
                     return Err(SourceRefreshError::new(
                         "spotifyRateLimited",
-                        format!(
-                            "Spotify asked Refrain to retry after {retry_after} seconds. Try again later."
-                        ),
+                        spotify_rate_limit_message(retry_after),
                     ));
                 }
                 sleep_interruptibly(Duration::from_secs(retry_after))?;
             }
             429 => {
+                let retry_after = response.retry_after_seconds.unwrap_or(1);
+                register_spotify_rate_limit(retry_after);
                 return Err(SourceRefreshError::new(
                     "spotifyRateLimited",
-                    "Spotify rate limiting prevented the saved-album refresh. Try again later.",
+                    spotify_rate_limit_message(retry_after),
                 ));
             }
             500..=599 if attempt + 1 < MAX_REQUEST_ATTEMPTS => {
@@ -627,14 +623,11 @@ mod tests {
     }
 
     #[test]
-    fn saved_album_pagination_preserves_album_track_order() {
+    fn saved_album_pagination_preserves_album_track_order_without_detail_request() {
         prepare_spotify_saved_album_refresh();
         let transport = MockTransport::with_responses([
             response(
-                r#"{"items":[{"added_at":"2026-09-01T00:00:00Z","album":{"id":"album-one","name":"Album One","release_date":"2024-02-03","images":[{"url":"https://i.scdn.co/image/cover"}],"tracks":{"items":[{"id":"track-one","uri":"spotify:track:track-one","name":"One","artists":[{"name":"Artist"}],"duration_ms":180000,"disc_number":1,"track_number":1,"explicit":false}],"next":"https://api.test/albums/album-one/tracks?page=2"}}}],"next":null}"#,
-            ),
-            response(
-                r#"{"id":"album-one","name":"Album One","album_type":"album","release_date":"2024-02-03","label":"Example Records","artists":[{"name":"Artist"}],"copyrights":[{"text":"© 2024 Example Records"}],"external_urls":{"spotify":"https://open.spotify.com/album/album-one"},"images":[{"url":"https://i.scdn.co/image/cover"}],"tracks":{"items":[{"id":"track-one","uri":"spotify:track:track-one","name":"One","artists":[{"name":"Artist"}],"duration_ms":180000,"disc_number":1,"track_number":1,"explicit":false}],"next":"https://api.test/albums/album-one/tracks?page=2"}}"#,
+                r#"{"items":[{"added_at":"2026-09-01T00:00:00Z","album":{"id":"album-one","name":"Album One","album_type":"album","release_date":"2024-02-03","label":"Example Records","artists":[{"name":"Artist"}],"copyrights":[{"text":"© 2024 Example Records"}],"external_urls":{"spotify":"https://open.spotify.com/album/album-one"},"images":[{"url":"https://i.scdn.co/image/cover"}],"tracks":{"items":[{"id":"track-one","uri":"spotify:track:track-one","name":"One","artists":[{"name":"Artist"}],"duration_ms":180000,"disc_number":1,"track_number":1,"explicit":false}],"next":"https://api.test/albums/album-one/tracks?page=2"}}}],"next":null}"#,
             ),
             response(
                 r#"{"items":[{"id":"track-two","uri":"spotify:track:track-two","name":"Two","artists":[{"name":"Artist"}],"duration_ms":190000,"disc_number":1,"track_number":2,"explicit":false}],"next":null}"#,
@@ -666,6 +659,14 @@ mod tests {
                 .as_ref()
                 .and_then(|track| track.image_url.as_deref()),
             Some("https://i.scdn.co/image/cover")
+        );
+        assert_eq!(
+            albums[0]
+                .0
+                .album_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.label.as_deref()),
+            Some("Example Records")
         );
     }
 
