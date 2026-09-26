@@ -1,8 +1,14 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
+  import DataTableHeader from './DataTableHeader.svelte';
+  import Icon from './Icon.svelte';
+  import OverflowMenu from './OverflowMenu.svelte';
+  import type { OverflowMenuItem } from '../lib/menu';
   import {
     formatTrackDuration,
     type SourceCollectionEntryView,
   } from '../lib/source';
+  import { tableGridWidth, type TableColumn } from '../lib/table-columns';
 
   export let entries: SourceCollectionEntryView[] = [];
   export let total = 0;
@@ -11,60 +17,164 @@
   export let emptyMessage = 'No tracks in this collection.';
   export let trackingControls = false;
   export let trackingBusyId: number | null = null;
+  export let trackingBulkBusy = false;
   export let showFilters = true;
   export let onLoadMore: (() => void) | undefined = undefined;
   export let onSetTracking:
-    | ((entry: SourceCollectionEntryView, included: boolean | null) => void)
+    | ((
+        entry: SourceCollectionEntryView,
+        included: boolean | null,
+      ) => void | Promise<void>)
+    | undefined = undefined;
+  export let onSetTrackingMany:
+    | ((
+        entries: SourceCollectionEntryView[],
+        included: boolean | null,
+      ) => void | Promise<void>)
+    | undefined = undefined;
+  export let onSelectionChange:
+    | ((state: {
+        selectedCount: number;
+        selectableFilteredCount: number;
+        allFilteredSelected: boolean;
+      }) => void)
     | undefined = undefined;
 
   let search = '';
   let trackingFilter = 'all';
   let localFilter = 'all';
-  let artistFilter = 'all';
-  let albumFilter = 'all';
-  let yearFilter = 'all';
-  let formatFilter = 'all';
   let advancedOpen = false;
   let acquisitionFilter = 'all';
   let matchFilter = 'all';
   let explicitFilter = 'all';
-  let durationFilter = 'all';
+  let loadAllRequested = false;
+  let lastAutoLoadOffset = -1;
+  let sortId = 'position';
+  let sortDirection: 'asc' | 'desc' = 'asc';
+  let selectedEntryKeys = new Set<string>();
+  $: activeFilterCount = [
+    trackingFilter !== 'all',
+    localFilter !== 'all',
+    acquisitionFilter !== 'all',
+    matchFilter !== 'all',
+    explicitFilter !== 'all',
+  ].filter(Boolean).length;
+  let columns: TableColumn[] = [
+    {
+      id: 'position',
+      label: '#',
+      width: trackingControls ? 58 : 38,
+      minWidth: trackingControls ? 54 : 34,
+      sortable: true,
+      align: 'center',
+    },
+    { id: 'title', label: 'Title', width: 280, minWidth: 220, sortable: true },
+    {
+      id: 'tracking',
+      label: 'Tracking',
+      width: 112,
+      minWidth: 96,
+      sortable: true,
+    },
+    {
+      id: 'local',
+      label: 'Local Status',
+      width: 108,
+      minWidth: 92,
+      sortable: true,
+    },
+    {
+      id: 'artist',
+      label: 'Artist',
+      width: 145,
+      minWidth: 100,
+      sortable: true,
+    },
+    { id: 'album', label: 'Album', width: 165, minWidth: 110, sortable: true },
+    { id: 'year', label: 'Year', width: 58, minWidth: 48, sortable: true },
+    {
+      id: 'duration',
+      label: 'Duration',
+      width: 72,
+      minWidth: 60,
+      sortable: true,
+    },
+    { id: 'format', label: 'Format', width: 62, minWidth: 54, sortable: true },
+    {
+      id: 'actions',
+      label: '',
+      width: 30,
+      minWidth: 30,
+      draggable: false,
+      align: 'center',
+    },
+  ];
 
-  const rowHeight = 58;
+  const rowHeight = 50;
   const overscan = 8;
-  const skeletonRows = Array.from({ length: 8 }, (_, index) => index);
+  const skeletonRows = Array.from({ length: 9 }, (_, index) => index);
   let scrollTop = 0;
   let viewportHeight = 520;
 
   $: tracks = entries.flatMap((entry) => (entry.track ? [entry.track] : []));
-  $: artistOptions = uniqueSorted(tracks.flatMap((track) => track.artists));
-  $: albumOptions = uniqueSorted(
-    tracks.flatMap((track) => (track.album ? [track.album] : [])),
-  );
-  $: yearOptions = uniqueSorted(
-    tracks.flatMap((track) =>
-      track.releaseYear ? [String(track.releaseYear)] : [],
-    ),
-  );
-  $: formatOptions = uniqueSorted(
-    tracks.flatMap((track) => (track.localFormat ? [track.localFormat] : [])),
-  );
   $: acquisitionOptions = uniqueSorted(
     tracks.flatMap((track) =>
       track.acquisitionStatus ? [track.acquisitionStatus] : [],
     ),
   );
   $: filteredEntries = entries.filter(matchesFilters);
-  $: if (filteredEntries.length === 0) scrollTop = 0;
+  $: sortedEntries = [...filteredEntries].sort((a, b) =>
+    compareEntries(a, b, sortId, sortDirection),
+  );
+  $: selectedEntries = entries.filter(
+    (entry) => entry.track && selectedEntryKeys.has(entrySelectionKey(entry)),
+  );
+  $: selectedCount = selectedEntries.length;
+  $: selectableFilteredEntries = filteredEntries.filter((entry) => entry.track);
+  $: selectableFilteredCount = selectableFilteredEntries.length;
+  $: allFilteredSelected =
+    selectableFilteredEntries.length > 0 &&
+    selectableFilteredEntries.every((entry) =>
+      selectedEntryKeys.has(entrySelectionKey(entry)),
+    );
+  $: onSelectionChange?.({
+    selectedCount,
+    selectableFilteredCount,
+    allFilteredSelected,
+  });
+  $: if (sortedEntries.length === 0) scrollTop = 0;
+  $: gridTemplate = columns.map((column) => `${column.width}px`).join(' ');
+  $: tableWidth = tableGridWidth(columns);
   $: visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
-  $: maxStartIndex = Math.max(0, filteredEntries.length - visibleCount);
+  $: maxStartIndex = Math.max(0, sortedEntries.length - visibleCount);
   $: startIndex = Math.min(
     Math.max(0, Math.floor(scrollTop / rowHeight) - overscan),
     maxStartIndex,
   );
-  $: endIndex = Math.min(filteredEntries.length, startIndex + visibleCount);
-  $: visibleEntries = filteredEntries.slice(startIndex, endIndex);
+  $: endIndex = Math.min(sortedEntries.length, startIndex + visibleCount);
+  $: visibleEntries = sortedEntries.slice(startIndex, endIndex);
   $: hasMore = entries.length < total;
+  $: filterActive =
+    search.trim() !== '' ||
+    trackingFilter !== 'all' ||
+    localFilter !== 'all' ||
+    acquisitionFilter !== 'all' ||
+    matchFilter !== 'all' ||
+    explicitFilter !== 'all';
+  $: if (
+    (loadAllRequested || filterActive) &&
+    hasMore &&
+    !loading &&
+    !loadingMore &&
+    entries.length !== lastAutoLoadOffset
+  ) {
+    lastAutoLoadOffset = entries.length;
+    onLoadMore?.();
+  }
+  $: if (!(loadAllRequested || filterActive) || !hasMore) {
+    lastAutoLoadOffset = -1;
+  }
+  $: if (!hasMore) loadAllRequested = false;
 
   function uniqueSorted(values: string[]): string[] {
     return [...new Set(values.filter(Boolean))].sort((a, b) =>
@@ -72,10 +182,124 @@
     );
   }
 
+  function needsAttention(entry: SourceCollectionEntryView): boolean {
+    const track = entry.track;
+    if (!entry.trackingIncluded) return false;
+    if (!track) return true;
+    return !track.localPresent;
+  }
+
+  function entrySelectionKey(entry: SourceCollectionEntryView): string {
+    return `${entry.position}:${entry.track?.id ?? 'missing'}`;
+  }
+
+  function toggleEntrySelection(
+    entry: SourceCollectionEntryView,
+    selected: boolean,
+  ) {
+    if (!entry.track || trackingBulkBusy) return;
+    const next = new Set(selectedEntryKeys);
+    const key = entrySelectionKey(entry);
+    if (selected) next.add(key);
+    else next.delete(key);
+    selectedEntryKeys = next;
+  }
+
+  export function toggleSelectAllShown() {
+    if (trackingBulkBusy || selectableFilteredEntries.length === 0) return;
+    const next = new Set(selectedEntryKeys);
+    if (allFilteredSelected) {
+      for (const entry of selectableFilteredEntries) {
+        next.delete(entrySelectionKey(entry));
+      }
+    } else {
+      for (const entry of selectableFilteredEntries) {
+        next.add(entrySelectionKey(entry));
+      }
+    }
+    selectedEntryKeys = next;
+  }
+
+  export function clearSelection() {
+    if (trackingBulkBusy || selectedEntryKeys.size === 0) return;
+    selectedEntryKeys = new Set();
+  }
+
+  export async function applySelectedTracking(included: boolean | null) {
+    if (selectedEntries.length === 0 || trackingBulkBusy) return;
+    if (onSetTrackingMany) {
+      await onSetTrackingMany(selectedEntries, included);
+    } else if (onSetTracking) {
+      await Promise.all(
+        selectedEntries.map((entry) => onSetTracking?.(entry, included)),
+      );
+    }
+    selectedEntryKeys = new Set();
+  }
+
+  async function copyText(value: string) {
+    await navigator.clipboard.writeText(value);
+  }
+
+  function trackMenuItems(
+    entry: SourceCollectionEntryView,
+  ): OverflowMenuItem[] {
+    const track = entry.track;
+    if (!track) return [];
+
+    const items: OverflowMenuItem[] = [];
+    if (track.externalUrl) {
+      items.push(
+        {
+          label: 'Open in Spotify',
+          icon: 'link',
+          action: () => invoke('open_external_url', { url: track.externalUrl }),
+        },
+        {
+          label: 'Copy Spotify Link',
+          icon: 'copy',
+          action: () => copyText(track.externalUrl!),
+        },
+      );
+    }
+
+    if (trackingControls) {
+      items.push({
+        label: entry.trackingIncluded ? 'Exclude from Tracking' : 'Track Song',
+        icon: entry.trackingIncluded ? 'close' : 'check',
+        action: () => onSetTracking?.(entry, !entry.trackingIncluded),
+        disabled: trackingBulkBusy || trackingBusyId === track.id,
+      });
+      if (entry.trackingOverridden) {
+        items.push({
+          label: 'Reset to Collection Default',
+          icon: 'refresh',
+          action: () => onSetTracking?.(entry, null),
+          disabled: trackingBulkBusy || trackingBusyId === track.id,
+        });
+      }
+    }
+
+    return items;
+  }
+
   function matchesFilters(entry: SourceCollectionEntryView): boolean {
     const track = entry.track;
-    if (!track) return search.trim() === '';
     const query = search.trim().toLocaleLowerCase();
+    if (!track) {
+      if (query) return false;
+      if (trackingFilter === 'tracked' && !entry.trackingIncluded) return false;
+      if (trackingFilter === 'excluded' && entry.trackingIncluded) return false;
+      if (localFilter === 'present') return false;
+      if (localFilter === 'attention' && !entry.trackingIncluded) return false;
+      if (
+        acquisitionFilter !== 'all' ||
+        matchFilter !== 'all' ||
+        explicitFilter !== 'all'
+      )
+        return false;
+      return true;
+    }
     if (
       query &&
       ![
@@ -84,224 +308,398 @@
         track.album ?? '',
         track.localFormat ?? '',
       ].some((value) => value.toLocaleLowerCase().includes(query))
-    ) {
+    )
       return false;
-    }
+
     if (trackingFilter === 'tracked' && !entry.trackingIncluded) return false;
     if (trackingFilter === 'excluded' && entry.trackingIncluded) return false;
     if (localFilter === 'present' && !track.localPresent) return false;
     if (localFilter === 'missing' && track.localPresent) return false;
-    if (artistFilter !== 'all' && !track.artists.includes(artistFilter)) return false;
-    if (albumFilter !== 'all' && track.album !== albumFilter) return false;
-    if (yearFilter !== 'all' && String(track.releaseYear ?? '') !== yearFilter) return false;
-    if (formatFilter !== 'all' && track.localFormat !== formatFilter) return false;
-    if (acquisitionFilter !== 'all' && track.acquisitionStatus !== acquisitionFilter) return false;
+    if (localFilter === 'attention' && !needsAttention(entry)) return false;
+    if (
+      acquisitionFilter !== 'all' &&
+      track.acquisitionStatus !== acquisitionFilter
+    )
+      return false;
     if (matchFilter !== 'all' && track.matchState !== matchFilter) return false;
     if (explicitFilter === 'explicit' && track.explicit !== true) return false;
     if (explicitFilter === 'clean' && track.explicit === true) return false;
-    if (durationFilter !== 'all') {
-      const duration = track.durationMs ?? 0;
-      if (durationFilter === 'short' && duration >= 180_000) return false;
-      if (
-        durationFilter === 'medium' &&
-        (duration < 180_000 || duration > 300_000)
-      )
-        return false;
-      if (durationFilter === 'long' && duration <= 300_000) return false;
-    }
     return true;
   }
 
+  const collator = new Intl.Collator(undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+
+  function sortValue(
+    entry: SourceCollectionEntryView,
+    currentSortId: string,
+  ): string | number {
+    const track = entry.track;
+    switch (currentSortId) {
+      case 'title':
+        return track?.title ?? '';
+      case 'artist':
+        return track?.artists.join(', ') ?? '';
+      case 'album':
+        return track?.album ?? '';
+      case 'year':
+        return track?.releaseYear ?? -1;
+      case 'duration':
+        return track?.durationMs ?? -1;
+      case 'format':
+        return track?.localFormat ?? '';
+      case 'local':
+        return !track
+          ? 3
+          : needsAttention(entry)
+            ? 2
+            : track.localPresent
+              ? 0
+              : 1;
+      case 'tracking':
+        return entry.trackingIncluded ? 1 : 0;
+      case 'position':
+      default:
+        return entry.position;
+    }
+  }
+
+  function compareEntries(
+    a: SourceCollectionEntryView,
+    b: SourceCollectionEntryView,
+    currentSortId: string,
+    currentSortDirection: 'asc' | 'desc',
+  ): number {
+    const left = sortValue(a, currentSortId);
+    const right = sortValue(b, currentSortId);
+    const result =
+      typeof left === 'number' && typeof right === 'number'
+        ? left - right
+        : collator.compare(String(left), String(right));
+    return currentSortDirection === 'asc' ? result : -result;
+  }
+
   function clearFilters() {
-    search = '';
     trackingFilter = 'all';
     localFilter = 'all';
-    artistFilter = 'all';
-    albumFilter = 'all';
-    yearFilter = 'all';
-    formatFilter = 'all';
     acquisitionFilter = 'all';
     matchFilter = 'all';
     explicitFilter = 'all';
-    durationFilter = 'all';
+  }
+
+  function setLocalFilter(value: 'all' | 'missing' | 'attention') {
+    lastAutoLoadOffset = -1;
+    localFilter = value;
+    loadAllRequested = true;
+  }
+
+  function formatNumber(value: number): string {
+    return new Intl.NumberFormat().format(value);
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col gap-2.5">
+<div class="screen" style="flex:1; height:auto;">
   {#if showFilters}
-    <div class="shrink-0 rounded-lg border border-slate-800/80 bg-slate-950/45 p-2.5">
-      <div class="grid gap-2 md:grid-cols-[minmax(12rem,1.5fr)_repeat(3,minmax(7rem,0.7fr))] xl:grid-cols-[minmax(13rem,1.7fr)_repeat(6,minmax(6.5rem,0.7fr))]">
+    <div class="toolbar track-list-toolbar">
+      <label class="search-field">
+        <Icon name="search" size={17} />
         <input
           bind:value={search}
+          class="search-input"
           aria-label="Search tracks"
-          placeholder="Search title, artist, album…"
-          class="min-w-0 rounded-md border border-slate-800 bg-slate-900/70 px-2.5 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-slate-600"
+          placeholder="Search title, artist, album, or playlist"
         />
-        <select bind:value={trackingFilter} aria-label="Tracking filter" class="filter-select">
-          <option value="all">Tracking: all</option>
-          <option value="tracked">Tracked</option>
-          <option value="excluded">Excluded</option>
-        </select>
-        <select bind:value={localFilter} aria-label="Local state filter" class="filter-select">
-          <option value="all">Local: all</option>
-          <option value="present">On disk</option>
-          <option value="missing">Missing</option>
-        </select>
-        <select bind:value={artistFilter} aria-label="Artist filter" class="filter-select">
-          <option value="all">Artist: all</option>
-          {#each artistOptions as artist (artist)}<option value={artist}>{artist}</option>{/each}
-        </select>
-        <select bind:value={albumFilter} aria-label="Album filter" class="filter-select">
-          <option value="all">Album: all</option>
-          {#each albumOptions as album (album)}<option value={album}>{album}</option>{/each}
-        </select>
-        <select bind:value={yearFilter} aria-label="Year filter" class="filter-select">
-          <option value="all">Year: all</option>
-          {#each yearOptions as year (year)}<option value={year}>{year}</option>{/each}
-        </select>
-        <select bind:value={formatFilter} aria-label="Format filter" class="filter-select">
-          <option value="all">Format: all</option>
-          {#each formatOptions as format (format)}<option value={format}>{format.toUpperCase()}</option>{/each}
-        </select>
-      </div>
-      <div class="mt-2 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onclick={() => (advancedOpen = !advancedOpen)}
-          class="rounded-md border border-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-400 hover:bg-slate-900 hover:text-slate-200"
-        >
-          {advancedOpen ? 'Hide advanced' : 'Advanced'}
-        </button>
-        <button type="button" onclick={clearFilters} class="px-1 text-[11px] text-slate-600 hover:text-slate-300">Clear</button>
-        <span class="ml-auto text-[11px] text-slate-600">{filteredEntries.length} shown · {entries.length} loaded</span>
-      </div>
-      {#if advancedOpen}
-        <div class="mt-2 grid gap-2 border-t border-slate-900 pt-2 sm:grid-cols-2 xl:grid-cols-4">
-          <select bind:value={acquisitionFilter} aria-label="Acquisition filter" class="filter-select">
-            <option value="all">Acquisition: all</option>
-            {#each acquisitionOptions as status (status)}<option value={status}>{status}</option>{/each}
-          </select>
-          <select bind:value={matchFilter} aria-label="Match filter" class="filter-select">
-            <option value="all">Match: all</option>
-            <option value="matched">Matched</option>
-            <option value="unmatched">Unmatched</option>
-          </select>
-          <select bind:value={explicitFilter} aria-label="Explicit filter" class="filter-select">
-            <option value="all">Explicit: all</option>
-            <option value="explicit">Explicit</option>
-            <option value="clean">Not explicit</option>
-          </select>
-          <select bind:value={durationFilter} aria-label="Duration filter" class="filter-select">
-            <option value="all">Duration: all</option>
-            <option value="short">Under 3 min</option>
-            <option value="medium">3–5 min</option>
-            <option value="long">Over 5 min</option>
-          </select>
-        </div>
-      {/if}
+      </label>
+      <button
+        type="button"
+        class="btn filter-button"
+        class:filters-active={activeFilterCount > 0}
+        aria-expanded={advancedOpen}
+        onclick={() => (advancedOpen = !advancedOpen)}
+      >
+        <Icon name="filter" size={15} />
+        Filters
+        {#if activeFilterCount > 0}
+          <span class="filter-count">{activeFilterCount}</span>
+        {/if}
+        <Icon name="chevron-down" size={13} />
+      </button>
     </div>
+
+    {#if advancedOpen}
+      <div class="filters-panel">
+        <div class="filters-panel-header">
+          <div class="filters-panel-title">Filter results</div>
+          <button type="button" class="link-button" onclick={clearFilters}>
+            Clear
+          </button>
+        </div>
+        <div class="filters-grid">
+          <label class="filter-field">
+            <span class="filter-label">Local Availability</span>
+            <select
+              value={localFilter}
+              aria-label="Local state"
+              class="filter-select"
+              onchange={(event) =>
+                setLocalFilter(
+                  event.currentTarget.value as 'all' | 'missing' | 'attention',
+                )}
+            >
+              <option value="all">Any availability</option>
+              <option value="missing">Spotify Only</option>
+              <option value="attention">Needs Local Copy</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span class="filter-label">Tracking</span>
+            <select
+              bind:value={trackingFilter}
+              aria-label="Tracking filter"
+              class="filter-select"
+            >
+              <option value="all">Any state</option>
+              <option value="tracked">Tracked</option>
+              <option value="excluded">Excluded</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span class="filter-label">Acquisition</span>
+            <select
+              bind:value={acquisitionFilter}
+              aria-label="Acquisition filter"
+              class="filter-select"
+            >
+              <option value="all">Any state</option>
+              {#each acquisitionOptions as status (status)}<option
+                  value={status}>{status}</option
+                >{/each}
+            </select>
+          </label>
+          <label class="filter-field">
+            <span class="filter-label">Match</span>
+            <select
+              bind:value={matchFilter}
+              aria-label="Match filter"
+              class="filter-select"
+            >
+              <option value="all">Any state</option>
+              <option value="matched">Matched</option>
+              <option value="unmatched">Unmatched</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span class="filter-label">Explicit</span>
+            <select
+              bind:value={explicitFilter}
+              aria-label="Explicit filter"
+              class="filter-select"
+            >
+              <option value="all">Any</option>
+              <option value="explicit">Explicit</option>
+              <option value="clean">Clean</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    {/if}
   {/if}
 
+  <div class="content-label">{formatNumber(filteredEntries.length)} tracks</div>
+
   {#if loading && entries.length === 0}
-    <div class="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto" aria-label="Loading tracks">
-      {#each skeletonRows as row (row)}<div class="h-[3.6rem] animate-pulse rounded-lg bg-slate-900"></div>{/each}
+    <div class="data-table" aria-label="Loading tracks">
+      {#each skeletonRows as row (row)}<div
+          class="skeleton"
+          style="height:48px; margin-bottom:2px;"
+        ></div>{/each}
     </div>
   {:else if entries.length === 0}
-    <div class="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-slate-800 px-5 py-10 text-center text-xs text-slate-500">
-      {emptyMessage}
-    </div>
+    <div class="empty-state">{emptyMessage}</div>
   {:else if filteredEntries.length === 0}
-    <div class="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-slate-800 px-5 py-10 text-center text-xs text-slate-500">
-      No tracks match the current filters.
-    </div>
+    <div class="empty-state">No tracks match the current filters.</div>
   {:else}
-    <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/35">
+    <div class="data-table" style="display:flex; flex-direction:column;">
       <div
-        class="relative min-h-0 flex-1 overflow-y-auto"
+        class="table-scroll"
+        style="position:relative; flex:1;"
         bind:clientHeight={viewportHeight}
         onscroll={(event) => (scrollTop = event.currentTarget.scrollTop)}
         aria-label="Track list"
       >
-        <div class="relative" style={`height: ${filteredEntries.length * rowHeight}px`}>
+        <DataTableHeader
+          bind:columns
+          bind:sortId
+          bind:sortDirection
+          storageKey="refrain.table.spotify.columns.v2"
+        />
+        <div
+          class="relative"
+          style={`height:${sortedEntries.length * rowHeight}px; width:${tableWidth}px; min-width:${tableWidth}px;`}
+        >
           {#each visibleEntries as entry, visibleIndex (`${entry.position}:${entry.track?.id ?? 'missing'}`)}
             <div
-              class="absolute left-0 right-0 flex items-center gap-2.5 border-b border-slate-900 px-2.5 hover:bg-slate-900/40"
-              style={`height: ${rowHeight}px; transform: translateY(${(startIndex + visibleIndex) * rowHeight}px)`}
+              class="table-row column-table-grid absolute left-0 right-0"
+              class:selected={selectedEntryKeys.has(entrySelectionKey(entry))}
+              style={`height:${rowHeight}px; transform:translateY(${(startIndex + visibleIndex) * rowHeight}px); grid-template-columns:${gridTemplate}; width:${tableWidth}px; min-width:${tableWidth}px;`}
             >
-              <span class="w-6 shrink-0 text-center font-mono text-[10px] text-slate-700">{entry.position + 1}</span>
-              {#if entry.track}
-                {#if entry.track.imageUrl}
-                  <img src={entry.track.imageUrl} alt="" loading="lazy" class="h-9 w-9 shrink-0 rounded-md bg-slate-900 object-cover" />
-                {:else}
-                  <div class="h-9 w-9 shrink-0 rounded-md border border-slate-800 bg-slate-900"></div>
-                {/if}
-                <div class="min-w-0 flex-1">
-                  <div class="flex min-w-0 items-center gap-1.5">
-                    <p class="truncate text-xs font-medium text-slate-200">{entry.track.title}</p>
-                    {#if entry.track.explicit}<span class="rounded bg-slate-800 px-1 py-0.5 text-[8px] font-semibold text-slate-500">E</span>{/if}
-                    {#if entry.track.localPresent}<span class="rounded-full border border-emerald-950 bg-emerald-950/30 px-1.5 py-0.5 text-[8px] font-medium text-emerald-400">Local</span>{/if}
-                  </div>
-                  <p class="mt-0.5 truncate text-[10px] text-slate-500">
-                    {entry.track.artists.join(', ')}
-                    {#if entry.track.album}<span class="text-slate-700"> · </span>{entry.track.album}{/if}
-                    {#if entry.track.releaseYear}<span class="text-slate-700"> · </span>{entry.track.releaseYear}{/if}
-                    {#if entry.track.localFormat}<span class="text-slate-700"> · </span>{entry.track.localFormat.toUpperCase()}{/if}
-                  </p>
-                </div>
-                <span class="hidden shrink-0 font-mono text-[10px] text-slate-600 lg:block">{formatTrackDuration(entry.track.durationMs)}</span>
-                {#if trackingControls}
-                  <div class="flex w-[6.9rem] shrink-0 items-center justify-end gap-1">
-                    {#if entry.trackingOverridden}
-                      <button
-                        type="button"
-                        title="Use collection default"
-                        onclick={() => onSetTracking?.(entry, null)}
-                        disabled={trackingBusyId === entry.track.id}
-                        class="rounded px-1 py-0.5 text-[9px] text-slate-600 hover:bg-slate-800 hover:text-slate-300 disabled:opacity-40"
-                      >Reset</button>
+              {#each columns as column (column.id)}
+                {#if column.id === 'position'}
+                  {#if trackingControls}
+                    <label class="track-selection-cell">
+                      <input
+                        type="checkbox"
+                        checked={selectedEntryKeys.has(
+                          entrySelectionKey(entry),
+                        )}
+                        disabled={!entry.track || trackingBulkBusy}
+                        aria-label={entry.track
+                          ? `Select ${entry.track.title}`
+                          : `Select track ${entry.position + 1}`}
+                        onchange={(event) =>
+                          toggleEntrySelection(
+                            entry,
+                            event.currentTarget.checked,
+                          )}
+                      />
+                      <span>{entry.position + 1}</span>
+                    </label>
+                  {:else}
+                    <span class="table-cell-center muted-cell"
+                      >{entry.position + 1}</span
+                    >
+                  {/if}
+                {:else if entry.track}
+                  {#if column.id === 'title'}
+                    <div class="track-primary">
+                      {#if entry.track.imageUrl}
+                        <img
+                          src={entry.track.imageUrl}
+                          alt=""
+                          loading="lazy"
+                          class="artwork-small"
+                        />
+                      {:else}
+                        <div class="artwork-small artwork-fallback">
+                          {entry.track.title.slice(0, 1).toUpperCase()}
+                        </div>
+                      {/if}
+                      <div class="track-copy">
+                        <div class="track-title-line">
+                          <p class="track-title">{entry.track.title}</p>
+                          {#if entry.track.explicit}<span class="explicit-badge"
+                              >E</span
+                            >{/if}
+                        </div>
+                        <p class="track-secondary">Spotify source</p>
+                      </div>
+                    </div>
+                  {:else if column.id === 'artist'}
+                    <span class="cell-truncate"
+                      >{entry.track.artists.join(', ') ||
+                        'Unknown artist'}</span
+                    >
+                  {:else if column.id === 'album'}
+                    <span class="cell-truncate"
+                      >{entry.track.album ?? 'Unknown album'}</span
+                    >
+                  {:else if column.id === 'year'}
+                    <span>{entry.track.releaseYear ?? '—'}</span>
+                  {:else if column.id === 'duration'}
+                    <span>{formatTrackDuration(entry.track.durationMs)}</span>
+                  {:else if column.id === 'format'}
+                    <span>{entry.track.localFormat?.toUpperCase() ?? '—'}</span>
+                  {:else if column.id === 'local'}
+                    <span class="state-text">
+                      {#if needsAttention(entry)}
+                        <span class="state-dot warning"></span>Needs Local Copy
+                      {:else if entry.track.localPresent}
+                        <span class="state-dot success"></span>Local
+                      {:else}
+                        <Icon name="cloud" size={13} />Spotify Only
+                      {/if}
+                    </span>
+                  {:else if column.id === 'tracking'}
+                    {#if trackingControls}
+                      <div class="tracking-cell">
+                        <button
+                          type="button"
+                          class:success={entry.trackingIncluded}
+                          class="chip"
+                          aria-pressed={entry.trackingIncluded}
+                          title={entry.trackingIncluded
+                            ? 'Exclude this song from tracking'
+                            : 'Track this song'}
+                          onclick={() =>
+                            onSetTracking?.(entry, !entry.trackingIncluded)}
+                          disabled={trackingBulkBusy ||
+                            trackingBusyId === entry.track.id}
+                        >
+                          {entry.trackingIncluded ? 'Tracked' : 'Excluded'}
+                        </button>
+                        {#if entry.trackingOverridden}
+                          <button
+                            type="button"
+                            class="link-button"
+                            style="font-size:8px;"
+                            onclick={() => onSetTracking?.(entry, null)}
+                            disabled={trackingBulkBusy ||
+                              trackingBusyId === entry.track.id}>Reset</button
+                          >
+                        {/if}
+                      </div>
+                    {:else}
+                      <span class="chip">Spotify</span>
                     {/if}
-                    <button
-                      type="button"
-                      onclick={() => onSetTracking?.(entry, !entry.trackingIncluded)}
-                      disabled={trackingBusyId === entry.track.id}
-                      class={`rounded-full border px-2 py-1 text-[9px] font-semibold transition disabled:opacity-40 ${entry.trackingIncluded ? 'border-emerald-900/80 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-950/70' : 'border-slate-800 text-slate-500 hover:bg-slate-900 hover:text-slate-300'}`}
-                    >{entry.trackingIncluded ? 'Tracked' : 'Excluded'}</button>
+                  {:else if column.id === 'actions'}
+                    <OverflowMenu
+                      items={trackMenuItems(entry)}
+                      ariaLabel={`Actions for ${entry.track.title}`}
+                    />
+                  {/if}
+                {:else if column.id === 'title'}
+                  <div class="track-primary">
+                    <div class="artwork-small artwork-fallback">?</div>
+                    <div class="track-copy">
+                      <p
+                        class="track-title"
+                        style="color:var(--text-secondary)"
+                      >
+                        Unavailable Spotify item
+                      </p>
+                      <p class="track-secondary">
+                        {entry.unavailableReason ?? entry.itemType}
+                      </p>
+                    </div>
                   </div>
+                {:else if column.id === 'actions'}
+                  <span class="muted-cell">—</span>
+                {:else}
+                  <span class="muted-cell">—</span>
                 {/if}
-              {:else}
-                <div class="min-w-0 flex-1">
-                  <p class="text-xs font-medium text-slate-500">Unavailable Spotify item</p>
-                  <p class="mt-0.5 truncate text-[10px] text-slate-700">{entry.unavailableReason ?? entry.itemType}</p>
-                </div>
-              {/if}
+              {/each}
             </div>
           {/each}
         </div>
       </div>
-
-      {#if hasMore}
-        <div class="flex shrink-0 justify-center border-t border-slate-900 px-3 py-2">
-          <button
-            type="button"
-            onclick={() => onLoadMore?.()}
-            disabled={loadingMore}
-            class="rounded-md border border-slate-800 px-2.5 py-1 text-[10px] font-medium text-slate-400 hover:bg-slate-900 hover:text-slate-200 disabled:opacity-50"
-          >{loadingMore ? 'Loading…' : `Load more · ${entries.length} of ${total}`}</button>
-        </div>
-      {/if}
     </div>
   {/if}
-</div>
 
-<style>
-  .filter-select {
-    min-width: 0;
-    border: 1px solid rgb(30 41 59);
-    border-radius: 0.375rem;
-    background: rgb(15 23 42 / 0.7);
-    padding: 0.375rem 1.6rem 0.375rem 0.625rem;
-    font-size: 0.6875rem;
-    color: rgb(148 163 184);
-    outline: none;
-  }
-</style>
+  <footer class="table-footer">
+    <span
+      >Showing {formatNumber(filteredEntries.length)} of {formatNumber(total)} tracks</span
+    >
+    {#if hasMore}
+      <button
+        type="button"
+        class="btn"
+        onclick={() => onLoadMore?.()}
+        disabled={loadingMore}
+      >
+        {loadingMore ? 'Loading…' : 'Load More'}
+      </button>
+    {/if}
+  </footer>
+</div>

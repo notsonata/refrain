@@ -430,6 +430,7 @@ mod tests {
                 provider: "spotify".into(),
                 provider_account_id: "listener".into(),
                 display_name: Some("Listener".into()),
+                image_url: None,
                 client_id: "client".into(),
             })
             .unwrap();
@@ -443,6 +444,9 @@ mod tests {
                 owner_provider_id: None,
                 is_accessible: true,
                 access_issue: None,
+                image_url: None,
+                external_url: None,
+                album_metadata: None,
             })
             .unwrap();
         let first_id = database

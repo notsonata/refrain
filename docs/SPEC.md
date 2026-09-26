@@ -26,7 +26,7 @@ The user needs to be able to:
 - review ambiguous matches instead of accepting incorrect substitutions
 - export playlists for use outside Refrain
 - copy or mirror the library to another mounted filesystem location
-- run Local Sync and Spotify Sync independently
+- scan local files independently and run one full library synchronization workflow
 - keep existing personal files safe from unintended deletion
 
 ## Release Scope
@@ -189,17 +189,23 @@ The normal Playlists grid contains only accessible playlists. Inaccessible playl
 
 The Local workspace is a compact desktop library browser. Each local track row shows its file path directly, not only at unusually wide window sizes. When embedded cover art is available in the audio metadata, Refrain should use it as the local artwork; otherwise it may fall back to matched Spotify artwork or a neutral placeholder.
 
-The default filter surface should expose commonly useful filters without requiring an advanced panel:
+Search remains visible on dense library screens. State, metadata, and technical filters belong behind a single compact `Filters` control so the toolbar stays focused on search and primary actions.
 
-- search
+The desktop shell keeps the left navigation at a stable 214 px width as the window grows or shrinks. Refrain enforces a 973 × 697 minimum window size; when the remaining workspace becomes narrow, main-content controls reflow, grids reduce columns, and split views stack while dense tables keep their own internal scrolling.
+
+The filter panel may include:
+
 - Spotify/local state
-- artist
-- album
-- year
-- file format
-- Spotify membership
+- tracking state
+- file path or location
+- acquisition state
+- match state
+- explicit state
+- other fields that cannot be handled directly by sortable table headers
 
-More technical filters belong behind an Advanced control:
+Do not duplicate sortable columns as persistent filters without a specific filtering need. The panel should group related controls, use compact dropdowns for state filters, expand controls evenly across the available row, show active-filter state on the trigger, and provide a clear action without clearing the search query.
+
+Examples of technical filters include:
 
 - file path or location
 - acquisition state
@@ -207,19 +213,28 @@ More technical filters belong behind an Advanced control:
 - explicit state
 - duration
 
-Spotify track views use the same filtering model where the fields are meaningful. In Spotify views, local state distinguishes tracks already present locally from tracks that are missing.
+Spotify track views use the same filtering model where the fields are meaningful. In Spotify views, `Spotify Only` means the source item has no matching local file, while `Needs Local Copy` is the tracked subset that still lacks a present local file or requires match review. Liked Songs exposes its collection-level tracking default directly so users can choose between tracking the whole collection and tracking individual songs.
 
-### Local Sync
+Spotify track tables expose the per-song tracking state directly near the track title. Users can toggle one song at a time or select multiple loaded track rows and apply `Track`, `Exclude`, or `Use Default` in one bulk action. `Use Default` removes the per-track override so the collection's tracking default applies again. Bulk selection does not alter search or filter state.
 
-Local Sync starts from the files the user already has. It scans the configured local library, ensures present files are represented as logical library tracks, compares those tracks against all accessible imported Spotify source data, persists confident links, surfaces ambiguous matches, and normalizes present local files when usable metadata exists.
+The user-facing Issues state has two synchronization discrepancies:
 
-Local Sync does not create or acquire missing tracks merely because they exist on Spotify. The Local workspace shows each present local track and, when matched, where it appears on Spotify such as Liked Songs, a saved album, or one or more playlists.
+- `Local Only`: a present local track is absent from the imported accessible Spotify source state.
+- `Needs Local Copy`: a Spotify track selected by collection or per-track tracking rules has no confirmed present local file. Ambiguous matches are handled as a resolution path within this state.
 
-### Spotify Sync
+Untracked Spotify material that is not downloaded locally is normal browseable source state and is not an issue.
 
-Spotify Sync refreshes Spotify source state, applies the user's persistent tracking rules, scans the local library, and reconciles only the resulting tracked subset. Missing tracked tracks may be queued for acquisition when acquisition is enabled. Untracked Spotify material remains browseable but does not become desired local state.
+### Scan Files
 
-Both synchronization scopes are repeatable. Running either scope again without relevant source, tracking, or local changes must not create duplicate downloads or duplicate managed files.
+Scan Files is the lightweight local operation. It indexes the configured local-library root and refreshes Refrain's representation of the files currently on disk. It does not acquire missing Spotify tracks or run the full reconciliation workflow.
+
+The Local workspace shows each present local track and, when matched, where it appears on Spotify such as Liked Songs, a saved album, or one or more playlists.
+
+### Sync Library
+
+Sync Library is the primary end-to-end synchronization action. It first performs the local reconciliation/normalization phase, then refreshes Spotify source state, applies the user's persistent tracking rules, and reconciles the resulting tracked subset. Missing tracked tracks may be queued for acquisition when acquisition is enabled. Untracked Spotify material remains browseable but does not become desired local state.
+
+The internal local and Spotify synchronization scopes remain repeatable and independently persisted, but the normal UI presents them as one Sync Library action. Repeating synchronization without relevant source, tracking, or local changes must not create duplicate downloads or duplicate managed files.
 
 ### Review an Ambiguous Match
 
@@ -415,7 +430,7 @@ Every synchronization run has a `local` or `spotify` scope. Refrain supports:
 
 Automatic synchronization must not prevent the user from triggering a manual sync.
 
-The UI should keep Local Sync and Spotify Sync state distinct rather than combining their histories into one undifferentiated list.
+The UI should present one clear Sync Library action while preserving the internal local and Spotify scope history for diagnostics and reporting.
 
 ## Track States
 
@@ -565,12 +580,12 @@ v1.0.0 is complete when:
 
 - Refrain can scan and represent an existing local music library
 - Local and Spotify are separate primary workspaces
-- Local Sync compares and normalizes the existing local library without materializing every Spotify track
+- Scan Files can index the existing local library without starting full synchronization
 - Spotify collection tracking and per-track overrides persist across application restarts and source refreshes
-- Spotify Sync reconciles and acquires only tracked Spotify selections
+- Sync Library performs local reconciliation and then reconciles/acquires only tracked Spotify selections
 - the Local workspace shows matched Spotify membership such as Liked Songs, saved albums, and playlists
 - Local rows show their file path and use embedded local cover art when available
-- Local and Spotify track views provide search plus common metadata/state filters, with technical filters grouped under an Advanced control
+- Local and Spotify library views keep search visible and group state/metadata filters under one compact Filters control
 - Saved Albums and Playlists use artwork-first collection grids that open into collection track views instead of permanently reserving width for a collection sidebar
 - inaccessible playlists stay out of the normal playlist flow and are available only in a secondary hidden/collapsed section
 - existing local audio can be matched and reused when confidence is sufficient

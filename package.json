@@ -29,6 +29,8 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@iconify-json/lucide": "1.2.136",
+    "@iconify-json/simple-icons": "1.2.97",
     "@sveltejs/vite-plugin-svelte": "7.1.2",
     "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/cli": "2.11.4",
@@ -41,6 +43,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.1",
+    "unplugin-icons": "24.0.0",
     "vite": "8.0.16",
     "vitest": "5.0.1"
   }

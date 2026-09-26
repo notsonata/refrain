@@ -29,6 +29,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
+            commands::open_external_url,
+            commands::download_remote_file,
+            commands::reveal_in_file_manager,
             commands::get_settings,
             commands::update_settings,
             commands::get_local_library_overview,
@@ -55,6 +58,8 @@ pub fn run() {
             reconciliation::get_sync_run,
             reconciliation::list_sync_runs,
             commands::get_spotify_auth_status,
+            commands::open_external_url,
+            commands::download_remote_file,
             commands::connect_spotify,
             commands::disconnect_spotify,
             commands::refresh_spotify_source,
@@ -65,6 +70,7 @@ pub fn run() {
             commands::get_source_collection_page,
             commands::set_source_collection_tracking,
             commands::set_source_track_tracking,
+            commands::set_source_tracks_tracking,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Refrain");

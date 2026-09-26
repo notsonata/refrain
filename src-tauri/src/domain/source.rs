@@ -1,10 +1,22 @@
 use serde::Serialize;
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceAlbumMetadata {
+    pub artists: Vec<String>,
+    pub release_date: Option<String>,
+    pub album_type: Option<String>,
+    pub label: Option<String>,
+    pub copyrights: Vec<String>,
+    pub external_url: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceAccount {
     pub provider: String,
     pub provider_account_id: String,
     pub display_name: Option<String>,
+    pub image_url: Option<String>,
     pub client_id: String,
 }
 
@@ -18,6 +30,9 @@ pub struct SourceCollection {
     pub owner_provider_id: Option<String>,
     pub is_accessible: bool,
     pub access_issue: Option<String>,
+    pub image_url: Option<String>,
+    pub external_url: Option<String>,
+    pub album_metadata: Option<SourceAlbumMetadata>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +82,7 @@ pub struct SourceCollectionItem {
 #[serde(rename_all = "camelCase")]
 pub struct SourceAccountOverview {
     pub display_name: Option<String>,
+    pub image_url: Option<String>,
     pub last_source_sync_at: Option<i64>,
 }
 
@@ -82,7 +98,11 @@ pub struct SourceCollectionSummary {
     pub entry_count: i64,
     pub tracked_by_default: bool,
     pub tracked_entry_count: i64,
+    pub local_entry_count: i64,
+    pub attention_entry_count: i64,
     pub image_url: Option<String>,
+    pub external_url: Option<String>,
+    pub album_metadata: Option<SourceAlbumMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

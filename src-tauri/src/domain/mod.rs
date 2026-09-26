@@ -27,7 +27,7 @@ pub(crate) use reconciliation::ReconciliationCounts;
 pub use reconciliation::{SyncRun, SyncRunPage};
 pub use settings::AppSettings;
 pub use source::{
-    CollectionEntry, SourceAccount, SourceAccountOverview, SourceCollection,
+    CollectionEntry, SourceAccount, SourceAccountOverview, SourceAlbumMetadata, SourceCollection,
     SourceCollectionEntryView, SourceCollectionItem, SourceCollectionListPage,
     SourceCollectionPage, SourceCollectionSummary, SourceTrack, SourceTrackView,
     SpotifySourceOverview,

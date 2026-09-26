@@ -16,8 +16,10 @@
         "title": "Refrain",
         "width": 1100,
         "height": 720,
-        "minWidth": 840,
-        "minHeight": 560
+        "minWidth": 973,
+        "minHeight": 697,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

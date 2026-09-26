@@ -3,7 +3,17 @@ import type { InvokeFn } from './app-info';
 
 export interface SourceAccountOverview {
   displayName: string | null;
+  imageUrl: string | null;
   lastSourceSyncAt: number | null;
+}
+
+export interface SourceAlbumMetadata {
+  artists: string[];
+  releaseDate: string | null;
+  albumType: string | null;
+  label: string | null;
+  copyrights: string[];
+  externalUrl: string | null;
 }
 
 export interface SourceCollectionSummary {
@@ -16,7 +26,11 @@ export interface SourceCollectionSummary {
   entryCount: number;
   trackedByDefault: boolean;
   trackedEntryCount: number;
+  localEntryCount: number;
+  attentionEntryCount: number;
   imageUrl: string | null;
+  externalUrl?: string | null;
+  albumMetadata?: SourceAlbumMetadata | null;
 }
 
 export interface SpotifySourceOverview {
@@ -134,6 +148,19 @@ export function setSourceTrackTracking(
   return invokeFn<void>('set_source_track_tracking', {
     collectionId,
     sourceTrackId,
+    included,
+  });
+}
+
+export function setSourceTracksTracking(
+  collectionId: number,
+  sourceTrackIds: number[],
+  included: boolean | null,
+  invokeFn: InvokeFn = invoke,
+): Promise<void> {
+  return invokeFn<void>('set_source_tracks_tracking', {
+    collectionId,
+    sourceTrackIds,
     included,
   });
 }

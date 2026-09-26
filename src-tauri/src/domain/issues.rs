@@ -7,6 +7,7 @@ use super::{LocalFile, MatchCandidateEvidence, MatchOutcome};
 pub enum IssueKind {
     MatchReview,
     MissingLocalFile,
+    LocalOnlyTrack,
     InaccessibleCollection,
     InvalidLocalFile,
     AcquisitionFailed,
@@ -34,6 +35,7 @@ pub struct IssueRow {
 pub struct IssueCounts {
     pub match_review: usize,
     pub missing_local_file: usize,
+    pub local_only_track: usize,
     pub inaccessible_collection: usize,
     pub invalid_local_file: usize,
     pub acquisition_failed: usize,

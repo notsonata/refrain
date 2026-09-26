@@ -11,6 +11,11 @@ const MIGRATION_ARRAY: &[M] = &[
         "../../migrations/0007_sync_scopes_and_tracking.sql"
     )),
     M::up(include_str!("../../migrations/0008_local_artwork.sql")),
+    M::up(include_str!("../../migrations/0009_album_metadata.sql")),
+    M::up(include_str!("../../migrations/0010_collection_artwork.sql")),
+    M::up(include_str!(
+        "../../migrations/0011_source_account_profile_image.sql"
+    )),
 ];
 
 pub static MIGRATIONS: Migrations = Migrations::from_slice(MIGRATION_ARRAY);

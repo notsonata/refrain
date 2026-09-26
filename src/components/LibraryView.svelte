@@ -1,8 +1,13 @@
 <script lang="ts">
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+  import DataTableHeader from './DataTableHeader.svelte';
+  import Icon from './Icon.svelte';
+  import OverflowMenu from './OverflowMenu.svelte';
   import type { LibraryTrackRow } from '../lib/library';
+  import type { OverflowMenuItem } from '../lib/menu';
   import type { SyncRun } from '../lib/sync';
   import { formatTrackDuration } from '../lib/source';
+  import { tableGridWidth, type TableColumn } from '../lib/table-columns';
 
   export let tracks: LibraryTrackRow[] = [];
   export let total = 0;
@@ -10,66 +15,165 @@
   export let loadingMore = false;
   export let error: string | null = null;
   export let onLoadMore: (() => void) | undefined = undefined;
-  export let onSynchronize: (() => void) | undefined = undefined;
+  export let onScan: (() => void) | undefined = undefined;
   export let onShowIssues: (() => void) | undefined = undefined;
-  export let syncBusy = false;
+  export let scanBusy = false;
+  export let scanDisabled = false;
   export let syncRun: SyncRun | null = null;
   export let indexedFiles = 0;
   export let issueCount = 0;
 
   let search = '';
   let spotifyState = 'all';
-  let artistFilter = 'all';
-  let albumFilter = 'all';
-  let yearFilter = 'all';
-  let formatFilter = 'all';
-  let membershipFilter = 'all';
   let advancedOpen = false;
   let pathFilter = '';
   let acquisitionFilter = 'all';
   let matchFilter = 'all';
   let explicitFilter = 'all';
-  let durationFilter = 'all';
-
-  $: artistOptions = uniqueSorted(tracks.flatMap((track) => track.artists));
-  $: albumOptions = uniqueSorted(
-    tracks.flatMap((track) => (track.album ? [track.album] : [])),
-  );
-  $: yearOptions = uniqueSorted(
-    tracks.flatMap((track) =>
-      track.releaseYear ? [String(track.releaseYear)] : [],
-    ),
-  );
-  $: formatOptions = uniqueSorted(
-    tracks.flatMap((track) =>
-      track.preferredFile?.format ? [track.preferredFile.format] : [],
-    ),
-  );
-  $: membershipOptions = uniqueSorted(
-    tracks.flatMap((track) =>
-      track.spotifyMemberships.map((membership) => membershipLabel(membership.kind, membership.name)),
-    ),
-  );
+  let loadAllRequested = false;
+  let lastAutoLoadOffset = -1;
+  let sortId = 'title';
+  let sortDirection: 'asc' | 'desc' = 'asc';
+  $: activeFilterCount = [
+    spotifyState !== 'all',
+    pathFilter.trim() !== '',
+    acquisitionFilter !== 'all',
+    matchFilter !== 'all',
+    explicitFilter !== 'all',
+  ].filter(Boolean).length;
+  let columns: TableColumn[] = [
+    { id: 'title', label: 'Title', width: 300, minWidth: 220, sortable: true },
+    {
+      id: 'artist',
+      label: 'Artist',
+      width: 150,
+      minWidth: 100,
+      sortable: true,
+    },
+    { id: 'album', label: 'Album', width: 170, minWidth: 110, sortable: true },
+    { id: 'year', label: 'Year', width: 58, minWidth: 48, sortable: true },
+    {
+      id: 'duration',
+      label: 'Duration',
+      width: 72,
+      minWidth: 60,
+      sortable: true,
+    },
+    { id: 'format', label: 'Format', width: 62, minWidth: 54, sortable: true },
+    {
+      id: 'spotify',
+      label: 'Spotify',
+      width: 100,
+      minWidth: 84,
+      sortable: true,
+    },
+    {
+      id: 'collections',
+      label: 'Collections',
+      width: 170,
+      minWidth: 120,
+      sortable: true,
+    },
+    {
+      id: 'actions',
+      label: '',
+      width: 30,
+      minWidth: 30,
+      draggable: false,
+      align: 'center',
+    },
+  ];
   $: acquisitionOptions = uniqueSorted(
     tracks.flatMap((track) =>
       track.acquisitionStatus ? [track.acquisitionStatus] : [],
     ),
   );
   $: filteredTracks = tracks.filter(matchesFilters);
+  $: sortedTracks = [...filteredTracks].sort((a, b) =>
+    compareTracks(a, b, sortId, sortDirection),
+  );
+  $: gridTemplate = columns.map((column) => `${column.width}px`).join(' ');
+  $: tableWidth = tableGridWidth(columns);
+  $: matchedCount =
+    syncRun?.matched ??
+    tracks.filter((track) => track.spotifyMemberships.length > 0).length;
+  $: hasMore = tracks.length < total;
+  $: filterActive =
+    search.trim() !== '' ||
+    spotifyState !== 'all' ||
+    pathFilter.trim() !== '' ||
+    acquisitionFilter !== 'all' ||
+    matchFilter !== 'all' ||
+    explicitFilter !== 'all';
+  $: if (
+    (loadAllRequested || filterActive) &&
+    hasMore &&
+    !loading &&
+    !loadingMore &&
+    tracks.length !== lastAutoLoadOffset
+  ) {
+    lastAutoLoadOffset = tracks.length;
+    onLoadMore?.();
+  }
+  $: if (!(loadAllRequested || filterActive) || !hasMore) {
+    lastAutoLoadOffset = -1;
+  }
+  $: if (!hasMore) loadAllRequested = false;
 
   function uniqueSorted(values: string[]): string[] {
-    return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return [...new Set(values.filter(Boolean))].sort((a, b) =>
+      a.localeCompare(b),
+    );
   }
 
   function membershipLabel(kind: string, name: string): string {
-    if (kind === 'liked_songs') return 'Liked Songs';
-    return name;
+    return kind === 'liked_songs' ? 'Liked Songs' : name;
   }
 
   function artworkUrl(track: LibraryTrackRow): string | null {
     const path = track.preferredFile?.artworkPath;
-    if (!path) return null;
-    return convertFileSrc(path);
+    return path ? convertFileSrc(path) : null;
+  }
+
+  function formatNumber(value: number): string {
+    return new Intl.NumberFormat().format(value);
+  }
+
+  async function copyText(value: string) {
+    await navigator.clipboard.writeText(value);
+  }
+
+  function trackMenuItems(track: LibraryTrackRow): OverflowMenuItem[] {
+    const items: OverflowMenuItem[] = [];
+    const path = track.preferredFile?.path;
+
+    if (path) {
+      items.push(
+        {
+          label: 'Reveal in File Manager',
+          icon: 'folder',
+          action: () => invoke('reveal_in_file_manager', { path }),
+        },
+        {
+          label: 'Copy File Path',
+          icon: 'copy',
+          action: () => copyText(path),
+        },
+      );
+    }
+
+    items.push({
+      label: 'Copy Track Name',
+      icon: 'copy',
+      action: () =>
+        copyText(
+          track.artists.length > 0
+            ? `${track.title} — ${track.artists.join(', ')}`
+            : track.title,
+        ),
+    });
+
+    return items;
   }
 
   function matchesFilters(track: LibraryTrackRow): boolean {
@@ -84,276 +188,386 @@
         filePath,
         ...track.spotifyMemberships.map((membership) => membership.name),
       ].some((value) => value.toLocaleLowerCase().includes(query))
-    ) {
+    )
       return false;
-    }
 
     const onSpotify = track.spotifyMemberships.length > 0;
     if (spotifyState === 'spotify' && !onSpotify) return false;
     if (spotifyState === 'local' && onSpotify) return false;
-    if (artistFilter !== 'all' && !track.artists.includes(artistFilter)) return false;
-    if (albumFilter !== 'all' && track.album !== albumFilter) return false;
-    if (yearFilter !== 'all' && String(track.releaseYear ?? '') !== yearFilter) return false;
-    if (formatFilter !== 'all' && track.preferredFile?.format !== formatFilter) return false;
-    if (
-      membershipFilter !== 'all' &&
-      !track.spotifyMemberships.some(
-        (membership) => membershipLabel(membership.kind, membership.name) === membershipFilter,
-      )
-    ) {
-      return false;
-    }
 
     const normalizedPath = pathFilter.trim().toLocaleLowerCase();
-    if (normalizedPath && !filePath.toLocaleLowerCase().includes(normalizedPath)) return false;
-    if (acquisitionFilter !== 'all' && track.acquisitionStatus !== acquisitionFilter) return false;
+    if (
+      normalizedPath &&
+      !filePath.toLocaleLowerCase().includes(normalizedPath)
+    )
+      return false;
+    if (
+      acquisitionFilter !== 'all' &&
+      track.acquisitionStatus !== acquisitionFilter
+    )
+      return false;
     if (matchFilter === 'matched' && track.sourceTrackCount <= 0) return false;
     if (matchFilter === 'unmatched' && track.sourceTrackCount > 0) return false;
     if (explicitFilter === 'explicit' && track.explicit !== true) return false;
     if (explicitFilter === 'clean' && track.explicit === true) return false;
 
-    if (durationFilter !== 'all') {
-      const duration = track.durationMs ?? 0;
-      if (durationFilter === 'short' && duration >= 180_000) return false;
-      if (durationFilter === 'medium' && (duration < 180_000 || duration > 300_000)) return false;
-      if (durationFilter === 'long' && duration <= 300_000) return false;
-    }
-
     return true;
   }
 
+  const collator = new Intl.Collator(undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+
+  function sortValue(
+    track: LibraryTrackRow,
+    currentSortId: string,
+  ): string | number {
+    switch (currentSortId) {
+      case 'artist':
+        return track.artists.join(', ');
+      case 'album':
+        return track.album ?? '';
+      case 'year':
+        return track.releaseYear ?? -1;
+      case 'duration':
+        return track.durationMs ?? -1;
+      case 'format':
+        return track.preferredFile?.format ?? '';
+      case 'spotify':
+        return track.spotifyMemberships.length > 0 ? 1 : 0;
+      case 'collections':
+        return track.spotifyMemberships
+          .map((membership) =>
+            membershipLabel(membership.kind, membership.name),
+          )
+          .join(', ');
+      case 'title':
+      default:
+        return track.title;
+    }
+  }
+
+  function compareTracks(
+    a: LibraryTrackRow,
+    b: LibraryTrackRow,
+    currentSortId: string,
+    currentSortDirection: 'asc' | 'desc',
+  ): number {
+    const left = sortValue(a, currentSortId);
+    const right = sortValue(b, currentSortId);
+    const result =
+      typeof left === 'number' && typeof right === 'number'
+        ? left - right
+        : collator.compare(String(left), String(right));
+    return currentSortDirection === 'asc' ? result : -result;
+  }
+
   function clearFilters() {
-    search = '';
     spotifyState = 'all';
-    artistFilter = 'all';
-    albumFilter = 'all';
-    yearFilter = 'all';
-    formatFilter = 'all';
-    membershipFilter = 'all';
     pathFilter = '';
     acquisitionFilter = 'all';
     matchFilter = 'all';
     explicitFilter = 'all';
-    durationFilter = 'all';
+  }
+
+  function setSpotifyState(value: 'all' | 'spotify' | 'local') {
+    lastAutoLoadOffset = -1;
+    spotifyState = value;
+    loadAllRequested = true;
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col">
-  <div class="mb-3 flex shrink-0 items-start justify-between gap-4">
-    <div class="min-w-0">
-      <p class="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">Local</p>
-      <h2 class="mt-0.5 text-lg font-semibold tracking-tight text-slate-100">Your library</h2>
-      <p class="mt-0.5 max-w-2xl text-xs text-slate-500">
-        Music actually on disk, with matched Spotify membership as context.
+<div class="screen">
+  <header class="page-header">
+    <div>
+      <div class="page-heading-line">
+        <h1 class="page-title">Local Library</h1>
+      </div>
+      <p class="page-description">
+        Tracks that physically exist on your disk, and how they relate to
+        Spotify.
       </p>
     </div>
-    <div class="flex shrink-0 items-center gap-1.5">
+    <div class="page-actions">
       {#if issueCount > 0}
         <button
           type="button"
+          class="btn btn-attention"
           onclick={() => onShowIssues?.()}
-          class="rounded-md border border-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-slate-400 hover:bg-slate-900 hover:text-slate-200"
         >
-          {issueCount} need attention
+          <Icon name="warning" size={15} />
+          {formatNumber(issueCount)} Local Only
+          <Icon name="chevron-right" size={14} />
         </button>
       {/if}
       <button
         type="button"
-        onclick={() => onSynchronize?.()}
-        disabled={syncBusy}
-        class="rounded-md bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+        class="btn btn-primary"
+        onclick={() => onScan?.()}
+        disabled={scanBusy || scanDisabled}
       >
-        {syncBusy ? 'Syncing…' : 'Sync local'}
+        <Icon name="refresh" size={15} />
+        {scanBusy ? 'Scanning…' : 'Scan Files'}
       </button>
     </div>
+  </header>
+
+  <div class="metrics-strip">
+    <div class="metric-inline">
+      <div class="metric-value">{formatNumber(total)}</div>
+      <div class="metric-label">Total Tracks</div>
+    </div>
+    <div class="metric-inline">
+      <div class="metric-value">{formatNumber(indexedFiles)}</div>
+      <div class="metric-label">Indexed Files</div>
+    </div>
+    <div class="metric-inline">
+      <div class="metric-value">{formatNumber(matchedCount)}</div>
+      <div class="metric-label">On Spotify</div>
+    </div>
+    <div class="metric-inline attention">
+      <div class="metric-value">{formatNumber(issueCount)}</div>
+      <div class="metric-label">Local Only</div>
+    </div>
   </div>
 
-  <div class="mb-2.5 grid shrink-0 grid-cols-3 gap-1.5">
-    <div class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2">
-      <p class="text-[9px] uppercase tracking-wider text-slate-600">On disk</p>
-      <p class="mt-0.5 text-base font-semibold text-slate-200">{total}</p>
-    </div>
-    <div class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2">
-      <p class="text-[9px] uppercase tracking-wider text-slate-600">Indexed files</p>
-      <p class="mt-0.5 text-base font-semibold text-slate-200">{indexedFiles}</p>
-    </div>
-    <div class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2">
-      <p class="text-[9px] uppercase tracking-wider text-slate-600">Last local sync</p>
-      <p class="mt-0.5 truncate text-xs font-medium text-slate-300">{syncRun ? syncRun.status : 'Not run yet'}</p>
-      {#if syncRun}
-        <p class="mt-0.5 text-[9px] text-slate-600">{syncRun.matched} matched · {syncRun.needsReview} review</p>
-      {/if}
-    </div>
-  </div>
-
-  <div class="mb-2.5 shrink-0 rounded-lg border border-slate-800/80 bg-slate-950/45 p-2.5">
-    <div class="grid gap-2 md:grid-cols-[minmax(12rem,1.5fr)_repeat(3,minmax(7rem,0.75fr))] xl:grid-cols-[minmax(12rem,1.7fr)_repeat(6,minmax(6.5rem,0.7fr))]">
+  <div class="toolbar local-library-toolbar">
+    <label class="search-field">
+      <Icon name="search" size={17} />
       <input
         bind:value={search}
+        class="search-input"
         aria-label="Search local library"
-        placeholder="Search title, artist, album, path…"
-        class="filter-input"
+        placeholder="Search title, artist, album, path, or collection"
       />
-      <select bind:value={spotifyState} aria-label="Spotify state filter" class="filter-select">
-        <option value="all">Spotify: all</option>
-        <option value="spotify">On Spotify</option>
-        <option value="local">Local only</option>
-      </select>
-      <select bind:value={artistFilter} aria-label="Artist filter" class="filter-select">
-        <option value="all">Artist: all</option>
-        {#each artistOptions as artist (artist)}<option value={artist}>{artist}</option>{/each}
-      </select>
-      <select bind:value={albumFilter} aria-label="Album filter" class="filter-select">
-        <option value="all">Album: all</option>
-        {#each albumOptions as album (album)}<option value={album}>{album}</option>{/each}
-      </select>
-      <select bind:value={yearFilter} aria-label="Year filter" class="filter-select">
-        <option value="all">Year: all</option>
-        {#each yearOptions as year (year)}<option value={year}>{year}</option>{/each}
-      </select>
-      <select bind:value={formatFilter} aria-label="Format filter" class="filter-select">
-        <option value="all">Format: all</option>
-        {#each formatOptions as format (format)}<option value={format}>{format.toUpperCase()}</option>{/each}
-      </select>
-      <select bind:value={membershipFilter} aria-label="Spotify membership filter" class="filter-select">
-        <option value="all">Membership: all</option>
-        {#each membershipOptions as membership (membership)}<option value={membership}>{membership}</option>{/each}
-      </select>
-    </div>
-    <div class="mt-2 flex items-center gap-2">
-      <button
-        type="button"
-        onclick={() => (advancedOpen = !advancedOpen)}
-        class="rounded-md border border-slate-800 px-2.5 py-1 text-[10px] font-medium text-slate-400 hover:bg-slate-900 hover:text-slate-200"
-      >
-        {advancedOpen ? 'Hide advanced' : 'Advanced'}
-      </button>
-      <button type="button" onclick={clearFilters} class="text-[10px] text-slate-600 hover:text-slate-300">Clear</button>
-      <span class="ml-auto text-[10px] text-slate-600">{filteredTracks.length} shown · {tracks.length} loaded</span>
-    </div>
-    {#if advancedOpen}
-      <div class="mt-2 grid gap-2 border-t border-slate-900 pt-2 md:grid-cols-2 xl:grid-cols-5">
-        <input bind:value={pathFilter} aria-label="File path filter" placeholder="Path contains…" class="filter-input" />
-        <select bind:value={acquisitionFilter} aria-label="Acquisition filter" class="filter-select">
-          <option value="all">Acquisition: all</option>
-          {#each acquisitionOptions as status (status)}<option value={status}>{status}</option>{/each}
-        </select>
-        <select bind:value={matchFilter} aria-label="Match filter" class="filter-select">
-          <option value="all">Match: all</option>
-          <option value="matched">Matched</option>
-          <option value="unmatched">Unmatched</option>
-        </select>
-        <select bind:value={explicitFilter} aria-label="Explicit filter" class="filter-select">
-          <option value="all">Explicit: all</option>
-          <option value="explicit">Explicit</option>
-          <option value="clean">Not explicit</option>
-        </select>
-        <select bind:value={durationFilter} aria-label="Duration filter" class="filter-select">
-          <option value="all">Duration: all</option>
-          <option value="short">Under 3 min</option>
-          <option value="medium">3–5 min</option>
-          <option value="long">Over 5 min</option>
-        </select>
-      </div>
-    {/if}
+    </label>
+
+    <button
+      type="button"
+      class="btn filter-button"
+      class:filters-active={activeFilterCount > 0}
+      aria-expanded={advancedOpen}
+      onclick={() => (advancedOpen = !advancedOpen)}
+    >
+      <Icon name="filter" size={15} />
+      Filters
+      {#if activeFilterCount > 0}
+        <span class="filter-count">{activeFilterCount}</span>
+      {/if}
+      <Icon name="chevron-down" size={13} />
+    </button>
   </div>
 
+  {#if advancedOpen}
+    <div class="filters-panel">
+      <div class="filters-panel-header">
+        <div class="filters-panel-title">Filter results</div>
+        <button type="button" class="link-button" onclick={clearFilters}>
+          Clear
+        </button>
+      </div>
+      <div class="filters-grid">
+        <label class="filter-field">
+          <span class="filter-label">Spotify Status</span>
+          <select
+            value={spotifyState}
+            aria-label="Spotify state"
+            class="filter-select"
+            onchange={(event) =>
+              setSpotifyState(
+                event.currentTarget.value as 'all' | 'spotify' | 'local',
+              )}
+          >
+            <option value="all">Any status</option>
+            <option value="spotify">On Spotify</option>
+            <option value="local">Local Only</option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span class="filter-label">Path</span>
+          <input
+            bind:value={pathFilter}
+            aria-label="File path filter"
+            placeholder="Path contains…"
+            class="filter-input"
+          />
+        </label>
+        <label class="filter-field">
+          <span class="filter-label">Acquisition</span>
+          <select
+            bind:value={acquisitionFilter}
+            aria-label="Acquisition filter"
+            class="filter-select"
+          >
+            <option value="all">Any state</option>
+            {#each acquisitionOptions as status (status)}<option value={status}
+                >{status}</option
+              >{/each}
+          </select>
+        </label>
+        <label class="filter-field">
+          <span class="filter-label">Match</span>
+          <select
+            bind:value={matchFilter}
+            aria-label="Match filter"
+            class="filter-select"
+          >
+            <option value="all">Any state</option>
+            <option value="matched">Matched</option>
+            <option value="unmatched">Unmatched</option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span class="filter-label">Explicit</span>
+          <select
+            bind:value={explicitFilter}
+            aria-label="Explicit filter"
+            class="filter-select"
+          >
+            <option value="all">Any</option>
+            <option value="explicit">Explicit</option>
+            <option value="clean">Clean</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  {/if}
+
+  <div class="content-label">{formatNumber(filteredTracks.length)} tracks</div>
+
   {#if error}
-    <div class="rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-xs text-amber-200">{error}</div>
+    <div class="error-state">{error}</div>
   {:else if loading && tracks.length === 0}
-    <div class="grid gap-1.5" aria-label="Loading local library">
-      {#each Array.from({ length: 8 }, (_, index) => index) as index (index)}
-        <div class="h-[3.65rem] animate-pulse rounded-lg bg-slate-900"></div>
+    <div class="data-table" aria-label="Loading local library">
+      {#each Array.from({ length: 9 }, (_, index) => index) as index (index)}
+        <div class="skeleton" style="height: 48px; margin-bottom: 2px;"></div>
       {/each}
     </div>
   {:else if tracks.length === 0}
-    <div class="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-slate-800 px-5 py-10 text-center">
+    <div class="empty-state">
       <div>
-        <p class="text-xs font-medium text-slate-300">No local tracks indexed yet.</p>
-        <p class="mt-1 text-xs text-slate-500">Choose your library folder in Settings, then run Local Sync.</p>
+        <strong>No local music indexed yet</strong>
+        <p>Choose a library folder in Settings, then scan your files.</p>
       </div>
     </div>
   {:else if filteredTracks.length === 0}
-    <div class="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-slate-800 px-5 py-10 text-center text-xs text-slate-500">
-      No local tracks match the current filters.
-    </div>
+    <div class="empty-state">No local tracks match the current filters.</div>
   {:else}
-    <div class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-800/80 bg-slate-950/35">
-      {#each filteredTracks as track (track.id)}
-        {@const art = artworkUrl(track)}
-        <article class="flex min-h-[3.65rem] items-center gap-2.5 border-b border-slate-900 px-2.5 py-1.5 last:border-b-0 hover:bg-slate-900/35">
-          {#if art}
-            <img src={art} alt="" loading="lazy" class="h-9 w-9 shrink-0 rounded-md bg-slate-900 object-cover" />
-          {:else}
-            <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-800 bg-slate-900 text-[10px] font-semibold text-slate-500">
-              {(track.artists[0] ?? track.title).slice(0, 1).toUpperCase()}
-            </div>
-          {/if}
-          <div class="min-w-0 flex-1">
-            <div class="flex min-w-0 items-center gap-1.5">
-              <p class="truncate text-xs font-medium text-slate-200">{track.title}</p>
-              {#if track.explicit}<span class="rounded bg-slate-800 px-1 py-0.5 text-[8px] font-semibold text-slate-500">E</span>{/if}
-              {#if track.spotifyMemberships.length === 0}
-                <span class="shrink-0 rounded-full border border-slate-800 px-1.5 py-0.5 text-[8px] font-medium text-slate-500">Local only</span>
-              {:else}
-                <span class="shrink-0 rounded-full border border-emerald-900/70 bg-emerald-950/35 px-1.5 py-0.5 text-[8px] font-medium text-emerald-300">On Spotify</span>
-              {/if}
-            </div>
-            <p class="mt-0.5 truncate text-[10px] text-slate-500">
-              {track.artists.join(', ') || 'Unknown artist'}
-              <span class="text-slate-700"> · </span>{track.album ?? 'Unknown album'}
-              {#if track.releaseYear}<span class="text-slate-700"> · </span>{track.releaseYear}{/if}
-              <span class="text-slate-700"> · </span>{formatTrackDuration(track.durationMs)}
-              {#if track.preferredFile?.format}<span class="text-slate-700"> · </span>{track.preferredFile.format.toUpperCase()}{/if}
-            </p>
-            {#if track.preferredFile}
-              <p class="mt-0.5 truncate font-mono text-[9px] text-slate-700" title={track.preferredFile.path}>{track.preferredFile.path}</p>
-            {/if}
-          </div>
-          {#if track.spotifyMemberships.length > 0}
-            <div class="hidden max-w-[16rem] flex-wrap justify-end gap-1 2xl:flex">
-              {#each track.spotifyMemberships.slice(0, 3) as membership (`${membership.kind}:${membership.name}`)}
-                <span class="rounded bg-slate-900 px-1.5 py-0.5 text-[8px] text-slate-500">{membershipLabel(membership.kind, membership.name)}</span>
-              {/each}
-              {#if track.spotifyMemberships.length > 3}<span class="px-1 py-0.5 text-[8px] text-slate-700">+{track.spotifyMemberships.length - 3}</span>{/if}
-            </div>
-          {/if}
-        </article>
-      {/each}
-      {#if tracks.length < total}
-        <div class="flex justify-center border-t border-slate-900 px-3 py-2">
-          <button
-            type="button"
-            onclick={() => onLoadMore?.()}
-            disabled={loadingMore}
-            class="rounded-md border border-slate-800 px-2.5 py-1 text-[10px] font-medium text-slate-400 hover:bg-slate-900 hover:text-slate-200 disabled:opacity-50"
+    <div class="data-table">
+      <div class="table-scroll">
+        <DataTableHeader
+          bind:columns
+          bind:sortId
+          bind:sortDirection
+          storageKey="refrain.table.local.columns.v1"
+        />
+        {#each sortedTracks as track (track.id)}
+          {@const art = artworkUrl(track)}
+          <article
+            class="table-row column-table-grid"
+            style={`grid-template-columns:${gridTemplate}; width:${tableWidth}px; min-width:${tableWidth}px;`}
           >
-            {loadingMore ? 'Loading…' : `Load more · ${tracks.length} of ${total}`}
-          </button>
-        </div>
-      {/if}
+            {#each columns as column (column.id)}
+              {#if column.id === 'title'}
+                <div class="track-primary">
+                  {#if art}
+                    <img
+                      src={art}
+                      alt=""
+                      loading="lazy"
+                      class="artwork-small"
+                    />
+                  {:else}
+                    <div class="artwork-small artwork-fallback">
+                      {(track.artists[0] ?? track.title)
+                        .slice(0, 1)
+                        .toUpperCase()}
+                    </div>
+                  {/if}
+                  <div class="track-copy">
+                    <div class="track-title-line">
+                      <p class="track-title">{track.title}</p>
+                      {#if track.explicit}<span class="explicit-badge">E</span
+                        >{/if}
+                    </div>
+                    {#if track.preferredFile}
+                      <p
+                        class="track-secondary mono-path"
+                        title={track.preferredFile.path}
+                      >
+                        {track.preferredFile.path}
+                      </p>
+                    {:else}
+                      <p class="track-secondary">No preferred file</p>
+                    {/if}
+                  </div>
+                </div>
+              {:else if column.id === 'artist'}
+                <span class="cell-truncate"
+                  >{track.artists.join(', ') || 'Unknown artist'}</span
+                >
+              {:else if column.id === 'album'}
+                <span class="cell-truncate"
+                  >{track.album ?? 'Unknown album'}</span
+                >
+              {:else if column.id === 'year'}
+                <span>{track.releaseYear ?? '—'}</span>
+              {:else if column.id === 'duration'}
+                <span>{formatTrackDuration(track.durationMs)}</span>
+              {:else if column.id === 'format'}
+                <span>{track.preferredFile?.format?.toUpperCase() ?? '—'}</span>
+              {:else if column.id === 'spotify'}
+                <span class="state-text">
+                  <span
+                    class:success={track.spotifyMemberships.length > 0}
+                    class:warning={track.spotifyMemberships.length === 0}
+                    class="state-dot"
+                  ></span>
+                  {track.spotifyMemberships.length > 0
+                    ? 'On Spotify'
+                    : 'Local Only'}
+                </span>
+              {:else if column.id === 'collections'}
+                <div class="cell-truncate collection-chip-cell">
+                  {#each track.spotifyMemberships.slice(0, 2) as membership (`${membership.kind}:${membership.name}`)}
+                    <span class="chip"
+                      >{membershipLabel(membership.kind, membership.name)}</span
+                    >
+                  {/each}
+                  {#if track.spotifyMemberships.length > 2}
+                    <span class="chip"
+                      >+{track.spotifyMemberships.length - 2}</span
+                    >
+                  {/if}
+                  {#if track.spotifyMemberships.length === 0}
+                    <span style="color:var(--text-tertiary)">—</span>
+                  {/if}
+                </div>
+              {:else if column.id === 'actions'}
+                <OverflowMenu
+                  items={trackMenuItems(track)}
+                  ariaLabel={`Actions for ${track.title}`}
+                />
+              {/if}
+            {/each}
+          </article>
+        {/each}
+      </div>
     </div>
   {/if}
+
+  <footer class="table-footer">
+    <span>Loaded {formatNumber(tracks.length)} of {formatNumber(total)}</span>
+    {#if tracks.length < total}
+      <button
+        type="button"
+        class="btn"
+        onclick={() => onLoadMore?.()}
+        disabled={loadingMore}
+      >
+        {loadingMore ? 'Loading…' : 'Load More'}
+      </button>
+    {/if}
+  </footer>
 </div>
-
-<style>
-  .filter-input,
-  .filter-select {
-    min-width: 0;
-    border: 1px solid rgb(30 41 59);
-    border-radius: 0.375rem;
-    background: rgb(15 23 42 / 0.7);
-    padding: 0.375rem 0.625rem;
-    font-size: 0.6875rem;
-    color: rgb(148 163 184);
-    outline: none;
-  }
-
-  .filter-select {
-    padding-right: 1.6rem;
-  }
-
-  .filter-input::placeholder {
-    color: rgb(71 85 105);
-  }
-</style>

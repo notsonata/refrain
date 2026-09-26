@@ -1,12 +1,13 @@
 import process from 'node:process';
 import tailwindcss from '@tailwindcss/vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import Icons from 'unplugin-icons/vite';
 import { defineConfig } from 'vitest/config';
 
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
+  plugins: [tailwindcss(), Icons({ compiler: 'svelte' }), svelte()],
   clearScreen: false,
   server: {
     host: host || '127.0.0.1',

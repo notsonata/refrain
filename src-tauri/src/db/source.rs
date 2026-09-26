@@ -14,18 +14,21 @@ pub(super) fn upsert_account(
             provider,
             provider_account_id,
             display_name,
+            image_url,
             client_id,
             created_at,
             updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
         ON CONFLICT(provider, provider_account_id) DO UPDATE SET
             display_name = excluded.display_name,
+            image_url = excluded.image_url,
             client_id = excluded.client_id,
             updated_at = excluded.updated_at",
         params![
             account.provider,
             account.provider_account_id,
             account.display_name,
+            account.image_url,
             account.client_id,
             now,
         ],
@@ -58,6 +61,13 @@ pub(super) fn upsert_collection(
     collection: &SourceCollection,
 ) -> Result<i64, rusqlite::Error> {
     let now = now_ms();
+    let album_artists_json = collection
+        .album_metadata
+        .as_ref()
+        .map(|metadata| serde_json::to_string(&metadata.artists).unwrap_or_else(|_| "[]".into()));
+    let album_copyrights_json = collection.album_metadata.as_ref().map(|metadata| {
+        serde_json::to_string(&metadata.copyrights).unwrap_or_else(|_| "[]".into())
+    });
     conn.execute(
         "INSERT INTO source_collections (
             source_account_id,
@@ -68,9 +78,17 @@ pub(super) fn upsert_collection(
             owner_provider_id,
             is_accessible,
             access_issue,
+            image_url,
+            external_url,
+            album_artists_json,
+            album_release_date,
+            album_type,
+            album_label,
+            album_copyrights_json,
+            album_external_url,
             created_at,
             updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)
         ON CONFLICT(source_account_id, provider_collection_id) DO UPDATE SET
             kind = excluded.kind,
             name = excluded.name,
@@ -78,6 +96,14 @@ pub(super) fn upsert_collection(
             owner_provider_id = excluded.owner_provider_id,
             is_accessible = excluded.is_accessible,
             access_issue = excluded.access_issue,
+            image_url = excluded.image_url,
+            external_url = excluded.external_url,
+            album_artists_json = excluded.album_artists_json,
+            album_release_date = excluded.album_release_date,
+            album_type = excluded.album_type,
+            album_label = excluded.album_label,
+            album_copyrights_json = excluded.album_copyrights_json,
+            album_external_url = excluded.album_external_url,
             updated_at = excluded.updated_at",
         params![
             collection.source_account_id,
@@ -88,6 +114,26 @@ pub(super) fn upsert_collection(
             collection.owner_provider_id,
             bool_to_sql(collection.is_accessible),
             collection.access_issue,
+            collection.image_url,
+            collection.external_url,
+            album_artists_json,
+            collection
+                .album_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.release_date.as_ref()),
+            collection
+                .album_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.album_type.as_ref()),
+            collection
+                .album_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.label.as_ref()),
+            album_copyrights_json,
+            collection
+                .album_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.external_url.as_ref()),
             now,
         ],
     )?;

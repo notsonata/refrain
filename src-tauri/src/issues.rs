@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     db::{Database, DatabaseError},
@@ -17,8 +17,23 @@ pub(crate) fn list_issues(
     limit: u32,
 ) -> Result<IssuePage, DatabaseError> {
     let limit = limit.clamp(1, MAX_ISSUE_PAGE_LIMIT);
-    let mut issues = match_review_issues(database)?;
-    issues.extend(database.non_match_issue_rows()?);
+    let match_reviews = match_review_issues(database)?;
+    let review_source_ids = match_reviews
+        .iter()
+        .filter_map(|issue| issue.source_track_id)
+        .collect::<HashSet<_>>();
+    let mut issues = match_reviews;
+    issues.extend(
+        database
+            .non_match_issue_rows()?
+            .into_iter()
+            .filter(|issue| {
+                !(issue.kind == IssueKind::MissingLocalFile
+                    && issue.source_track_id.is_some_and(|source_track_id| {
+                        review_source_ids.contains(&source_track_id)
+                    }))
+            }),
+    );
     issues.sort_by(|left, right| {
         issue_priority(left.kind)
             .cmp(&issue_priority(right.kind))
@@ -92,7 +107,7 @@ fn match_review_issues(database: &Database) -> Result<Vec<IssueRow>, DatabaseErr
     let library_tracks = database.library_match_tracks()?;
     let matcher = MatcherIndex::new(library_tracks);
     let mut issues = Vec::new();
-    for source_track_id in database.accessible_source_track_ids()? {
+    for source_track_id in database.tracked_source_track_ids()? {
         let Some(source) = database.source_match_track(source_track_id)? else {
             continue;
         };
@@ -145,6 +160,7 @@ fn issue_counts(issues: &[IssueRow]) -> IssueCounts {
         match issue.kind {
             IssueKind::MatchReview => counts.match_review += 1,
             IssueKind::MissingLocalFile => counts.missing_local_file += 1,
+            IssueKind::LocalOnlyTrack => counts.local_only_track += 1,
             IssueKind::InaccessibleCollection => counts.inaccessible_collection += 1,
             IssueKind::InvalidLocalFile => counts.invalid_local_file += 1,
             IssueKind::AcquisitionFailed => counts.acquisition_failed += 1,
@@ -157,8 +173,9 @@ fn issue_priority(kind: IssueKind) -> u8 {
     match kind {
         IssueKind::MatchReview => 0,
         IssueKind::MissingLocalFile => 1,
-        IssueKind::InvalidLocalFile => 2,
-        IssueKind::AcquisitionFailed => 3,
-        IssueKind::InaccessibleCollection => 4,
+        IssueKind::LocalOnlyTrack => 2,
+        IssueKind::InvalidLocalFile => 3,
+        IssueKind::AcquisitionFailed => 4,
+        IssueKind::InaccessibleCollection => 5,
     }
 }

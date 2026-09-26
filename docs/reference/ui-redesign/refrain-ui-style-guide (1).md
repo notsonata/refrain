@@ -152,8 +152,6 @@ Useful references in spirit:
 
 Do not directly copy any of those products. Borrow principles such as density, hierarchy, restraint, and predictability rather than platform-specific ornament.
 
-
-
 ## 3.1 Cross-Platform Foundation
 
 Refrain should have **one product identity** across macOS, Windows, and Linux.
@@ -209,16 +207,16 @@ Examples:
 
 ### Platform adaptation matrix
 
-| Surface | macOS | Windows | Linux |
-|---|---|---|---|
-| Window chrome | native macOS controls | native Windows caption controls | native compositor/window-manager controls |
-| UI font | system SF family | Segoe UI / system UI | desktop-environment system UI font |
-| Primary modifier | `⌘` | `Ctrl` | `Ctrl` |
-| Preferences naming | Settings or Preferences, follow product convention | Settings | Settings |
-| Background app location | menu bar when applicable | notification area/system tray | status notifier/system tray when supported |
-| Folder selection | native macOS picker | native Windows picker | native desktop/portal picker |
-| Paths | `/Users/name/...` | `C:\Users\name\...` | `/home/name/...` |
-| Context menus | native-feeling macOS menu behavior | native-feeling Windows menu behavior | native-feeling desktop-environment menu behavior |
+| Surface                 | macOS                                              | Windows                              | Linux                                            |
+| ----------------------- | -------------------------------------------------- | ------------------------------------ | ------------------------------------------------ |
+| Window chrome           | native macOS controls                              | native Windows caption controls      | native compositor/window-manager controls        |
+| UI font                 | system SF family                                   | Segoe UI / system UI                 | desktop-environment system UI font               |
+| Primary modifier        | `⌘`                                                | `Ctrl`                               | `Ctrl`                                           |
+| Preferences naming      | Settings or Preferences, follow product convention | Settings                             | Settings                                         |
+| Background app location | menu bar when applicable                           | notification area/system tray        | status notifier/system tray when supported       |
+| Folder selection        | native macOS picker                                | native Windows picker                | native desktop/portal picker                     |
+| Paths                   | `/Users/name/...`                                  | `C:\Users\name\...`                  | `/home/name/...`                                 |
+| Context menus           | native-feeling macOS menu behavior                 | native-feeling Windows menu behavior | native-feeling desktop-environment menu behavior |
 
 ### Cross-platform implementation principle
 
@@ -249,9 +247,8 @@ Recommended reference canvas:
 - width: 1480 to 1540 px
 - height: 900 to 960 px
 - aspect ratio: approximately 16:10
-- minimum useful content width: about 1180 px
 
-The current approved concepts use a large desktop window rather than a compact floating utility. The same content geometry should be viable on macOS, Windows, and mainstream Linux desktop environments.
+The current approved concepts use a large desktop window rather than a compact floating utility. The default application window may remain 1100 × 720. The minimum window size is 973 × 697. The UI must continue to reflow below the default size rather than relying on the minimum dimensions to preserve the desktop composition. The same content geometry should be viable on macOS, Windows, and mainstream Linux desktop environments.
 
 ## 4.2 Window frame and platform chrome
 
@@ -323,13 +320,13 @@ Issues uses a master-detail split:
 
 Target:
 
-- 238 to 260 px
+- 214 px
 
 Recommended canonical width:
 
-- **248 px**
+- **214 px**
 
-Sidebar should remain visually stable across all screens.
+Sidebar should remain visually stable across all screens and must not grow when the user expands the window.
 
 ## 5.3 Main content padding
 
@@ -372,16 +369,16 @@ Use a consistent 4 px base scale.
 
 Preferred tokens:
 
-| Token | Size | Use |
-|---|---:|---|
-| `space-1` | 4 px | icon/text micro-gap |
-| `space-2` | 8 px | inline element gap |
-| `space-3` | 12 px | compact group spacing |
-| `space-4` | 16 px | default control spacing |
-| `space-5` | 20 px | section internals |
-| `space-6` | 24 px | card/section padding |
-| `space-8` | 32 px | major section spacing |
-| `space-10` | 40 px | large page separation |
+| Token      |  Size | Use                       |
+| ---------- | ----: | ------------------------- |
+| `space-1`  |  4 px | icon/text micro-gap       |
+| `space-2`  |  8 px | inline element gap        |
+| `space-3`  | 12 px | compact group spacing     |
+| `space-4`  | 16 px | default control spacing   |
+| `space-5`  | 20 px | section internals         |
+| `space-6`  | 24 px | card/section padding      |
+| `space-8`  | 32 px | major section spacing     |
+| `space-10` | 40 px | large page separation     |
 | `space-12` | 48 px | exceptional large spacing |
 
 Rules:
@@ -405,12 +402,12 @@ font-family:
   system-ui,
   -apple-system,
   BlinkMacSystemFont,
-  "Segoe UI",
+  'Segoe UI',
   Roboto,
   Ubuntu,
   Cantarell,
-  "Noto Sans",
-  "Helvetica Neue",
+  'Noto Sans',
+  'Helvetica Neue',
   Arial,
   sans-serif;
 ```
@@ -656,15 +653,15 @@ The approved Issues direction should be quieter than a typical admin dashboard.
 
 Use a small set:
 
-| Element | Radius |
-|---|---:|
-| window | 16 px |
+| Element     |      Radius |
+| ----------- | ----------: |
+| window      |       16 px |
 | large panel | 10 to 12 px |
-| card | 8 to 10 px |
-| button | 7 to 9 px |
-| input | 7 to 9 px |
-| badge/pill | 999 px |
-| artwork | 6 to 8 px |
+| card        |  8 to 10 px |
+| button      |   7 to 9 px |
+| input       |   7 to 9 px |
+| badge/pill  |      999 px |
+| artwork     |   6 to 8 px |
 
 Avoid over-rounding.
 
@@ -897,56 +894,51 @@ Examples:
 
 # 15. Filters
 
-## 15.1 Basic filters
+## 15.1 Default filter surface
 
-Basic state filters may remain visible.
+Keep search visible. Put state, metadata, and technical filters behind a single compact `Filters` button.
+
+This keeps dense library toolbars focused and prevents long segmented controls from competing with the content.
+
+The `Filters` trigger should:
+
+- sit beside the persistent search field
+- use the standard filter icon
+- show a small active-filter count when one or more filters are applied
+- use a quiet blue selected treatment while filters are active
+
+## 15.2 Filter contents
+
+Use the expanded panel for both common state filters and secondary filters.
 
 Examples:
 
-- All
-- On Spotify
-- Local Only
+- Spotify/local state such as `All`, `On Spotify`, and `Local Only`
+- local availability such as `All`, `Spotify Only`, and `Needs Local Copy`
+- tracking state
+- path contains
+- match status
+- acquisition status
+- explicit state
 
-or:
+Avoid exposing filters that duplicate simple column sorting unless there is a separate filtering use case.
 
-- All
-- Tracked
-- Not Downloaded
-- Need Attention
-
-Use a segmented control.
-
-## 15.2 Advanced filters
-
-Secondary filters must be hidden behind a single `Filters` button.
-
-This is an intentional part of the Refrain design.
-
-Examples to hide:
-
-- Artist
-- Album
-- Year
-- Format
-- Collection
-- Path contains
-- Match status
-- Acquisition status
-- Explicit state
-- Duration
-
-Do not permanently expose a long row of dropdowns.
+Do not permanently expose a long row of dropdowns or segmented controls.
 
 ## 15.3 Expanded filter treatment
 
 When expanded:
 
-- use a popover, anchored panel, or compact collapsible row
+- use a compact collapsible panel directly below the toolbar
 - group filters logically
+- give each group a short visible label
+- use native-feeling selects for state filters such as Spotify Status and Local Availability
+- let filter controls expand evenly across the available row instead of leaving large dead areas
+- use compact native-feeling inputs/selects for technical filters
 - avoid a full-page filter sidebar
 - keep the music content visible
-- show active filter count if useful
-- provide `Clear filters`
+- provide a compact `Clear` action
+- clearing filters must not clear the search query
 
 ---
 
@@ -1450,7 +1442,7 @@ Recommended structure:
 Local Library    Your library                       Need Attention  Sync Local
 Description
 
-12,482 on disk | 12,601 indexed | Last sync | 12,440 matched | 18 need review
+12,482 Total Tracks | 12,601 Indexed Files | 12,440 On Spotify | 18 Local Only
 
 Search................................  [All | On Spotify | Local Only] [Filters]
 
@@ -1753,12 +1745,12 @@ The command should remain conceptually identical while modifier notation adapts 
 
 Examples:
 
-| Action | macOS | Windows / Linux |
-|---|---|---|
-| Search | `⌘F` | `Ctrl+F` |
-| Select all | `⌘A` | `Ctrl+A` |
+| Action                    | macOS                                                       | Windows / Linux                             |
+| ------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
+| Search                    | `⌘F`                                                        | `Ctrl+F`                                    |
+| Select all                | `⌘A`                                                        | `Ctrl+A`                                    |
 | Refresh where appropriate | `⌘R` only if it does not conflict with platform conventions | `Ctrl+R` or platform-appropriate equivalent |
-| Close window | `⌘W` | `Alt+F4` / desktop convention |
+| Close window              | `⌘W`                                                        | `Alt+F4` / desktop convention               |
 
 Do not hard-code modifier glyphs into reusable UI copy.
 
@@ -1956,9 +1948,13 @@ At narrower widths:
 
 1. reduce grid columns
 2. collapse right inspector into popover/drawer
-3. preserve sidebar as long as practical
-4. truncate secondary metadata
-5. do not switch to a mobile-style stacked page unless absolutely necessary
+3. keep the 214 px left sidebar stable
+4. reflow page headers, metrics, toolbars, and filter fields before allowing them to clip
+5. stack master-detail content when the remaining main workspace cannot support two readable columns
+6. truncate secondary metadata
+7. keep wide data tables internally scrollable instead of forcing the application window wider
+
+Keep the application minimum size at 973 × 697. Responsive behavior still belongs to the content area, and these minimum dimensions should only prevent the workspace from becoming impractically small.
 
 ---
 
@@ -2139,44 +2135,44 @@ Use these as the default starting point.
 ```css
 :root {
   /* Backgrounds */
-  --bg-app: #F8F9FB;
-  --bg-content: #FFFFFF;
-  --bg-sidebar: #F3F4F6;
-  --bg-subtle: #F7F8FA;
-  --bg-hover: #F2F5FA;
-  --bg-selected: #E8F0FF;
+  --bg-app: #f8f9fb;
+  --bg-content: #ffffff;
+  --bg-sidebar: #f3f4f6;
+  --bg-subtle: #f7f8fa;
+  --bg-hover: #f2f5fa;
+  --bg-selected: #e8f0ff;
 
   /* Text */
   --text-primary: #121826;
   --text-secondary: #667085;
-  --text-tertiary: #98A2B3;
-  --text-disabled: #B8C0CC;
+  --text-tertiary: #98a2b3;
+  --text-disabled: #b8c0cc;
 
   /* Borders */
-  --border-default: #E3E7ED;
-  --border-subtle: #EDF0F4;
-  --divider: #E8EBF0;
+  --border-default: #e3e7ed;
+  --border-subtle: #edf0f4;
+  --divider: #e8ebf0;
 
   /* Primary */
-  --blue-600: #1769FF;
-  --blue-500: #2F7BFF;
-  --blue-100: #E8F0FF;
-  --blue-050: #F3F7FF;
+  --blue-600: #1769ff;
+  --blue-500: #2f7bff;
+  --blue-100: #e8f0ff;
+  --blue-050: #f3f7ff;
 
   /* Success */
-  --green-600: #169B62;
-  --green-100: #E7F7EF;
+  --green-600: #169b62;
+  --green-100: #e7f7ef;
 
   /* Warning */
-  --orange-600: #E97800;
-  --orange-100: #FFF0DF;
+  --orange-600: #e97800;
+  --orange-100: #fff0df;
 
   /* Error */
-  --red-600: #E5484D;
-  --red-100: #FDEBEC;
+  --red-600: #e5484d;
+  --red-100: #fdebec;
 
   /* Neutral state */
-  --gray-state-bg: #F0F2F5;
+  --gray-state-bg: #f0f2f5;
   --gray-state-fg: #667085;
 
   /* Radius */
@@ -2204,7 +2200,7 @@ Use these as the default starting point.
 Suggested starting values:
 
 ```text
-Sidebar width                  248 px
+Sidebar width                  214 px
 Right inspector                300 px
 Top page padding               26 px
 Main horizontal padding        28 px

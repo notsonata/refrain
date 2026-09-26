@@ -40,13 +40,14 @@ The application includes:
 - scoped `local` / `spotify` sync runs and scope-filtered history queries
 - persistent Spotify collection tracking defaults plus per-track include/exclude overrides used as Spotify Sync desired state
 - Local library rows restricted to present local music and annotated with matched Spotify memberships
-- media-row Local/Spotify browsing UI with unavailable playlists moved into a collapsed secondary section and excluded from the actionable Issues queue
-- compact desktop-density shell and workspaces with a materially narrower primary sidebar and reduced typography/control spacing
+- light, neutral cross-platform desktop shell derived from the approved UI reference set, with persistent Local/Spotify navigation, nested Spotify sections, Issues, and Settings
+- dense Local/Spotify track tables with artwork, restrained semantic status color, compact controls, sortable headers, and persisted user-controlled column order/widths
 - artwork-first Saved Albums and Playlists grids that open into collection detail views, while Liked Songs remains track-oriented
-- persistent collection tracking controls that can be changed directly from the collection grid without forcing navigation into the collection
-- default Local/Spotify filters for common metadata/state fields plus technical filters grouped under Advanced
+- persistent collection and per-track tracking controls in Spotify collection and track views
+- search and basic state filtering kept visible while remaining state/technical filters are grouped behind the collapsible Filters control; sortable metadata columns replace redundant metadata filter controls
 - Local rows with directly visible file paths and embedded artwork when present
 - embedded local artwork extraction with content-hash deduplication into the application-data artwork cache, referenced from `local_files` rather than stored as SQLite blobs
+- master-detail Issues workspace and native-style Settings surface using the same shared spacing, control, typography, and semantic-color system
 
 Milestones 7 through 9 remain non-destructive with respect to user audio. Milestone 10 may move confidently resolved preferred files into the canonical library structure, but it preserves each file's ownership classification and does not automatically delete external files.
 
@@ -96,13 +97,35 @@ The approved v1 desktop-density and library-browsing refinement is implemented l
 - extended filesystem normalization to organize unmatched and local-only preferred files using scanned local metadata when no accessible Spotify link exists
 - split synchronization into Local Sync and Spotify Sync, with Local Sync remaining local-first and Spotify Sync materializing only persisted tracked selections
 - added durable source-tracking rules, per-track overrides, scoped sync metadata, and acquisition filtering so stale untracked queued jobs cannot run
-- replaced the old Library/Liked Songs/Saved Albums/Playlists primary navigation with Local and Spotify workspaces and removed the spreadsheet-style track tables from those flows
+- replaced the old Library/Liked Songs/Saved Albums/Playlists primary navigation with Local and Spotify workspaces
 - approved the follow-up desktop-density/library-browser design: compact shell and rows, collection grids for albums/playlists, expanded filters with an Advanced technical group, visible local paths, and embedded local artwork when available
-- implemented the desktop-density/library-browser pass across the shell, Local, Spotify, Issues, and Settings views, including a narrower primary sidebar and denser controls
+- applied the approved `docs/reference/ui-redesign/` visual system across the shell, Local, Spotify, Issues, and Settings views: light neutral surfaces, persistent sidebar navigation, blue primary actions/selection, compact desktop controls, dense data rows, and restrained semantic status color
+- completed a UI consistency pass that reuses the Local page's compact at-a-glance metric strip across Spotify and Issues, reduces oversized collection-detail/Settings surfaces, and standardizes shared line icons
+- added reusable sortable table headers with drag-to-reorder, drag-to-resize, and per-table local persistence for Local and Spotify column layouts
+- fixed horizontally overflowed Local/Spotify tables so row/header styling spans the full computed table width and Spotify headers scroll horizontally with their rows
+- persisted Spotify saved-album metadata including album artists, release date, release type, copyrights, Spotify URL, and label when Spotify still supplies it; album details fall back to the copyright rights holder because Spotify removed `label` from Album responses in February 2026
+- refined the saved-album detail composition so the left pane keeps only the album title, actions, and compact inline operational status; album metadata and fixed-size artwork live in a fixed-width, non-scrolling inspector anchored to the right edge, Spotify/cover actions live in the overflow menu, and the redundant single Tracks tab was removed
+- applied the same compact detail composition to Spotify playlists, persisted Spotify playlist artwork/external URLs at the collection level, and reused the fixed 244px inspector cover with the same overflow actions as albums
+- refreshed playlist artwork through Spotify's dedicated playlist-cover endpoint, with playlist-list artwork retained as a fallback, so user-assigned playlist covers are persisted on refresh
+- replaced the hand-authored UI SVG icon set with on-demand Lucide and Simple Icons components through `unplugin-icons`, keeping one shared `Icon.svelte` interface across the application
+- aligned Spotify track metadata with the Local table so Year and Format can be sorted directly, and removed redundant metadata filters from the Local/Spotify advanced filter panels
 - replaced Saved Albums and Playlists master-detail browsing with artwork-first collection grids and explicit grid-to-detail/back navigation
-- added default metadata/state filters and Advanced technical filters to dense Local and Spotify track views
+- kept search visible while moving state and secondary metadata/technical filters behind a single compact Filters control across Local, Liked Songs, Saved Albums, and Playlists; expanded filter panels now use evenly sized labeled fields, dropdown-based state filters, and a small active-filter count on the trigger
+- fixed the primary left sidebar at the current 214 px desktop width at every window size and added narrow-window reflow for headers, metrics, toolbars, filters, collection grids, album/playlist detail controls, and Issues master-detail content; the default window remains 1100×720 with a 973×697 minimum window size
+- aligned the Local Library summary and list spacing with Spotify library screens, including the same toolbar/count rhythm and clearer summary labels: `Total Tracks`, `Indexed Files`, `On Spotify`, and `Local Only`
+- restored direct per-song Spotify tracking controls and row multi-selection; collection-level overflow menus beside the tracking toggle now expose select-all/clear plus bulk `Track`, `Exclude`, and `Use Default` actions, while album/playlist detail actions live in the Details inspector; selection changes repaint immediately and bulk tracking persists selected source-track overrides in one transactional backend command before refreshing the collection once
+- aligned Liked Songs, Saved Albums, and Playlists around the same compact local-state rhythm: full collection summaries expose local-copy coverage and the tracked subset without a local copy; `Spotify Only` filters Spotify material absent from disk, while `Needs Local Copy` isolates tracked Spotify material that still lacks a present local file; collection tracking uses compact toggles, while Spotify sync/refresh controls, refresh progress/cancel, and compact last-sync and last-refresh timestamps live in the sidebar footer above Settings
+- simplified synchronization terminology in the desktop UI: the sidebar now exposes `Sync Library` for the full local-then-Spotify workflow and `Refresh Spotify` for source-only refreshes, while the Local workspace and Settings use `Scan Files` for lightweight local indexing; internal local/Spotify sync scopes remain intact for execution and history
+- made overflow menus functional across Local and Spotify track rows and Spotify collection details: Local tracks can reveal/copy their preferred file path, Spotify tracks can open/copy their Spotify link and manage tracking, and album/playlist overflow menus expose Spotify and cover actions
+- corrected the user-facing Issues model around the two library/source discrepancies: present local tracks absent from accessible Spotify source state are `Local Only`, while tracked Spotify selections without a confirmed present local file are `Needs Local Copy`; untracked Spotify material no longer inflates issue state, and ambiguous match review is limited to tracked source tracks
+- repaired Liked Songs collection tracking after the redesign by binding its toggle and summary metrics to the live loaded collection state; album and playlist tracking labels now use `Untracked` for zero tracked entries and `N/N Tracked` otherwise, detail breadcrumbs include the active collection name, and macOS uses an overlay title bar with the native title hidden
+- kept album/playlist detail inspectors flush to the window edge while restoring the normal right content gutter for the detail breadcrumb/account toolbar so the account block no longer clips into the rounded window edge
+- persisted the authenticated Spotify profile image URL from `/me` and exposed it through the source overview so Spotify account avatars use the real profile image with the display-name initial as fallback
+- restored macOS window dragging after removing the visible title bar by granting the Tauri window-drag capability and wiring the top drag strip to the native `startDragging()` API
+- added a macOS-only draggable top inset for the overlay-title-bar window so the app can still be moved from the blank top area while preserving normal content interaction on Windows and Linux
 - added visible Local file paths plus embedded-cover extraction, hashed application-data artwork caching, and scoped Tauri asset serving
 - added migration `0008_local_artwork.sql` for cached artwork references and MIME metadata on `local_files`
+- added migration `0011_source_account_profile_image.sql` for persisted source-account profile artwork
 
 ## Known Issues
 

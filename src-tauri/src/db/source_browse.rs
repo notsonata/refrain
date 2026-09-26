@@ -1,8 +1,9 @@
 use rusqlite::{OptionalExtension, params};
 
 use crate::domain::{
-    SourceAccountOverview, SourceCollectionEntryView, SourceCollectionListPage,
-    SourceCollectionPage, SourceCollectionSummary, SourceTrackView, SpotifySourceOverview,
+    SourceAccountOverview, SourceAlbumMetadata, SourceCollectionEntryView,
+    SourceCollectionListPage, SourceCollectionPage, SourceCollectionSummary, SourceTrackView,
+    SpotifySourceOverview,
 };
 
 use super::{Database, DatabaseError};
@@ -14,7 +15,7 @@ impl Database {
         self.with_connection(|connection| {
             let account = connection
                 .query_row(
-                    "SELECT id, display_name, last_source_sync_at
+                    "SELECT id, display_name, image_url, last_source_sync_at
                      FROM source_accounts
                      WHERE provider = 'spotify'
                      ORDER BY updated_at DESC
@@ -25,7 +26,8 @@ impl Database {
                             row.get::<_, i64>(0)?,
                             SourceAccountOverview {
                                 display_name: row.get(1)?,
-                                last_source_sync_at: row.get(2)?,
+                                image_url: row.get(2)?,
+                                last_source_sync_at: row.get(3)?,
                             },
                         ))
                     },
@@ -96,14 +98,49 @@ impl Database {
                         WHEN entries.source_track_id IS NOT NULL
                          AND COALESCE(override.included, rule.default_included, 0) = 1
                         THEN 1 ELSE 0 END),
-                    (SELECT track.image_url
-                     FROM collection_entries AS artwork_entry
-                     INNER JOIN source_tracks AS track
-                       ON track.id = artwork_entry.source_track_id
-                     WHERE artwork_entry.collection_id = collection.id
-                       AND track.image_url IS NOT NULL
-                     ORDER BY artwork_entry.position
-                     LIMIT 1)
+                    SUM(CASE
+                        WHEN entries.source_track_id IS NOT NULL
+                         AND EXISTS (
+                            SELECT 1
+                            FROM track_links AS source_link
+                            INNER JOIN local_files AS local_file
+                              ON local_file.library_track_id = source_link.library_track_id
+                            WHERE source_link.source_track_id = entries.source_track_id
+                              AND local_file.state = 'present'
+                         )
+                        THEN 1 ELSE 0 END),
+                    SUM(CASE
+                        WHEN COALESCE(override.included, rule.default_included, 0) = 1
+                         AND (
+                            entries.source_track_id IS NULL
+                            OR NOT EXISTS (
+                                SELECT 1
+                                FROM track_links AS source_link
+                                INNER JOIN local_files AS local_file
+                                  ON local_file.library_track_id = source_link.library_track_id
+                                WHERE source_link.source_track_id = entries.source_track_id
+                                  AND local_file.state = 'present'
+                            )
+                         )
+                        THEN 1 ELSE 0 END),
+                    COALESCE(
+                        collection.image_url,
+                        (SELECT track.image_url
+                         FROM collection_entries AS artwork_entry
+                         INNER JOIN source_tracks AS track
+                           ON track.id = artwork_entry.source_track_id
+                         WHERE artwork_entry.collection_id = collection.id
+                           AND track.image_url IS NOT NULL
+                         ORDER BY artwork_entry.position
+                         LIMIT 1)
+                    ),
+                    COALESCE(collection.external_url, collection.album_external_url),
+                    collection.album_artists_json,
+                    collection.album_release_date,
+                    collection.album_type,
+                    collection.album_label,
+                    collection.album_copyrights_json,
+                    collection.album_external_url
                  FROM source_collections AS collection
                  LEFT JOIN collection_entries AS entries
                    ON entries.collection_id = collection.id
@@ -156,14 +193,49 @@ impl Database {
                             WHEN entries.source_track_id IS NOT NULL
                              AND COALESCE(override.included, rule.default_included, 0) = 1
                             THEN 1 ELSE 0 END),
-                        (SELECT track.image_url
-                         FROM collection_entries AS artwork_entry
-                         INNER JOIN source_tracks AS track
-                           ON track.id = artwork_entry.source_track_id
-                         WHERE artwork_entry.collection_id = collection.id
-                           AND track.image_url IS NOT NULL
-                         ORDER BY artwork_entry.position
-                         LIMIT 1)
+                        SUM(CASE
+                            WHEN entries.source_track_id IS NOT NULL
+                             AND EXISTS (
+                                SELECT 1
+                                FROM track_links AS source_link
+                                INNER JOIN local_files AS local_file
+                                  ON local_file.library_track_id = source_link.library_track_id
+                                WHERE source_link.source_track_id = entries.source_track_id
+                                  AND local_file.state = 'present'
+                             )
+                            THEN 1 ELSE 0 END),
+                        SUM(CASE
+                            WHEN COALESCE(override.included, rule.default_included, 0) = 1
+                             AND (
+                                entries.source_track_id IS NULL
+                                OR NOT EXISTS (
+                                    SELECT 1
+                                    FROM track_links AS source_link
+                                    INNER JOIN local_files AS local_file
+                                      ON local_file.library_track_id = source_link.library_track_id
+                                    WHERE source_link.source_track_id = entries.source_track_id
+                                      AND local_file.state = 'present'
+                                )
+                             )
+                            THEN 1 ELSE 0 END),
+                        COALESCE(
+                            collection.image_url,
+                            (SELECT track.image_url
+                             FROM collection_entries AS artwork_entry
+                             INNER JOIN source_tracks AS track
+                               ON track.id = artwork_entry.source_track_id
+                             WHERE artwork_entry.collection_id = collection.id
+                               AND track.image_url IS NOT NULL
+                             ORDER BY artwork_entry.position
+                             LIMIT 1)
+                        ),
+                        COALESCE(collection.external_url, collection.album_external_url),
+                        collection.album_artists_json,
+                        collection.album_release_date,
+                        collection.album_type,
+                        collection.album_label,
+                        collection.album_copyrights_json,
+                        collection.album_external_url
                      FROM source_collections AS collection
                      JOIN source_accounts AS account
                        ON account.id = collection.source_account_id
@@ -338,14 +410,49 @@ fn collection_summary_by_kind(
                     WHEN entries.source_track_id IS NOT NULL
                      AND COALESCE(override.included, rule.default_included, 0) = 1
                     THEN 1 ELSE 0 END),
-                (SELECT track.image_url
-                 FROM collection_entries AS artwork_entry
-                 INNER JOIN source_tracks AS track
-                   ON track.id = artwork_entry.source_track_id
-                 WHERE artwork_entry.collection_id = collection.id
-                   AND track.image_url IS NOT NULL
-                 ORDER BY artwork_entry.position
-                 LIMIT 1)
+                SUM(CASE
+                    WHEN entries.source_track_id IS NOT NULL
+                     AND EXISTS (
+                        SELECT 1
+                        FROM track_links AS source_link
+                        INNER JOIN local_files AS local_file
+                          ON local_file.library_track_id = source_link.library_track_id
+                        WHERE source_link.source_track_id = entries.source_track_id
+                          AND local_file.state = 'present'
+                     )
+                    THEN 1 ELSE 0 END),
+                SUM(CASE
+                    WHEN COALESCE(override.included, rule.default_included, 0) = 1
+                     AND (
+                        entries.source_track_id IS NULL
+                        OR NOT EXISTS (
+                            SELECT 1
+                            FROM track_links AS source_link
+                            INNER JOIN local_files AS local_file
+                              ON local_file.library_track_id = source_link.library_track_id
+                            WHERE source_link.source_track_id = entries.source_track_id
+                              AND local_file.state = 'present'
+                        )
+                     )
+                    THEN 1 ELSE 0 END),
+                COALESCE(
+                    collection.image_url,
+                    (SELECT track.image_url
+                     FROM collection_entries AS artwork_entry
+                     INNER JOIN source_tracks AS track
+                       ON track.id = artwork_entry.source_track_id
+                     WHERE artwork_entry.collection_id = collection.id
+                       AND track.image_url IS NOT NULL
+                     ORDER BY artwork_entry.position
+                     LIMIT 1)
+                ),
+                COALESCE(collection.external_url, collection.album_external_url),
+                collection.album_artists_json,
+                collection.album_release_date,
+                collection.album_type,
+                collection.album_label,
+                collection.album_copyrights_json,
+                collection.album_external_url
              FROM source_collections AS collection
              LEFT JOIN collection_entries AS entries
                ON entries.collection_id = collection.id
@@ -365,9 +472,27 @@ fn collection_summary_by_kind(
         .optional()
 }
 
-fn collection_summary_from_row(
+pub(super) fn collection_summary_from_row(
     row: &rusqlite::Row<'_>,
 ) -> Result<SourceCollectionSummary, rusqlite::Error> {
+    let external_url = row.get(12)?;
+    let album_artists_json = row.get::<_, Option<String>>(13)?;
+    let album_release_date = row.get(14)?;
+    let album_type = row.get(15)?;
+    let album_label = row.get(16)?;
+    let album_copyrights_json = row.get::<_, Option<String>>(17)?;
+    let album_external_url = row.get(18)?;
+    let album_metadata = album_artists_json.map(|artists_json| SourceAlbumMetadata {
+        artists: serde_json::from_str(&artists_json).unwrap_or_default(),
+        release_date: album_release_date,
+        album_type,
+        label: album_label,
+        copyrights: album_copyrights_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default(),
+        external_url: album_external_url,
+    });
     Ok(SourceCollectionSummary {
         id: row.get(0)?,
         provider_collection_id: row.get(1)?,
@@ -378,7 +503,11 @@ fn collection_summary_from_row(
         entry_count: row.get(6)?,
         tracked_by_default: row.get::<_, i64>(7)? != 0,
         tracked_entry_count: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-        image_url: row.get(9)?,
+        local_entry_count: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+        attention_entry_count: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+        image_url: row.get(11)?,
+        external_url,
+        album_metadata,
     })
 }
 
@@ -456,6 +585,7 @@ mod tests {
                 provider: "spotify".into(),
                 provider_account_id: "listener".into(),
                 display_name: Some("Listener".into()),
+                image_url: None,
                 client_id: "client".into(),
             })
             .expect("account should save");
@@ -479,6 +609,9 @@ mod tests {
                     owner_provider_id: Some("listener".into()),
                     is_accessible: true,
                     access_issue: None,
+                    image_url: None,
+                    external_url: None,
+                    album_metadata: None,
                 },
                 &[SourceCollectionItem {
                     position: 0,
@@ -504,6 +637,9 @@ mod tests {
                         owner_provider_id: Some("listener".into()),
                         is_accessible: accessible,
                         access_issue: (!accessible).then(|| "Spotify denied access".into()),
+                        image_url: None,
+                        external_url: None,
+                        album_metadata: None,
                     },
                     &[],
                 )
@@ -543,6 +679,9 @@ mod tests {
                     owner_provider_id: Some("listener".into()),
                     is_accessible: true,
                     access_issue: None,
+                    image_url: Some("https://i.scdn.co/image/playlist".into()),
+                    external_url: Some("https://open.spotify.com/playlist/playlist".into()),
+                    album_metadata: None,
                 },
                 &[
                     SourceCollectionItem {

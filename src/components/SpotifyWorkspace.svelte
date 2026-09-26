@@ -1,13 +1,23 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
+  import { save } from '@tauri-apps/plugin-dialog';
+  import Icon from './Icon.svelte';
+  import OverflowMenu from './OverflowMenu.svelte';
   import TrackList from './TrackList.svelte';
-  import type { SyncRun } from '../lib/sync';
+  import type { OverflowMenuItem } from '../lib/menu';
   import type {
+    SourceAlbumMetadata,
     SourceCollectionEntryView,
     SourceCollectionSummary,
     SpotifySourceOverview,
   } from '../lib/source';
 
   type SpotifySection = 'liked' | 'albums' | 'playlists';
+  type TrackListSelectionController = {
+    toggleSelectAllShown: () => void;
+    clearSelection: () => void;
+    applySelectedTracking: (included: boolean | null) => Promise<void>;
+  };
 
   export let section: SpotifySection = 'liked';
   export let overview: SpotifySourceOverview | null = null;
@@ -23,14 +33,13 @@
   export let collectionError: string | null = null;
   export let savedAlbumsLoadingMore = false;
   export let playlistsLoadingMore = false;
-  export let sourceBusy = false;
-  export let syncBusy = false;
-  export let syncRun: SyncRun | null = null;
   export let trackingBusyId: number | null = null;
+  export let trackingBulkBusy = false;
 
-  export let onSectionChange: ((section: SpotifySection) => void) | undefined = undefined;
-  export let onSelectSavedAlbum: ((album: SourceCollectionSummary) => void) | undefined = undefined;
-  export let onSelectPlaylist: ((playlist: SourceCollectionSummary) => void) | undefined = undefined;
+  export let onSelectSavedAlbum:
+    ((album: SourceCollectionSummary) => void) | undefined = undefined;
+  export let onSelectPlaylist:
+    ((playlist: SourceCollectionSummary) => void) | undefined = undefined;
   export let onBackToCollections: (() => void) | undefined = undefined;
   export let onLoadMoreSavedAlbums: (() => void) | undefined = undefined;
   export let onLoadMorePlaylists: (() => void) | undefined = undefined;
@@ -39,288 +48,899 @@
     | ((collection: SourceCollectionSummary, included: boolean) => void)
     | undefined = undefined;
   export let onSetTrackTracking:
-    | ((entry: SourceCollectionEntryView, included: boolean | null) => void)
+    | ((
+        entry: SourceCollectionEntryView,
+        included: boolean | null,
+      ) => void | Promise<void>)
     | undefined = undefined;
-  export let onSynchronize: (() => void) | undefined = undefined;
-  export let onRefresh: (() => void) | undefined = undefined;
+  export let onSetTracksTracking:
+    | ((
+        entries: SourceCollectionEntryView[],
+        included: boolean | null,
+      ) => void | Promise<void>)
+    | undefined = undefined;
 
   let collectionSearch = '';
-  let collectionTracking = 'all';
+  let collectionState = 'all';
+  let collectionFiltersOpen = false;
+  let collectionLoadAllRequested = false;
+  let lastCollectionAutoLoadCount = -1;
+  let lastCollectionAutoLoadSection: SpotifySection | null = null;
+  let collectionActionError: string | null = null;
+  let coverDownloading = false;
+  let trackListController: TrackListSelectionController | undefined;
+  let selectedTrackCount = 0;
+  let selectableTrackCount = 0;
+  let allShownSelected = false;
 
-  $: accessiblePlaylists = playlists.filter((playlist) => playlist.isAccessible);
-  $: unavailablePlaylists = playlists.filter((playlist) => !playlist.isAccessible);
+  $: accessiblePlaylists = playlists.filter(
+    (playlist) => playlist.isAccessible,
+  );
+  $: unavailablePlaylists = playlists.filter(
+    (playlist) => !playlist.isAccessible,
+  );
   $: collectionList = section === 'albums' ? savedAlbums : accessiblePlaylists;
   $: filteredCollections = collectionList.filter((collection) => {
     const query = collectionSearch.trim().toLocaleLowerCase();
-    if (query && !collection.name.toLocaleLowerCase().includes(query)) return false;
-    if (collectionTracking === 'tracked' && collection.trackedEntryCount <= 0) return false;
-    if (collectionTracking === 'partial' && !(collection.trackedEntryCount > 0 && collection.trackedEntryCount < collection.entryCount)) return false;
-    if (collectionTracking === 'untracked' && collection.trackedEntryCount > 0) return false;
+    if (
+      query &&
+      ![collection.name, ...(collection.albumMetadata?.artists ?? [])].some(
+        (value) => value.toLocaleLowerCase().includes(query),
+      )
+    )
+      return false;
+    if (
+      collectionState === 'missing' &&
+      collection.localEntryCount >= collection.entryCount
+    )
+      return false;
+    if (
+      collectionState === 'attention' &&
+      collection.attentionEntryCount <= 0 &&
+      collection.isAccessible
+    )
+      return false;
     return true;
   });
+  $: filteredUnavailablePlaylists =
+    section === 'playlists' &&
+    (collectionState === 'all' || collectionState === 'attention')
+      ? unavailablePlaylists.filter((playlist) => {
+          const query = collectionSearch.trim().toLocaleLowerCase();
+          return !query || playlist.name.toLocaleLowerCase().includes(query);
+        })
+      : [];
+  $: filteredCollectionCount =
+    filteredCollections.length + filteredUnavailablePlaylists.length;
   $: displayedCollection =
     section === 'liked'
       ? currentCollection?.id === overview?.likedSongs?.id
         ? currentCollection
-        : overview?.likedSongs ?? null
+        : (overview?.likedSongs ?? null)
       : currentCollection;
+  $: localCollections = collectionList.filter(
+    (collection) =>
+      collection.entryCount > 0 &&
+      collection.localEntryCount >= collection.entryCount,
+  ).length;
+  $: notLocalCollections = collectionList.filter(
+    (collection) => collection.localEntryCount < collection.entryCount,
+  ).length;
+  $: attentionCollections =
+    collectionList.filter((collection) => collection.attentionEntryCount > 0)
+      .length + (section === 'playlists' ? unavailablePlaylists.length : 0);
+  $: collectionLoadedCount =
+    section === 'albums'
+      ? savedAlbums.length
+      : section === 'playlists'
+        ? playlists.length
+        : 0;
+  $: collectionListTotal =
+    section === 'albums'
+      ? savedAlbumTotal
+      : section === 'playlists'
+        ? playlistTotal
+        : 0;
+  $: collectionHasMore = collectionLoadedCount < collectionListTotal;
+  $: collectionFilterActive =
+    collectionSearch.trim() !== '' || collectionState !== 'all';
+  $: collectionListLoadingMore =
+    section === 'albums'
+      ? savedAlbumsLoadingMore
+      : section === 'playlists'
+        ? playlistsLoadingMore
+        : false;
+  $: if (
+    section !== 'liked' &&
+    (collectionLoadAllRequested || collectionFilterActive) &&
+    collectionHasMore &&
+    !collectionListLoadingMore &&
+    (section !== lastCollectionAutoLoadSection ||
+      collectionLoadedCount !== lastCollectionAutoLoadCount)
+  ) {
+    lastCollectionAutoLoadSection = section;
+    lastCollectionAutoLoadCount = collectionLoadedCount;
+    if (section === 'albums') onLoadMoreSavedAlbums?.();
+    if (section === 'playlists') onLoadMorePlaylists?.();
+  }
+  $: if (
+    !(collectionLoadAllRequested || collectionFilterActive) ||
+    !collectionHasMore
+  ) {
+    lastCollectionAutoLoadCount = -1;
+    lastCollectionAutoLoadSection = null;
+  }
+  $: if (!collectionHasMore) collectionLoadAllRequested = false;
+  $: albumOrganization = albumOrganizationInfo(
+    displayedCollection?.albumMetadata,
+  );
+  $: albumDurationMs = entries.reduce(
+    (total, entry) => total + (entry.track?.durationMs ?? 0),
+    0,
+  );
+  $: albumDuration = formatAlbumDuration(albumDurationMs);
 
   function collectionStatus(collection: SourceCollectionSummary): string {
-    if (collection.trackedEntryCount <= 0) return 'Not tracked';
-    if (collection.trackedEntryCount >= collection.entryCount) return 'Tracked';
-    return `${collection.trackedEntryCount}/${collection.entryCount} tracked`;
+    if (collection.trackedEntryCount <= 0) return 'Untracked';
+    return `${formatNumber(collection.trackedEntryCount)}/${formatNumber(collection.entryCount)} Tracked`;
   }
 
-  function statusClass(collection: SourceCollectionSummary): string {
-    if (collection.trackedEntryCount <= 0) return 'border-slate-800 text-slate-600';
-    if (collection.trackedEntryCount >= collection.entryCount) {
-      return 'border-emerald-900/70 bg-emerald-950/35 text-emerald-300';
+  function setCollectionState(value: 'all' | 'missing' | 'attention') {
+    lastCollectionAutoLoadCount = -1;
+    lastCollectionAutoLoadSection = null;
+    collectionState = value;
+    collectionLoadAllRequested = true;
+  }
+
+  function clearCollectionFilters() {
+    setCollectionState('all');
+  }
+
+  function formatNumber(value: number): string {
+    return new Intl.NumberFormat().format(value);
+  }
+
+  function formatAlbumType(value: string | null | undefined): string {
+    if (!value) return '—';
+    return value.charAt(0).toUpperCase() + value.slice(1).replaceAll('_', ' ');
+  }
+
+  function formatReleaseDate(value: string | null | undefined): string {
+    if (!value) return '—';
+    const parts = value.split('-').map(Number);
+    if (parts.length === 1 || !parts[0]) return value;
+    const date = new Date(
+      Date.UTC(parts[0], (parts[1] ?? 1) - 1, parts[2] ?? 1),
+    );
+    if (Number.isNaN(date.getTime())) return value;
+    if (parts.length === 2) {
+      return new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC',
+      }).format(date);
     }
-    return 'border-sky-900/70 bg-sky-950/30 text-sky-300';
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(date);
+  }
+
+  function formatAlbumDuration(value: number): string {
+    if (value <= 0) return '—';
+    const totalMinutes = Math.round(value / 60_000);
+    if (totalMinutes < 60) return `${totalMinutes} min`;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes === 0 ? `${hours} hr` : `${hours} hr ${minutes} min`;
+  }
+
+  function albumOrganizationInfo(
+    metadata: SourceAlbumMetadata | null | undefined,
+  ): { value: string; label: string } {
+    const label = metadata?.label?.trim();
+    if (label) return { value: label, label: 'label' };
+
+    const copyright =
+      metadata?.copyrights.find((value) => value.trim().startsWith('℗')) ??
+      metadata?.copyrights[0];
+    const rightsHolder = copyright
+      ?.trim()
+      .replace(/^(?:©|℗|\(c\)|\(p\))\s*/i, '')
+      .replace(/^\d{4}\s+/, '')
+      .trim();
+
+    return rightsHolder
+      ? { value: rightsHolder, label: 'rights holder' }
+      : { value: '—', label: 'rights holder' };
+  }
+
+  function safeCollectionFilename(value: string): string {
+    const safe = value
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+      .replace(/\s+/g, ' ');
+    return safe || 'collection-cover';
+  }
+
+  async function openCollectionInSpotify() {
+    const url =
+      displayedCollection?.externalUrl ??
+      displayedCollection?.albumMetadata?.externalUrl;
+    if (!url) return;
+    collectionActionError = null;
+    try {
+      await invoke('open_external_url', { url });
+    } catch (error) {
+      collectionActionError = String(error);
+    }
+  }
+
+  async function downloadCollectionCover() {
+    const url = displayedCollection?.imageUrl;
+    if (!url || coverDownloading) return;
+
+    collectionActionError = null;
+    try {
+      const destination = await save({
+        title: 'Save cover artwork',
+        defaultPath: `${safeCollectionFilename(displayedCollection.name)}.jpg`,
+        filters: [{ name: 'JPEG image', extensions: ['jpg', 'jpeg'] }],
+      });
+      if (!destination) return;
+
+      coverDownloading = true;
+      await invoke('download_remote_file', { url, destination });
+    } catch (error) {
+      collectionActionError = String(error);
+    } finally {
+      coverDownloading = false;
+    }
+  }
+
+  async function copyText(value: string) {
+    await navigator.clipboard.writeText(value);
+  }
+
+  function collectionMenuItems(): OverflowMenuItem[] {
+    if (!displayedCollection) return [];
+    const items: OverflowMenuItem[] = [];
+    const externalUrl =
+      displayedCollection.externalUrl ??
+      displayedCollection.albumMetadata?.externalUrl;
+
+    if (externalUrl) {
+      items.push(
+        {
+          label: 'Open in Spotify',
+          icon: 'link',
+          action: openCollectionInSpotify,
+        },
+        {
+          label: 'Copy Spotify Link',
+          icon: 'copy',
+          action: () => copyText(externalUrl),
+        },
+      );
+    }
+    if (displayedCollection.imageUrl) {
+      items.push({
+        label: 'Download Cover',
+        icon: 'download',
+        action: downloadCollectionCover,
+        disabled: coverDownloading,
+      });
+    }
+
+    return items;
+  }
+
+  function updateTrackSelectionState(state: {
+    selectedCount: number;
+    selectableFilteredCount: number;
+    allFilteredSelected: boolean;
+  }) {
+    selectedTrackCount = state.selectedCount;
+    selectableTrackCount = state.selectableFilteredCount;
+    allShownSelected = state.allFilteredSelected;
+  }
+
+  function trackSelectionMenuItems(): OverflowMenuItem[] {
+    return [
+      {
+        label: allShownSelected ? 'Clear All Shown' : 'Select All Shown',
+        icon: allShownSelected ? 'close' : 'check',
+        action: () => trackListController?.toggleSelectAllShown(),
+        disabled: trackingBulkBusy || selectableTrackCount === 0,
+      },
+      {
+        label: 'Track Selected',
+        icon: 'check',
+        action: () => trackListController?.applySelectedTracking(true),
+        disabled: trackingBulkBusy || selectedTrackCount === 0,
+      },
+      {
+        label: 'Exclude Selected',
+        icon: 'close',
+        action: () => trackListController?.applySelectedTracking(false),
+        disabled: trackingBulkBusy || selectedTrackCount === 0,
+      },
+      {
+        label: 'Use Default for Selected',
+        icon: 'refresh',
+        action: () => trackListController?.applySelectedTracking(null),
+        disabled: trackingBulkBusy || selectedTrackCount === 0,
+      },
+      {
+        label: 'Clear Selection',
+        icon: 'close',
+        action: () => trackListController?.clearSelection(),
+        disabled: trackingBulkBusy || selectedTrackCount === 0,
+      },
+    ];
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col">
-  <div class="mb-3 flex shrink-0 items-start justify-between gap-4">
-    <div class="min-w-0">
-      <p class="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">Spotify</p>
-      <h2 class="mt-0.5 text-lg font-semibold tracking-tight">Choose what Refrain follows</h2>
-      <p class="mt-0.5 max-w-2xl text-xs text-slate-500">
-        Tracking persists across refreshes. Spotify Sync only reconciles what you include.
-      </p>
-    </div>
-    <div class="flex shrink-0 items-center gap-1.5">
-      <button
-        type="button"
-        onclick={() => onRefresh?.()}
-        disabled={sourceBusy || syncBusy}
-        class="rounded-md border border-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-slate-400 hover:bg-slate-900 hover:text-slate-200 disabled:opacity-50"
-      >
-        {sourceBusy ? 'Refreshing…' : 'Refresh'}
-      </button>
-      <button
-        type="button"
-        onclick={() => onSynchronize?.()}
-        disabled={syncBusy || sourceBusy}
-        class="rounded-md bg-emerald-400 px-3 py-1.5 text-xs font-semibold text-emerald-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {syncBusy ? 'Syncing…' : 'Sync tracked'}
-      </button>
-    </div>
-  </div>
-
-  <div class="mb-2.5 flex shrink-0 items-center justify-between gap-3 border-b border-slate-900 pb-2.5">
-    <div class="inline-flex rounded-md border border-slate-800 bg-slate-950 p-0.5">
-      {#each [['liked', 'Liked Songs'], ['albums', 'Albums'], ['playlists', 'Playlists']] as option (option[0])}
+<div
+  class="screen"
+  class:album-detail-screen={section !== 'liked' && !!displayedCollection}
+>
+  {#if section !== 'liked' && displayedCollection}
+    <div
+      class="toolbar detail-toolbar"
+      style="padding-top:2px; padding-bottom:12px; border-bottom:1px solid var(--divider);"
+    >
+      <div class="detail-breadcrumb">
         <button
           type="button"
-          onclick={() => {
-            collectionSearch = '';
-            collectionTracking = 'all';
-            onSectionChange?.(option[0] as SpotifySection);
-          }}
-          class={`rounded px-2.5 py-1 text-[11px] font-medium transition ${section === option[0] ? 'bg-slate-800 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`}
+          class="icon-button"
+          aria-label="Back to collections"
+          onclick={() => onBackToCollections?.()}
         >
-          {option[1]}
+          <Icon name="back" size={17} />
         </button>
-      {/each}
-    </div>
-    <div class="text-right text-[10px] text-slate-600">
-      {#if syncRun}
-        Last sync: <span class="text-slate-400">{syncRun.status}</span>
-        <span class="text-slate-800"> · </span>{syncRun.matched} matched
-        <span class="text-slate-800"> · </span>{syncRun.missing} missing
-      {:else}
-        No Spotify sync yet
-      {/if}
-    </div>
-  </div>
-
-  {#if section === 'liked'}
-    <div class="flex min-h-0 flex-1 flex-col">
-      {#if !overview?.likedSongs}
-        <div class="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-slate-800 px-5 text-center text-xs text-slate-500">
-          Refresh Spotify to load Liked Songs.
-        </div>
-      {:else}
-        <div class="mb-2.5 flex shrink-0 items-center justify-between rounded-lg border border-slate-800/80 bg-slate-900/25 px-3 py-2">
-          <div class="min-w-0">
-            <div class="flex items-center gap-1.5">
-              <h3 class="text-xs font-medium text-slate-200">Liked Songs</h3>
-              <span class={`rounded-full border px-1.5 py-0.5 text-[8px] font-medium ${statusClass(displayedCollection ?? overview.likedSongs)}`}>
-                {collectionStatus(displayedCollection ?? overview.likedSongs)}
-              </span>
-            </div>
-            <p class="mt-0.5 text-[10px] text-slate-600">
-              {overview.likedSongs.entryCount} songs · individual overrides persist
-            </p>
-          </div>
-          <button
-            type="button"
-            onclick={() => onSetCollectionTracking?.(
-              displayedCollection ?? overview!.likedSongs!,
-              !(displayedCollection ?? overview!.likedSongs!).trackedByDefault,
-            )}
-            disabled={trackingBusyId === -overview.likedSongs.id}
-            class={`rounded-md border px-2.5 py-1.5 text-[10px] font-semibold transition disabled:opacity-40 ${(displayedCollection ?? overview.likedSongs).trackedByDefault ? 'border-emerald-900/70 bg-emerald-950/30 text-emerald-300' : 'border-slate-700 text-slate-300 hover:bg-slate-900'}`}
-          >
-            {(displayedCollection ?? overview.likedSongs).trackedByDefault ? 'Tracking by default' : 'Track all by default'}
-          </button>
-        </div>
-        {#if collectionError}
-          <div class="mb-2 rounded-md border border-amber-900 bg-amber-950/25 px-3 py-2 text-xs text-amber-200">{collectionError}</div>
-        {/if}
-        <TrackList
-          {entries}
-          total={collectionTotal}
-          loading={collectionLoading}
-          loadingMore={collectionLoadingMore}
-          trackingControls={true}
-          {trackingBusyId}
-          emptyMessage="No Liked Songs are currently imported."
-          onLoadMore={onLoadMoreCollection}
-          onSetTracking={onSetTrackTracking}
-        />
-      {/if}
-    </div>
-  {:else if displayedCollection}
-    <div class="flex min-h-0 flex-1 flex-col">
-      <div class="mb-2.5 flex shrink-0 items-start justify-between gap-3">
-        <div class="flex min-w-0 items-center gap-2.5">
-          <button
-            type="button"
-            onclick={() => onBackToCollections?.()}
-            class="shrink-0 rounded-md border border-slate-800 px-2 py-1 text-[10px] font-medium text-slate-500 hover:bg-slate-900 hover:text-slate-200"
-          >
-            ← {section === 'albums' ? 'Albums' : 'Playlists'}
-          </button>
-          {#if displayedCollection.imageUrl}
-            <img src={displayedCollection.imageUrl} alt="" loading="lazy" class="h-10 w-10 shrink-0 rounded-md bg-slate-900 object-cover" />
-          {/if}
-          <div class="min-w-0">
-            <div class="flex min-w-0 items-center gap-1.5">
-              <h3 class="truncate text-base font-semibold text-slate-200">{displayedCollection.name}</h3>
-              <span class={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-medium ${statusClass(displayedCollection)}`}>
-                {collectionStatus(displayedCollection)}
-              </span>
-            </div>
-            <p class="mt-0.5 text-[10px] text-slate-600">{displayedCollection.entryCount} tracks · overrides persist across refreshes</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onclick={() => onSetCollectionTracking?.(displayedCollection!, !displayedCollection!.trackedByDefault)}
-          disabled={trackingBusyId === -displayedCollection.id}
-          class={`shrink-0 rounded-md border px-2.5 py-1.5 text-[10px] font-semibold transition disabled:opacity-40 ${displayedCollection.trackedByDefault ? 'border-emerald-900/70 bg-emerald-950/30 text-emerald-300' : 'border-slate-700 text-slate-300 hover:bg-slate-900'}`}
+        <strong>Spotify</strong>
+        <Icon name="chevron-right" size={13} />
+        <span>{section === 'albums' ? 'Albums' : 'Playlists'}</span>
+        <Icon name="chevron-right" size={13} />
+        <span class="detail-breadcrumb-current" title={displayedCollection.name}
+          >{displayedCollection.name}</span
         >
-          {displayedCollection.trackedByDefault ? 'Tracking by default' : 'Track all by default'}
-        </button>
       </div>
-      {#if collectionError}
-        <div class="mb-2 rounded-md border border-amber-900 bg-amber-950/25 px-3 py-2 text-xs text-amber-200">{collectionError}</div>
-      {/if}
-      <TrackList
-        {entries}
-        total={collectionTotal}
-        loading={collectionLoading}
-        loadingMore={collectionLoadingMore}
-        trackingControls={true}
-        {trackingBusyId}
-        emptyMessage="This collection has no imported tracks."
-        onLoadMore={onLoadMoreCollection}
-        onSetTracking={onSetTrackTracking}
-      />
+      <div style="flex:1"></div>
+      <div class="account-block">
+        <div class="account-avatar">
+          {(overview?.account?.displayName ?? 'S').slice(0, 1).toUpperCase()}
+          {#if overview?.account?.imageUrl}
+            <img src={overview.account.imageUrl} alt="" />
+          {/if}
+        </div>
+        <div>
+          <p class="account-name">
+            {overview?.account?.displayName ?? 'Spotify'}
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="collection-detail-shell album-detail-shell"
+      style="padding-top:14px;"
+    >
+      <div class="collection-detail-main">
+        <div class="album-detail-header">
+          <div class="album-detail-title-row">
+            <h1 class="album-detail-title">{displayedCollection.name}</h1>
+          </div>
+
+          <div class="album-detail-meta-row">
+            <div
+              class="album-status-strip"
+              aria-label={section === 'albums'
+                ? 'Album status'
+                : 'Playlist status'}
+            >
+              <div
+                class="album-status-item"
+                class:success={displayedCollection.trackedEntryCount > 0}
+              >
+                {#if displayedCollection.trackedEntryCount > 0}
+                  <Icon name="check" size={14} />
+                {/if}
+                <strong>{collectionStatus(displayedCollection)}</strong>
+              </div>
+              <div class="album-status-item">
+                <Icon name="cloud" size={14} />
+                <strong
+                  >{formatNumber(
+                    Math.max(
+                      0,
+                      displayedCollection.entryCount -
+                        displayedCollection.localEntryCount,
+                    ),
+                  )}</strong
+                >
+                <span>Spotify Only</span>
+              </div>
+              <div
+                class="album-status-item"
+                class:attention={displayedCollection.attentionEntryCount > 0}
+              >
+                <Icon name="warning" size={14} />
+                <strong
+                  >{formatNumber(
+                    displayedCollection.attentionEntryCount,
+                  )}</strong
+                >
+                <span>Needs Local Copy</span>
+              </div>
+            </div>
+
+            <div class="album-detail-actions">
+              <div class="collection-tracking-control">
+                <span class="liked-tracking-label">
+                  {section === 'albums' ? 'Track Album' : 'Track Playlist'}
+                </span>
+                <button
+                  type="button"
+                  class="tracking-switch"
+                  class:active={displayedCollection.trackedByDefault}
+                  aria-label={section === 'albums'
+                    ? 'Track Album'
+                    : 'Track Playlist'}
+                  aria-pressed={displayedCollection.trackedByDefault}
+                  disabled={trackingBusyId === -displayedCollection.id}
+                  onclick={() =>
+                    onSetCollectionTracking?.(
+                      displayedCollection!,
+                      !displayedCollection!.trackedByDefault,
+                    )}
+                >
+                  <span class="tracking-switch-thumb"></span>
+                </button>
+              </div>
+              <OverflowMenu
+                items={trackSelectionMenuItems()}
+                ariaLabel={`${displayedCollection.name} selection actions`}
+              />
+            </div>
+          </div>
+        </div>
+
+        {#if collectionError}<div
+            class="error-state"
+            style="margin-bottom:8px;"
+          >
+            {collectionError}
+          </div>{/if}
+        {#key displayedCollection.id}
+          <TrackList
+            bind:this={trackListController}
+            onSelectionChange={updateTrackSelectionState}
+            {entries}
+            total={collectionTotal}
+            loading={collectionLoading}
+            loadingMore={collectionLoadingMore}
+            trackingControls={true}
+            {trackingBusyId}
+            {trackingBulkBusy}
+            emptyMessage="This collection has no imported tracks."
+            onLoadMore={onLoadMoreCollection}
+            onSetTracking={onSetTrackTracking}
+            onSetTrackingMany={onSetTracksTracking}
+          />
+        {/key}
+      </div>
+
+      <aside class="album-detail-inspector">
+        <section class="album-inspector-section">
+          <div class="album-inspector-heading">
+            <h2 class="album-inspector-title">Details</h2>
+            <OverflowMenu
+              items={collectionMenuItems()}
+              ariaLabel={`${displayedCollection.name} details actions`}
+            />
+          </div>
+          <div class="album-info-list">
+            {#if section === 'albums'}
+              <div class="album-info-row">
+                <span>Artist</span>
+                <strong>
+                  {displayedCollection.albumMetadata?.artists.length
+                    ? displayedCollection.albumMetadata.artists.join(', ')
+                    : '—'}
+                </strong>
+              </div>
+              <div class="album-info-row">
+                <span>Released</span>
+                <strong
+                  >{formatReleaseDate(
+                    displayedCollection.albumMetadata?.releaseDate,
+                  )}</strong
+                >
+              </div>
+              <div class="album-info-row">
+                <span>Type</span>
+                <strong
+                  >{formatAlbumType(
+                    displayedCollection.albumMetadata?.albumType,
+                  )}</strong
+                >
+              </div>
+              <div class="album-info-row">
+                <span
+                  >{albumOrganization.label === 'label'
+                    ? 'Label'
+                    : 'Rights holder'}</span
+                >
+                <strong>{albumOrganization.value}</strong>
+              </div>
+            {/if}
+            <div class="album-info-row compact-pair">
+              <span>Tracks</span>
+              <strong>{formatNumber(displayedCollection.entryCount)}</strong>
+            </div>
+            <div class="album-info-row compact-pair">
+              <span>Duration</span>
+              <strong>{albumDuration}</strong>
+            </div>
+            {#if section === 'playlists'}
+              <div class="album-info-row">
+                <span>Tracking</span>
+                <strong>{collectionStatus(displayedCollection)}</strong>
+              </div>
+              <div class="album-info-row">
+                <span>Default</span>
+                <strong
+                  >{displayedCollection.trackedByDefault
+                    ? 'Tracked'
+                    : 'Untracked'}</strong
+                >
+              </div>
+              <div class="album-info-row">
+                <span>Spotify</span>
+                <strong
+                  >{displayedCollection.isAccessible
+                    ? 'Available'
+                    : 'Unavailable'}</strong
+                >
+              </div>
+            {/if}
+          </div>
+          {#if section === 'albums' && displayedCollection.albumMetadata?.copyrights.length}
+            <p class="album-copyrights">
+              {displayedCollection.albumMetadata.copyrights.join(' · ')}
+            </p>
+          {/if}
+        </section>
+
+        <section class="album-inspector-section album-cover-section">
+          <div class="album-cover-panel">
+            {#if displayedCollection.imageUrl}
+              <img src={displayedCollection.imageUrl} alt="" />
+            {:else}
+              <div class="artwork-fallback album-cover-fallback">
+                {displayedCollection.name.slice(0, 1).toUpperCase()}
+              </div>
+            {/if}
+            {#if collectionActionError}
+              <p class="album-action-error">{collectionActionError}</p>
+            {/if}
+          </div>
+        </section>
+      </aside>
     </div>
   {:else}
-    <div class="flex min-h-0 flex-1 flex-col">
-      <div class="mb-2.5 flex shrink-0 items-center gap-2">
-        <input
-          bind:value={collectionSearch}
-          aria-label={`Search ${section}`}
-          placeholder={`Search ${section === 'albums' ? 'albums' : 'playlists'}…`}
-          class="min-w-0 flex-1 rounded-md border border-slate-800 bg-slate-900/70 px-2.5 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-slate-600"
-        />
-        <select
-          bind:value={collectionTracking}
-          aria-label="Collection tracking filter"
-          class="rounded-md border border-slate-800 bg-slate-900/70 px-2.5 py-1.5 pr-7 text-[11px] text-slate-400 outline-none"
-        >
-          <option value="all">Tracking: all</option>
-          <option value="tracked">Tracked</option>
-          <option value="partial">Partial</option>
-          <option value="untracked">Untracked</option>
-        </select>
-        <span class="shrink-0 text-[10px] text-slate-600">{filteredCollections.length} shown</span>
+    <header class="page-header">
+      <div class="spotify-heading">
+        <div class="spotify-mark">
+          <Icon name="spotify" size={25} strokeWidth={1.6} />
+        </div>
+        <div>
+          <div class="page-heading-line">
+            <h1 class="page-title">Spotify Library</h1>
+          </div>
+          <p class="page-description">
+            {section === 'liked'
+              ? 'Liked Songs'
+              : section === 'albums'
+                ? 'Albums'
+                : 'Playlists'}
+          </p>
+        </div>
+      </div>
+      <div class="page-actions">
+        <div class="account-block">
+          <div class="account-avatar">
+            {(overview?.account?.displayName ?? 'S').slice(0, 1).toUpperCase()}
+            {#if overview?.account?.imageUrl}
+              <img src={overview.account.imageUrl} alt="" />
+            {/if}
+          </div>
+          <div>
+            <p class="account-name">
+              {overview?.account?.displayName ?? 'Spotify account'}
+            </p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    {#if section === 'liked'}
+      {#if !displayedCollection}
+        <div class="empty-state">Refresh Spotify to load Liked Songs.</div>
+      {:else}
+        <div class="metrics-strip spotify-library-metrics">
+          <div class="metric-inline">
+            <div class="metric-value">
+              {formatNumber(displayedCollection.entryCount)}
+            </div>
+            <div class="metric-label">Total Tracks</div>
+          </div>
+          <div class="metric-inline">
+            <div class="metric-value">
+              {formatNumber(displayedCollection.localEntryCount)}
+            </div>
+            <div class="metric-label">Local</div>
+          </div>
+          <div class="metric-inline">
+            <div class="metric-value">
+              {formatNumber(
+                Math.max(
+                  0,
+                  displayedCollection.entryCount -
+                    displayedCollection.localEntryCount,
+                ),
+              )}
+            </div>
+            <div class="metric-label">Spotify Only</div>
+          </div>
+          <div class="metric-inline attention">
+            <div class="metric-value">
+              {formatNumber(displayedCollection.attentionEntryCount)}
+            </div>
+            <div class="metric-label">Needs Local Copy</div>
+          </div>
+          <div class="liked-tracking-row">
+            <span class="liked-tracking-label">Track Liked Songs</span>
+            <button
+              type="button"
+              class="tracking-switch"
+              class:active={displayedCollection.trackedByDefault}
+              aria-label="Track Liked Songs"
+              aria-pressed={displayedCollection.trackedByDefault}
+              disabled={trackingBusyId === -displayedCollection.id}
+              onclick={() =>
+                onSetCollectionTracking?.(
+                  displayedCollection!,
+                  !displayedCollection!.trackedByDefault,
+                )}
+            >
+              <span class="tracking-switch-thumb"></span>
+            </button>
+            <OverflowMenu
+              items={trackSelectionMenuItems()}
+              ariaLabel="Liked Songs selection actions"
+            />
+          </div>
+        </div>
+        {#if collectionError}<div
+            class="error-state"
+            style="margin-bottom:8px;"
+          >
+            {collectionError}
+          </div>{/if}
+        {#key displayedCollection.id}
+          <TrackList
+            bind:this={trackListController}
+            onSelectionChange={updateTrackSelectionState}
+            {entries}
+            total={collectionTotal}
+            loading={collectionLoading}
+            loadingMore={collectionLoadingMore}
+            trackingControls={true}
+            {trackingBusyId}
+            {trackingBulkBusy}
+            emptyMessage="No Liked Songs are currently imported."
+            onLoadMore={onLoadMoreCollection}
+            onSetTracking={onSetTrackTracking}
+            onSetTrackingMany={onSetTracksTracking}
+          />
+        {/key}
+      {/if}
+    {:else}
+      <div class="metrics-strip spotify-library-metrics">
+        <div class="metric-inline">
+          <div class="metric-value">
+            {formatNumber(
+              section === 'albums' ? savedAlbumTotal : playlistTotal,
+            )}
+          </div>
+          <div class="metric-label">total {section}</div>
+        </div>
+        <div class="metric-inline">
+          <div class="metric-value">{formatNumber(localCollections)}</div>
+          <div class="metric-label">Local</div>
+        </div>
+        <div class="metric-inline">
+          <div class="metric-value">{formatNumber(notLocalCollections)}</div>
+          <div class="metric-label">Spotify Only</div>
+        </div>
+        <div class="metric-inline attention">
+          <div class="metric-value">{formatNumber(attentionCollections)}</div>
+          <div class="metric-label">Needs Local Copy</div>
+        </div>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto pr-1">
-        {#if collectionList.length === 0}
-          <div class="flex min-h-[14rem] items-center justify-center rounded-lg border border-dashed border-slate-800 text-xs text-slate-500">
-            No {section === 'albums' ? 'saved albums' : 'playlists'} imported yet.
+      <div class="toolbar spotify-library-toolbar">
+        <label class="search-field">
+          <Icon name="search" size={17} />
+          <input
+            bind:value={collectionSearch}
+            class="search-input"
+            aria-label={`Search ${section}`}
+            placeholder={`Search ${section === 'albums' ? 'albums or artists' : 'playlists or tracks'}…`}
+          />
+        </label>
+        <button
+          type="button"
+          class="btn filter-button"
+          class:filters-active={collectionState !== 'all'}
+          aria-expanded={collectionFiltersOpen}
+          onclick={() => (collectionFiltersOpen = !collectionFiltersOpen)}
+        >
+          <Icon name="filter" size={15} />
+          Filters
+          {#if collectionState !== 'all'}
+            <span class="filter-count">1</span>
+          {/if}
+          <Icon name="chevron-down" size={13} />
+        </button>
+      </div>
+
+      {#if collectionFiltersOpen}
+        <div class="filters-panel collection-filters-panel">
+          <div class="filters-panel-header">
+            <div class="filters-panel-title">Filter results</div>
+            <button
+              type="button"
+              class="link-button"
+              onclick={clearCollectionFilters}>Clear</button
+            >
           </div>
-        {:else if filteredCollections.length === 0}
-          <div class="flex min-h-[14rem] items-center justify-center rounded-lg border border-dashed border-slate-800 text-xs text-slate-500">
-            No collections match the current filters.
-          </div>
-        {:else}
-          <div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
-            {#each filteredCollections as collection (collection.id)}
-              <button
-                type="button"
-                onclick={() => section === 'albums' ? onSelectSavedAlbum?.(collection) : onSelectPlaylist?.(collection)}
-                class="group min-w-0 rounded-lg border border-slate-800/80 bg-slate-950/40 p-2 text-left transition hover:border-slate-700 hover:bg-slate-900/55"
+          <div class="filters-grid">
+            <label class="filter-field">
+              <span class="filter-label">Local Availability</span>
+              <select
+                value={collectionState}
+                aria-label="Local state"
+                class="filter-select"
+                onchange={(event) =>
+                  setCollectionState(
+                    event.currentTarget.value as
+                      'all' | 'missing' | 'attention',
+                  )}
               >
-                <div class="aspect-square overflow-hidden rounded-md bg-slate-900">
-                  {#if collection.imageUrl}
-                    <img src={collection.imageUrl} alt="" loading="lazy" class="h-full w-full object-cover transition group-hover:scale-[1.02]" />
-                  {:else}
-                    <div class="flex h-full w-full items-center justify-center text-lg font-semibold text-slate-700">
-                      {collection.name.slice(0, 1).toUpperCase()}
-                    </div>
-                  {/if}
-                </div>
-                <div class="mt-1.5 min-w-0">
-                  <p class="truncate text-xs font-medium text-slate-300">{collection.name}</p>
-                  <div class="mt-0.5 flex items-center justify-between gap-2 text-[9px] text-slate-600">
-                    <span>{collection.entryCount} tracks</span>
-                    <span class={collection.trackedEntryCount > 0 ? 'text-emerald-500' : ''}>{collectionStatus(collection)}</span>
+                <option value="all">Any availability</option>
+                <option value="missing">Spotify Only</option>
+                <option value="attention">Needs Local Copy</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      {/if}
+
+      <div class="content-label spotify-library-count">
+        {formatNumber(filteredCollectionCount)}
+        {section}
+      </div>
+
+      <div class="collection-layout">
+        <div class="collection-scroll">
+          {#if collectionLoadedCount === 0}
+            <div class="empty-state">
+              No {section === 'albums' ? 'saved albums' : 'playlists'} imported yet.
+            </div>
+          {:else if filteredCollectionCount === 0}
+            <div class="empty-state">
+              No collections match the current filters.
+            </div>
+          {:else if filteredCollections.length > 0}
+            <div class="collection-grid">
+              {#each filteredCollections as collection (collection.id)}
+                <button
+                  type="button"
+                  class="collection-card"
+                  onclick={() =>
+                    section === 'albums'
+                      ? onSelectSavedAlbum?.(collection)
+                      : onSelectPlaylist?.(collection)}
+                >
+                  <div class="collection-artwork">
+                    {#if collection.imageUrl}
+                      <img src={collection.imageUrl} alt="" loading="lazy" />
+                    {:else}
+                      <div
+                        class="artwork-fallback"
+                        style="width:100%; height:100%; font-size:26px;"
+                      >
+                        {collection.name.slice(0, 1).toUpperCase()}
+                      </div>
+                    {/if}
                   </div>
-                </div>
-              </button>
-            {/each}
-          </div>
-        {/if}
-
-        {#if section === 'albums' && savedAlbums.length < savedAlbumTotal}
-          <div class="flex justify-center py-3">
-            <button type="button" onclick={() => onLoadMoreSavedAlbums?.()} disabled={savedAlbumsLoadingMore} class="rounded-md border border-slate-800 px-2.5 py-1 text-[10px] text-slate-500 hover:bg-slate-900 disabled:opacity-50">
-              {savedAlbumsLoadingMore ? 'Loading…' : 'Load more albums'}
-            </button>
-          </div>
-        {:else if section === 'playlists' && playlists.length < playlistTotal}
-          <div class="flex justify-center py-3">
-            <button type="button" onclick={() => onLoadMorePlaylists?.()} disabled={playlistsLoadingMore} class="rounded-md border border-slate-800 px-2.5 py-1 text-[10px] text-slate-500 hover:bg-slate-900 disabled:opacity-50">
-              {playlistsLoadingMore ? 'Loading…' : 'Load more playlists'}
-            </button>
-          </div>
-        {/if}
-
-        {#if section === 'playlists' && unavailablePlaylists.length > 0}
-          <details class="mt-3 border-t border-slate-900 pt-2.5">
-            <summary class="cursor-pointer text-[9px] font-medium uppercase tracking-wider text-slate-700">
-              Unavailable · {unavailablePlaylists.length}
-            </summary>
-            <div class="mt-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-              {#each unavailablePlaylists as playlist (playlist.id)}
-                <div class="rounded-md bg-slate-950 px-2.5 py-2">
-                  <p class="truncate text-[10px] text-slate-600">{playlist.name}</p>
-                  <p class="mt-0.5 line-clamp-2 text-[9px] leading-4 text-slate-800">{playlist.accessIssue ?? 'Spotify does not expose this playlist to Refrain.'}</p>
-                </div>
+                  <p class="collection-name">{collection.name}</p>
+                  <div class="collection-meta">
+                    <span>{formatNumber(collection.entryCount)} tracks</span>
+                    <span
+                      class:success={collection.trackedEntryCount > 0}
+                      class="chip">{collectionStatus(collection)}</span
+                    >
+                  </div>
+                </button>
               {/each}
             </div>
-          </details>
-        {/if}
+          {/if}
+
+          {#if section === 'albums' && savedAlbums.length < savedAlbumTotal}
+            <div
+              style="display:flex; justify-content:center; padding:18px 0 4px;"
+            >
+              <button
+                type="button"
+                class="btn"
+                onclick={() => onLoadMoreSavedAlbums?.()}
+                disabled={savedAlbumsLoadingMore}
+                >{savedAlbumsLoadingMore
+                  ? 'Loading…'
+                  : 'Load More Albums'}</button
+              >
+            </div>
+          {:else if section === 'playlists' && playlists.length < playlistTotal}
+            <div
+              style="display:flex; justify-content:center; padding:18px 0 4px;"
+            >
+              <button
+                type="button"
+                class="btn"
+                onclick={() => onLoadMorePlaylists?.()}
+                disabled={playlistsLoadingMore}
+                >{playlistsLoadingMore
+                  ? 'Loading…'
+                  : 'Load More Playlists'}</button
+              >
+            </div>
+          {/if}
+
+          {#if section === 'playlists' && filteredUnavailablePlaylists.length > 0}
+            <details
+              open={collectionState === 'attention'}
+              style="margin-top:18px; border-top:1px solid var(--divider); padding-top:12px;"
+            >
+              <summary
+                style="cursor:pointer; color:var(--text-secondary); font-size:10px; font-weight:600;"
+                >Unavailable Playlists · {filteredUnavailablePlaylists.length}</summary
+              >
+              <div
+                style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-top:9px;"
+              >
+                {#each filteredUnavailablePlaylists as playlist (playlist.id)}
+                  <div class="inspector-card" style="margin:0; padding:10px;">
+                    <strong style="font-size:10px;">{playlist.name}</strong>
+                    <p
+                      style="margin:3px 0 0; color:var(--text-tertiary); font-size:9px; line-height:1.45;"
+                    >
+                      {playlist.accessIssue ??
+                        'Spotify does not expose this playlist to Refrain.'}
+                    </p>
+                  </div>
+                {/each}
+              </div>
+            </details>
+          {/if}
+        </div>
       </div>
-    </div>
+    {/if}
   {/if}
 </div>

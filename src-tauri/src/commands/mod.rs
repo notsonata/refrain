@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path, process::Command, sync::Arc, time::Duration};
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -41,6 +41,106 @@ pub struct AppInfo {
 #[tauri::command]
 pub fn get_app_info(state: tauri::State<'_, AppState>) -> AppInfo {
     app_info_for(&state.app_data_dir)
+}
+
+fn validated_external_url(value: &str) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(value).map_err(|_| "Invalid external URL.".to_owned())?;
+    if parsed.scheme() != "https" {
+        return Err("Only HTTPS external URLs are allowed.".to_owned());
+    }
+    Ok(parsed)
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = validated_external_url(&url)?;
+    open::that(parsed.as_str()).map_err(|error| format!("Failed to open external link: {error}"))
+}
+
+#[tauri::command]
+pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    let path = Path::new(&path);
+    if !path.is_absolute() {
+        return Err("File path must be absolute.".to_owned());
+    }
+    if !path.exists() {
+        return Err("The selected file no longer exists.".to_owned());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .status()
+            .map_err(|error| format!("Failed to reveal file in Finder: {error}"))?;
+        return status
+            .success()
+            .then_some(())
+            .ok_or_else(|| "Finder could not reveal the selected file.".to_owned());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = Command::new("explorer.exe")
+            .arg("/select,")
+            .arg(path)
+            .status()
+            .map_err(|error| format!("Failed to reveal file in File Explorer: {error}"))?;
+        return status
+            .success()
+            .then_some(())
+            .ok_or_else(|| "File Explorer could not reveal the selected file.".to_owned());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let directory = if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(path)
+        };
+        return open::that(directory)
+            .map_err(|error| format!("Failed to open the containing folder: {error}"));
+    }
+
+    #[allow(unreachable_code)]
+    Err("Reveal in file manager is not supported on this platform.".to_owned())
+}
+
+#[tauri::command]
+pub async fn download_remote_file(url: String, destination: String) -> Result<(), String> {
+    let parsed = validated_external_url(&url)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|error| format!("Failed to initialize download client: {error}"))?;
+        let response = client
+            .get(parsed)
+            .send()
+            .map_err(|error| format!("Failed to download album artwork: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("Album artwork download failed: {error}"))?;
+
+        if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+            let content_type = content_type.to_str().unwrap_or_default();
+            if !content_type.starts_with("image/") {
+                return Err(
+                    "Spotify returned a non-image response for the album artwork.".to_owned(),
+                );
+            }
+        }
+
+        let bytes = response
+            .bytes()
+            .map_err(|error| format!("Failed to read album artwork: {error}"))?;
+        std::fs::write(&destination, &bytes)
+            .map_err(|error| format!("Failed to save album artwork: {error}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Album artwork download worker stopped unexpectedly: {error}"))?
 }
 
 #[tauri::command]
@@ -508,6 +608,19 @@ pub fn set_source_track_tracking(
     state
         .database
         .set_source_track_tracking(collection_id, source_track_id, included)
+        .map_err(|error| command_database_error("update Spotify track tracking", error))
+}
+
+#[tauri::command]
+pub fn set_source_tracks_tracking(
+    collection_id: i64,
+    source_track_ids: Vec<i64>,
+    included: Option<bool>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .set_source_tracks_tracking(collection_id, &source_track_ids, included)
         .map_err(|error| command_database_error("update Spotify track tracking", error))
 }
 

@@ -10,8 +10,8 @@ impl Database {
     pub(crate) fn non_match_issue_rows(&self) -> Result<Vec<IssueRow>, DatabaseError> {
         self.with_connection(|connection| {
             let mut issues = Vec::new();
-            issues.extend(missing_desired_track_issues(connection)?);
-            issues.extend(missing_unlinked_file_issues(connection)?);
+            issues.extend(tracked_missing_local_issues(connection)?);
+            issues.extend(local_only_track_issues(connection)?);
             issues.extend(inaccessible_collection_issues(connection)?);
             issues.extend(invalid_local_file_issues(connection)?);
             issues.extend(acquisition_failure_issues(connection)?);
@@ -20,7 +20,83 @@ impl Database {
     }
 }
 
-fn missing_desired_track_issues(connection: &Connection) -> Result<Vec<IssueRow>, rusqlite::Error> {
+fn tracked_missing_local_issues(connection: &Connection) -> Result<Vec<IssueRow>, rusqlite::Error> {
+    let mut statement = connection.prepare(
+        "SELECT
+            source.id,
+            source.title,
+            source.artists_json,
+            (
+                SELECT link.library_track_id
+                FROM track_links AS link
+                WHERE link.source_track_id = source.id
+                ORDER BY link.library_track_id
+                LIMIT 1
+            ),
+            (
+                SELECT file.path
+                FROM track_links AS link
+                INNER JOIN local_files AS file
+                  ON file.library_track_id = link.library_track_id
+                WHERE link.source_track_id = source.id
+                  AND file.state = 'missing'
+                ORDER BY file.is_preferred DESC, file.id
+                LIMIT 1
+            )
+         FROM source_tracks AS source
+         WHERE source.provider = 'spotify'
+           AND EXISTS (
+             SELECT 1
+             FROM collection_entries AS entry
+             INNER JOIN source_collections AS collection
+               ON collection.id = entry.collection_id
+             LEFT JOIN source_collection_sync_rules AS rule
+               ON rule.collection_id = collection.id
+             LEFT JOIN source_track_sync_overrides AS override
+               ON override.collection_id = collection.id
+              AND override.source_track_id = entry.source_track_id
+             WHERE entry.source_track_id = source.id
+               AND entry.item_type = 'track'
+               AND collection.is_accessible = 1
+               AND COALESCE(override.included, rule.default_included, 0) = 1
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM track_links AS link
+             INNER JOIN local_files AS file
+               ON file.library_track_id = link.library_track_id
+             WHERE link.source_track_id = source.id
+               AND file.state = 'present'
+           )
+         ORDER BY source.normalized_artists, source.normalized_title, source.id",
+    )?;
+    statement
+        .query_map([], |row| {
+            let source_track_id = row.get::<_, i64>(0)?;
+            let artists_json = row.get::<_, String>(2)?;
+            let artists = serde_json::from_str::<Vec<String>>(&artists_json).unwrap_or_default();
+            Ok(IssueRow {
+                id: format!("tracked-missing:{source_track_id}"),
+                kind: IssueKind::MissingLocalFile,
+                title: row.get(1)?,
+                subtitle: artists_subtitle(&artists),
+                detail: Some(
+                    "This Spotify track is selected for tracking but has no present local file."
+                        .into(),
+                ),
+                source_track_id: Some(source_track_id),
+                library_track_id: row.get(3)?,
+                local_file_id: None,
+                collection_id: None,
+                candidate_count: None,
+                confidence: None,
+                path: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn local_only_track_issues(connection: &Connection) -> Result<Vec<IssueRow>, rusqlite::Error> {
     let mut statement = connection.prepare(
         "SELECT
             track.id,
@@ -30,19 +106,35 @@ fn missing_desired_track_issues(connection: &Connection) -> Result<Vec<IssueRow>
                 SELECT file.path
                 FROM local_files AS file
                 WHERE file.library_track_id = track.id
-                  AND file.state = 'missing'
+                  AND file.state = 'present'
                 ORDER BY file.is_preferred DESC, file.id
                 LIMIT 1
             )
          FROM library_tracks AS track
          WHERE EXISTS (
-             SELECT 1 FROM track_links AS link
-             WHERE link.library_track_id = track.id
-         )
-           AND NOT EXISTS (
-             SELECT 1 FROM local_files AS file
+             SELECT 1
+             FROM local_files AS file
              WHERE file.library_track_id = track.id
                AND file.state = 'present'
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM track_links AS link
+             INNER JOIN collection_entries AS entry
+               ON entry.source_track_id = link.source_track_id
+             INNER JOIN source_collections AS collection
+               ON collection.id = entry.collection_id
+             INNER JOIN source_accounts AS account
+               ON account.id = collection.source_account_id
+             WHERE link.library_track_id = track.id
+               AND account.provider = 'spotify'
+               AND collection.is_accessible = 1
+               AND entry.item_type = 'track'
+           )
+           AND EXISTS (
+             SELECT 1
+             FROM source_accounts AS account
+             WHERE account.provider = 'spotify'
            )
          ORDER BY track.normalized_artists, track.normalized_title, track.id",
     )?;
@@ -52,11 +144,14 @@ fn missing_desired_track_issues(connection: &Connection) -> Result<Vec<IssueRow>
             let artists_json = row.get::<_, String>(2)?;
             let artists = serde_json::from_str::<Vec<String>>(&artists_json).unwrap_or_default();
             Ok(IssueRow {
-                id: format!("missing-library:{library_track_id}"),
-                kind: IssueKind::MissingLocalFile,
+                id: format!("local-only:{library_track_id}"),
+                kind: IssueKind::LocalOnlyTrack,
                 title: row.get(1)?,
                 subtitle: artists_subtitle(&artists),
-                detail: Some("No present local file is available for this desired track.".into()),
+                detail: Some(
+                    "This track exists locally but is not present in the imported Spotify source state."
+                        .into(),
+                ),
                 source_track_id: None,
                 library_track_id: Some(library_track_id),
                 local_file_id: None,
@@ -64,44 +159,6 @@ fn missing_desired_track_issues(connection: &Connection) -> Result<Vec<IssueRow>
                 candidate_count: None,
                 confidence: None,
                 path: row.get(3)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()
-}
-
-fn missing_unlinked_file_issues(connection: &Connection) -> Result<Vec<IssueRow>, rusqlite::Error> {
-    let mut statement = connection.prepare(
-        "SELECT file.id, file.library_track_id, file.path, file.scan_error
-         FROM local_files AS file
-         WHERE file.state = 'missing'
-           AND (
-             file.library_track_id IS NULL
-             OR NOT EXISTS (
-                 SELECT 1 FROM track_links AS link
-                 WHERE link.library_track_id = file.library_track_id
-             )
-           )
-         ORDER BY lower(file.path), file.id",
-    )?;
-    statement
-        .query_map([], |row| {
-            let local_file_id = row.get::<_, i64>(0)?;
-            let path = row.get::<_, String>(2)?;
-            Ok(IssueRow {
-                id: format!("missing-file:{local_file_id}"),
-                kind: IssueKind::MissingLocalFile,
-                title: file_name(&path),
-                subtitle: Some("Known local file is missing".into()),
-                detail: row
-                    .get::<_, Option<String>>(3)?
-                    .or_else(|| Some("The indexed path no longer exists.".into())),
-                source_track_id: None,
-                library_track_id: row.get(1)?,
-                local_file_id: Some(local_file_id),
-                collection_id: None,
-                candidate_count: None,
-                confidence: None,
-                path: Some(path),
             })
         })?
         .collect::<Result<Vec<_>, _>>()

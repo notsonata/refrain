@@ -18,10 +18,12 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 
 - `src/main.ts` — frontend entry point
 - `src/App.svelte` — compact desktop shell, Local/Spotify navigation, collection grid/detail state, scoped synchronization orchestration, Spotify connect/refresh flows, Issues, and Settings controls
-- `src/app.css` — application shell and viewport/layout rules
+- `src/app.css` — approved light desktop design system, application shell, shared controls/tables/grids, semantic states, and responsive viewport/layout rules
+- `src/components/Icon.svelte` — shared icon facade backed by on-demand Lucide and Simple Icons components through `unplugin-icons`
+- `src/components/DataTableHeader.svelte` — shared sortable, draggable, resizable table header with persisted per-table column order, widths, and sort state
 - `src/components/SpotifyWorkspace.svelte` — Liked Songs track view plus artwork-first Saved Albums/Playlists grids, collection detail navigation, persistent tracking controls, and collapsed unavailable playlists
-- `src/components/TrackList.svelte` — virtualized dense Spotify track rows, lazy artwork, common/Advanced filters, local-state metadata, and per-track tracking overrides
-- `src/components/LibraryView.svelte` — virtualized present-local-library rows with embedded artwork, visible paths, Spotify membership chips, common/Advanced filters, and Local Sync controls
+- `src/components/TrackList.svelte` — virtualized dense Spotify track rows with persistent sortable/reorderable/resizable columns, lazy artwork, state/technical filters, local-state metadata, direct per-track tracking overrides, row multi-selection, and bulk tracking actions
+- `src/components/LibraryView.svelte` — present-local-library rows with persistent sortable/reorderable/resizable columns, embedded artwork, visible paths, Spotify membership chips, state/technical filters, and Local Sync controls
 - `src/components/IssuesView.svelte` — unresolved issue queue, issue details, candidate review, and manual match-decision controls
 - `src/lib/app-info.ts` — application-info Tauri command wrapper
 - `src/lib/acquisition.ts` — acquisition job/status projection types and Tauri command wrapper
@@ -32,6 +34,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src/lib/issues.ts` — issue projection/count types, match-review data, and issue command wrappers
 - `src/lib/matching.ts` — matching evidence and manual confirm/reject/clear command wrappers
 - `src/lib/sync.ts` — scoped Local/Spotify sync-run types plus start, cancel, get, and filtered-list command wrappers
+- `src/lib/table-columns.ts` — shared frontend table-column metadata used by persistent column layout controls
 - `src/lib/spotify.ts` — Spotify auth/refresh command wrappers and user-facing error formatting
 - `src/lib/source.ts` — persisted source browse command wrappers and types
 - `src/**/*.test.ts` — Vitest coverage for frontend helpers/components
@@ -78,6 +81,8 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/migrations/0006_acquisition.sql` — durable provider-neutral `acquisition_jobs` persistence and indexes
 - `src-tauri/migrations/0007_sync_scopes_and_tracking.sql` — scoped sync-run metadata plus persistent Spotify collection/track tracking rules
 - `src-tauri/migrations/0008_local_artwork.sql` — cached embedded-artwork path and MIME references for local files
+- `src-tauri/migrations/0009_album_metadata.sql` — persisted Spotify saved-album artists, release metadata, label, copyrights, and external URL
+- `src-tauri/migrations/0010_collection_artwork.sql` — collection-level Spotify artwork and external URLs, including playlist covers
 - `src-tauri/migrations/` — SQLite migrations
 
 ## Packaging and configuration
@@ -103,20 +108,20 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 
 ## Common task areas
 
-| Task | Start here |
-| --- | --- |
-| Spotify sign-in / reconnect | `src-tauri/src/spotify.rs`, `src-tauri/src/commands/mod.rs`, `src/lib/spotify.ts` |
-| Spotify source refresh | `src-tauri/src/source_sync.rs`, `src-tauri/src/saved_albums.rs` |
-| Browse persisted collections | `src-tauri/src/db/source_browse.rs`, `src/lib/source.ts`, `src/App.svelte` |
-| Local library scanning/indexing | `src-tauri/src/local_library.rs`, `src-tauri/src/db/local_library.rs`, `src/lib/library.ts`, `src/App.svelte` |
-| Browse logical library | `src-tauri/src/db/issues.rs`, `src/lib/library.ts`, `src/components/LibraryView.svelte`, `src/App.svelte` |
-| Issues and manual resolution | `src-tauri/src/issues.rs`, `src-tauri/src/db/issues.rs`, `src/lib/issues.ts`, `src/components/IssuesView.svelte`, `src/App.svelte` |
-| Acquisition provider boundary/status | `src-tauri/src/acquisition.rs`, `src-tauri/src/db/acquisition.rs`, `src-tauri/src/domain/acquisition.rs`, `src/lib/acquisition.ts` |
-| Sockseek acquisition provider | `src-tauri/src/sockseek.rs`, `src-tauri/src/security.rs`, `src/lib/sockseek.ts`, `scripts/fetch-sockseek-sidecar.mjs` |
-| Matching and manual decisions | `src-tauri/src/matching.rs`, `src-tauri/src/db/matching.rs`, `src/lib/matching.ts` |
-| Local / Spotify scoped sync | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src-tauri/src/db/source_tracking.rs`, `src-tauri/src/normalization.rs`, `src/lib/sync.ts`, `src/App.svelte` |
-| Filesystem normalization / ownership safety | `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src-tauri/src/db/local_library.rs` |
-| Database migrations | `src-tauri/migrations/`, `src-tauri/src/db/mod.rs` |
-| Window/layout behavior | `src/App.svelte`, `src/app.css`, `src-tauri/tauri.conf.json` |
-| CI/build validation | `.github/workflows/ci.yml`, `docs/reference/testing.md` |
-| Packaging/release | `.github/workflows/release.yml`, `src-tauri/tauri.conf.json`, `docs/reference/release.md` |
+| Task                                        | Start here                                                                                                                                                                            |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spotify sign-in / reconnect                 | `src-tauri/src/spotify.rs`, `src-tauri/src/commands/mod.rs`, `src/lib/spotify.ts`                                                                                                     |
+| Spotify source refresh                      | `src-tauri/src/source_sync.rs`, `src-tauri/src/saved_albums.rs`                                                                                                                       |
+| Browse persisted collections                | `src-tauri/src/db/source_browse.rs`, `src/lib/source.ts`, `src/App.svelte`                                                                                                            |
+| Local library scanning/indexing             | `src-tauri/src/local_library.rs`, `src-tauri/src/db/local_library.rs`, `src/lib/library.ts`, `src/App.svelte`                                                                         |
+| Browse logical library                      | `src-tauri/src/db/issues.rs`, `src/lib/library.ts`, `src/components/LibraryView.svelte`, `src/App.svelte`                                                                             |
+| Issues and manual resolution                | `src-tauri/src/issues.rs`, `src-tauri/src/db/issues.rs`, `src/lib/issues.ts`, `src/components/IssuesView.svelte`, `src/App.svelte`                                                    |
+| Acquisition provider boundary/status        | `src-tauri/src/acquisition.rs`, `src-tauri/src/db/acquisition.rs`, `src-tauri/src/domain/acquisition.rs`, `src/lib/acquisition.ts`                                                    |
+| Sockseek acquisition provider               | `src-tauri/src/sockseek.rs`, `src-tauri/src/security.rs`, `src/lib/sockseek.ts`, `scripts/fetch-sockseek-sidecar.mjs`                                                                 |
+| Matching and manual decisions               | `src-tauri/src/matching.rs`, `src-tauri/src/db/matching.rs`, `src/lib/matching.ts`                                                                                                    |
+| Local / Spotify scoped sync                 | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src-tauri/src/db/source_tracking.rs`, `src-tauri/src/normalization.rs`, `src/lib/sync.ts`, `src/App.svelte` |
+| Filesystem normalization / ownership safety | `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src-tauri/src/db/local_library.rs`                                                                            |
+| Database migrations                         | `src-tauri/migrations/`, `src-tauri/src/db/mod.rs`                                                                                                                                    |
+| Window/layout behavior                      | `src/App.svelte`, `src/app.css`, `src-tauri/tauri.conf.json`                                                                                                                          |
+| CI/build validation                         | `.github/workflows/ci.yml`, `docs/reference/testing.md`                                                                                                                               |
+| Packaging/release                           | `.github/workflows/release.yml`, `src-tauri/tauri.conf.json`, `docs/reference/release.md`                                                                                             |

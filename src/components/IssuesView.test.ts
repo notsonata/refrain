@@ -33,6 +33,20 @@ const issues: IssueRow[] = [
     path: null,
   },
   {
+    id: 'local-only:12',
+    kind: 'localOnlyTrack',
+    title: 'Local Song',
+    subtitle: 'Artist',
+    detail: 'Present locally but absent from Spotify source state.',
+    sourceTrackId: null,
+    libraryTrackId: 12,
+    localFileId: null,
+    collectionId: null,
+    candidateCount: null,
+    confidence: null,
+    path: '/music/Local Song.flac',
+  },
+  {
     id: 'invalid-file:9',
     kind: 'invalidLocalFile',
     title: 'Broken.flac',
@@ -126,6 +140,7 @@ describe('IssuesView', () => {
         counts: {
           matchReview: 1,
           missingLocalFile: 1,
+          localOnlyTrack: 1,
           invalidLocalFile: 1,
           inaccessibleCollection: 1,
           acquisitionFailed: 0,
@@ -133,10 +148,8 @@ describe('IssuesView', () => {
       },
     });
 
-    expect(body).toContain('Needs review');
-    expect(body).toContain('Missing');
-    expect(body).toContain('Invalid file');
-    expect(body).toContain('Inaccessible');
+    expect(body).toContain('Needs Local Copy');
+    expect(body).toContain('Local Only');
   });
 
   it('renders candidate evidence and clearable rejection decisions', () => {
@@ -147,6 +160,7 @@ describe('IssuesView', () => {
         counts: {
           matchReview: 1,
           missingLocalFile: 0,
+          localOnlyTrack: 0,
           invalidLocalFile: 0,
           inaccessibleCollection: 0,
           acquisitionFailed: 0,
@@ -159,7 +173,7 @@ describe('IssuesView', () => {
     expect(body).toContain('Spotify source');
     expect(body).toContain('Candidate Song');
     expect(body).toContain('runner-up is close');
-    expect(body).toContain('Clear rejection');
-    expect(body).not.toContain('Confirm match');
+    expect(body).toContain('Clear Rejection');
+    expect(body).not.toContain('Confirm Match');
   });
 });

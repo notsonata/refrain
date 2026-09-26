@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import type {
     IssueCounts,
     IssueKind,
@@ -13,6 +14,7 @@
   export let counts: IssueCounts = {
     matchReview: 0,
     missingLocalFile: 0,
+    localOnlyTrack: 0,
     inaccessibleCollection: 0,
     invalidLocalFile: 0,
     acquisitionFailed: 0,
@@ -36,39 +38,61 @@
     ((sourceTrackId: number, libraryTrackId: number) => void) | undefined =
     undefined;
 
+  let search = '';
+  let kindFilter: 'all' | 'localOnly' | 'trackedMissing' = 'all';
+
+  $: filteredIssues = issues.filter((issue) => {
+    const query = search.trim().toLocaleLowerCase();
+    if (
+      query &&
+      ![
+        issue.title,
+        issue.subtitle ?? '',
+        issue.detail ?? '',
+        issue.path ?? '',
+      ].some((value) => value.toLocaleLowerCase().includes(query))
+    )
+      return false;
+    if (kindFilter === 'localOnly') return issue.kind === 'localOnlyTrack';
+    if (kindFilter === 'trackedMissing') {
+      return issue.kind === 'missingLocalFile' || issue.kind === 'matchReview';
+    }
+    return true;
+  });
   $: selectedIssue =
-    issues.find((issue) => issue.id === selectedIssueId) ?? issues[0] ?? null;
+    filteredIssues.find((issue) => issue.id === selectedIssueId) ?? null;
 
   function issueLabel(kind: IssueKind): string {
     switch (kind) {
       case 'matchReview':
-        return 'Needs review';
+        return 'Needs Local Copy';
       case 'missingLocalFile':
-        return 'Missing';
+        return 'Needs Local Copy';
+      case 'localOnlyTrack':
+        return 'Local Only';
       case 'inaccessibleCollection':
         return 'Inaccessible';
       case 'invalidLocalFile':
-        return 'Invalid file';
+        return 'Invalid';
       case 'acquisitionFailed':
-        return 'Acquisition failed';
+        return 'Failed';
     }
   }
 
-  function issueBadgeClass(kind: IssueKind): string {
-    switch (kind) {
-      case 'matchReview':
-        return 'bg-violet-950 text-violet-300';
-      case 'missingLocalFile':
-      case 'inaccessibleCollection':
-        return 'bg-amber-950 text-amber-300';
-      case 'invalidLocalFile':
-      case 'acquisitionFailed':
-        return 'bg-rose-950 text-rose-300';
-    }
+  function issueChipClass(kind: IssueKind): string {
+    if (
+      kind === 'matchReview' ||
+      kind === 'localOnlyTrack' ||
+      kind === 'inaccessibleCollection'
+    )
+      return 'chip warning';
+    if (kind === 'invalidLocalFile' || kind === 'acquisitionFailed')
+      return 'chip error';
+    return 'chip primary';
   }
 
-  function score(candidate: MatchReviewCandidate): string {
-    return `${Math.round(candidate.evidence.score.total / 100)}%`;
+  function score(candidate: MatchReviewCandidate): number {
+    return Math.round(candidate.evidence.score.total / 100);
   }
 
   function isRejected(candidate: MatchReviewCandidate): boolean {
@@ -76,266 +100,339 @@
       review?.rejectedLibraryTrackIds.includes(candidate.track.id) ?? false
     );
   }
+
+  function formatNumber(value: number): string {
+    return new Intl.NumberFormat().format(value);
+  }
+
+  function evidenceLabels(candidate: MatchReviewCandidate): string[] {
+    const labels: string[] = [];
+    if (candidate.evidence.exactIsrc) labels.push('Exact ISRC');
+    if (candidate.evidence.relationship === 'same')
+      labels.push('Same recording');
+    if (candidate.evidence.durationDifferenceMs !== null) {
+      const seconds = Math.round(
+        candidate.evidence.durationDifferenceMs / 1000,
+      );
+      labels.push(`Duration ${seconds >= 0 ? '+' : ''}${seconds}s`);
+    }
+    return labels;
+  }
 </script>
 
-<div class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-  <div class="mb-3 flex flex-wrap items-end justify-between gap-3">
+<div class="screen">
+  <header class="page-header" style="padding-bottom:14px;">
     <div>
-      <p class="text-xs uppercase tracking-wider text-slate-600">
-        Resolution queue
-      </p>
-      <h2 class="mt-0.5 text-lg font-semibold">Issues</h2>
-      <p class="mt-0.5 text-xs text-slate-500">
-        {total} unresolved {total === 1 ? 'condition' : 'conditions'}
+      <h1 class="page-title">Issues</h1>
+      <p class="page-description">
+        Resolve differences between your local library and tracked Spotify
+        source state.
       </p>
     </div>
-    <div class="flex flex-wrap gap-2 text-[11px] text-slate-500">
-      <span class="rounded bg-slate-900 px-2 py-1"
-        >{counts.matchReview} review</span
-      >
-      <span class="rounded bg-slate-900 px-2 py-1"
-        >{counts.missingLocalFile} missing</span
-      >
-      <span class="rounded bg-slate-900 px-2 py-1"
-        >{counts.invalidLocalFile} invalid</span
-      >
-      <span class="rounded bg-slate-900 px-2 py-1"
-        >{counts.acquisitionFailed} acquisition</span
-      >
+  </header>
+
+  <div class="metrics-strip issues-summary">
+    <div class="metric-inline attention">
+      <div class="metric-value">{formatNumber(counts.localOnlyTrack)}</div>
+      <div class="metric-label">local only</div>
+    </div>
+    <div class="metric-inline">
+      <div class="metric-value">
+        {formatNumber(counts.missingLocalFile + counts.matchReview)}
+      </div>
+      <div class="metric-label">Needs Local Copy</div>
     </div>
   </div>
 
-  {#if error}
-    <div
-      class="mb-3 rounded-lg border border-amber-900 bg-amber-950/30 p-3 text-xs text-amber-200"
-    >
+  {#if error}<div class="error-state" style="margin-bottom:10px;">
       {error}
-    </div>
-  {/if}
+    </div>{/if}
 
   {#if loading && issues.length === 0}
-    <div class="grid gap-2" aria-label="Loading issues">
-      {#each Array.from({ length: 6 }, (_, index) => index) as index (index)}
-        <div class="h-16 animate-pulse rounded-lg bg-slate-900"></div>
+    <div class="data-table" aria-label="Loading issues">
+      {#each Array.from({ length: 8 }, (_, index) => index) as index (index)}
+        <div class="skeleton" style="height:58px; margin-bottom:2px;"></div>
       {/each}
     </div>
   {:else if issues.length === 0}
-    <div
-      class="rounded-lg border border-dashed border-emerald-900/60 px-5 py-10 text-center"
-    >
-      <p class="text-sm font-medium text-emerald-300">No unresolved issues.</p>
-      <p class="mt-2 text-sm text-slate-500">
-        Refrain will repopulate this view when durable source or library state
-        needs attention.
-      </p>
+    <div class="empty-state">
+      <div>
+        <strong>No unresolved issues</strong>
+        <p>
+          Refrain will show library or matching problems here when they need a
+          decision.
+        </p>
+      </div>
     </div>
   {:else}
-    <div
-      class="grid min-h-0 min-w-0 flex-1 grid-cols-[12rem_minmax(0,1fr)] gap-3 overflow-hidden"
-    >
-      <aside
-        class="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40"
-      >
-        <div class="min-h-0 flex-1 overflow-y-auto p-2">
-          {#each issues as issue (issue.id)}
+    <div class="issues-layout">
+      <aside class="issue-queue">
+        <div class="issue-queue-toolbar">
+          <label class="search-field">
+            <Icon name="search" size={16} />
+            <input
+              bind:value={search}
+              class="search-input"
+              aria-label="Search issues"
+              placeholder="Search issues by title, artist, or album"
+            />
+          </label>
+          <div class="issue-filter-row">
+            <select
+              bind:value={kindFilter}
+              class="filter-select"
+              aria-label="Issue type"
+            >
+              <option value="all">All Issues</option>
+              <option value="localOnly">Local Only</option>
+              <option value="trackedMissing">Needs Local Copy</option>
+            </select>
+            <div
+              class="filter-select"
+              style="display:flex; align-items:center; color:var(--text-secondary);"
+            >
+              {filteredIssues.length} issues
+            </div>
+          </div>
+        </div>
+
+        <div class="issue-list">
+          {#each filteredIssues as issue (issue.id)}
             <button
               type="button"
+              class:active={selectedIssue?.id === issue.id}
+              class="issue-row"
               onclick={() => onSelect?.(issue)}
-              class={`mb-1 w-full rounded-md px-2.5 py-2 text-left transition ${selectedIssue?.id === issue.id ? 'bg-slate-900' : 'hover:bg-slate-900/60'}`}
             >
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <p class="truncate text-xs font-medium text-slate-200">
-                    {issue.title}
-                  </p>
-                  <p class="mt-0.5 truncate text-xs text-slate-600">
-                    {issue.subtitle ?? issue.detail ?? 'Needs attention'}
-                  </p>
-                </div>
-                <span
-                  class={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide ${issueBadgeClass(issue.kind)}`}
-                >
-                  {issueLabel(issue.kind)}
-                </span>
+              <div class="artwork-small artwork-fallback">
+                {issue.title.slice(0, 1).toUpperCase()}
               </div>
+              <div class="issue-row-copy">
+                <p class="track-title">{issue.title}</p>
+                <p class="track-secondary">
+                  {issue.subtitle ?? issue.detail ?? 'Needs attention'}
+                </p>
+              </div>
+              <span class={issueChipClass(issue.kind)}
+                >{issueLabel(issue.kind)}</span
+              >
+              <Icon name="chevron-right" size={14} />
             </button>
           {/each}
         </div>
         {#if issues.length < total}
-          <div class="border-t border-slate-800 p-2">
+          <div style="padding:10px 0 0;">
             <button
               type="button"
+              class="btn"
+              style="width:100%;"
               onclick={() => onLoadMore?.()}
               disabled={loadingMore}
-              class="w-full rounded-lg border border-slate-800 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-900 disabled:opacity-50"
             >
               {loadingMore
                 ? 'Loading…'
-                : `Load more (${issues.length} of ${total})`}
+                : `Load More (${issues.length} of ${total})`}
             </button>
           </div>
         {/if}
       </aside>
 
-      <section
-        class="min-h-0 min-w-0 overflow-y-auto rounded-lg border border-slate-800 p-4"
-      >
+      <section class="issue-detail">
         {#if selectedIssue}
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0">
-              <span
-                class={`rounded px-2 py-1 text-[10px] font-medium uppercase tracking-wide ${issueBadgeClass(selectedIssue.kind)}`}
-              >
+          <div class="issue-detail-header">
+            <div>
+              <p style="margin:0; color:var(--text-secondary); font-size:10px;">
                 {issueLabel(selectedIssue.kind)}
-              </span>
-              <h3 class="mt-2 truncate text-base font-semibold">
-                {selectedIssue.title}
-              </h3>
-              {#if selectedIssue.subtitle}
-                <p class="mt-1 text-xs text-slate-500">
-                  {selectedIssue.subtitle}
-                </p>
-              {/if}
+              </p>
+              <h2
+                style="margin:3px 0 0; font-size:20px; letter-spacing:-0.025em;"
+              >
+                {selectedIssue.kind === 'matchReview'
+                  ? 'Ambiguous Match Review'
+                  : selectedIssue.title}
+              </h2>
+              <p
+                style="margin:3px 0 0; color:var(--text-secondary); font-size:10px;"
+              >
+                {selectedIssue.kind === 'matchReview'
+                  ? 'Choose the best matching local track for this Spotify source item.'
+                  : (selectedIssue.subtitle ??
+                    'Review the current condition and resolve the underlying library state.')}
+              </p>
             </div>
+            <span class={issueChipClass(selectedIssue.kind)}
+              >{issueLabel(selectedIssue.kind)}</span
+            >
           </div>
 
           {#if selectedIssue.kind === 'matchReview'}
             {#if reviewLoading}
               <div
-                class="mt-6 h-48 animate-pulse rounded-lg bg-slate-900"
+                class="skeleton"
+                style="height:180px; margin-top:14px;"
               ></div>
             {:else if review}
-              <div
-                class="mt-4 rounded-lg border border-slate-800 bg-slate-900/40 p-3"
+              <section
+                style="display:flex; align-items:center; gap:12px; padding:14px 2px 12px; border-bottom:1px solid var(--divider);"
               >
-                <p
-                  class="text-xs font-medium uppercase tracking-wider text-slate-600"
+                <div
+                  class="artwork-small artwork-fallback"
+                  style="width:64px; height:64px; flex-basis:64px; font-size:18px;"
                 >
-                  Spotify source
-                </p>
-                <p class="mt-2 font-medium text-slate-200">
-                  {review.source.title}
-                </p>
-                <p class="mt-1 text-xs text-slate-500">
-                  {review.source.artists.join(', ') || 'Unknown artist'} ·
-                  {review.source.album ?? 'Unknown album'} ·
-                  {formatTrackDuration(review.source.durationMs)}
-                </p>
-                {#if review.source.versionKind || review.source.versionDetail}
-                  <p class="mt-2 text-xs text-amber-300/80">
-                    {[review.source.versionKind, review.source.versionDetail]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
-                {/if}
-              </div>
-
-              <div class="mt-4 grid gap-2">
-                {#each review.candidates as candidate (candidate.track.id)}
-                  <article
-                    class={`rounded-lg border p-3 ${isRejected(candidate) ? 'border-slate-800 bg-slate-950/60 opacity-70' : 'border-slate-800 bg-slate-900/25'}`}
+                  {review.source.title.slice(0, 1).toUpperCase()}
+                </div>
+                <div style="min-width:0; flex:1;">
+                  <h3 style="margin:0; font-size:14px;">
+                    {review.source.title}
+                  </h3>
+                  <p
+                    style="margin:3px 0 0; color:var(--text-secondary); font-size:10px;"
                   >
-                    <div
-                      class="flex flex-wrap items-start justify-between gap-3"
-                    >
-                      <div class="min-w-0">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <h4 class="font-medium text-slate-200">
+                    {review.source.artists.join(', ') || 'Unknown artist'}
+                  </p>
+                  <p
+                    style="margin:3px 0 0; color:var(--text-tertiary); font-size:9px;"
+                  >
+                    {review.source.album ?? 'Unknown album'} · {formatTrackDuration(
+                      review.source.durationMs,
+                    )}{review.source.versionKind
+                      ? ` · ${review.source.versionKind}`
+                      : ''}
+                  </p>
+                </div>
+              </section>
+
+              <h3 style="margin:12px 0 0; font-size:12px;">
+                Candidate Local Matches
+              </h3>
+              <div class="candidate-list">
+                {#each review.candidates as candidate, index (candidate.track.id)}
+                  <article
+                    class:best={index === 0 && !isRejected(candidate)}
+                    class:rejected={isRejected(candidate)}
+                    class="candidate-card"
+                  >
+                    <div class="candidate-top">
+                      <div style="display:flex; min-width:0; flex:1; gap:10px;">
+                        <div
+                          class="artwork-small artwork-fallback"
+                          style="width:52px; height:52px; flex-basis:52px;"
+                        >
+                          {candidate.track.title.slice(0, 1).toUpperCase()}
+                        </div>
+                        <div style="min-width:0; flex:1;">
+                          <p class="track-title" style="font-size:11px;">
                             {candidate.track.title}
-                          </h4>
-                          <span class="font-mono text-xs text-slate-500"
-                            >{score(candidate)}</span
+                          </p>
+                          <p class="track-secondary">
+                            {candidate.track.artists.join(', ') ||
+                              'Unknown artist'} · {candidate.track.album ??
+                              'Unknown album'}
+                          </p>
+                          <p class="track-secondary">
+                            {formatTrackDuration(
+                              candidate.track.durationMs,
+                            )}{candidate.track.isrc
+                              ? ` · ISRC ${candidate.track.isrc}`
+                              : ''}
+                          </p>
+                          <div
+                            style="display:flex; flex-wrap:wrap; gap:5px; margin-top:7px;"
                           >
-                          {#if candidate.evidence.exactIsrc}
-                            <span
-                              class="rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] text-emerald-300"
-                            >
-                              ISRC
-                            </span>
-                          {/if}
+                            {#each evidenceLabels(candidate) as label (label)}<span
+                                class="chip success">{label}</span
+                              >{/each}
+                            {#each candidate.evidence.warnings as warning (warning)}<span
+                                class="chip warning">{warning}</span
+                              >{/each}
+                            {#each candidate.evidence.incompatibilities as warning (warning)}<span
+                                class="chip error">{warning}</span
+                              >{/each}
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        style="display:flex; align-items:flex-start; gap:14px;"
+                      >
+                        <div class="candidate-score">
+                          {score(candidate)}% <small>match</small>
+                        </div>
+                        <div class="candidate-actions">
                           {#if isRejected(candidate)}
                             <span
-                              class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400"
+                              class="chip error"
+                              style="justify-content:center;">Rejected</span
                             >
-                              rejected
-                            </span>
+                            <button
+                              type="button"
+                              class="btn"
+                              onclick={() =>
+                                onClearRejection?.(
+                                  review!.source.id,
+                                  candidate.track.id,
+                                )}
+                              disabled={decisionBusy}>Clear Rejection</button
+                            >
+                          {:else}
+                            <button
+                              type="button"
+                              class="btn btn-primary"
+                              onclick={() =>
+                                onConfirm?.(
+                                  review!.source.id,
+                                  candidate.track.id,
+                                )}
+                              disabled={decisionBusy}>Confirm Match</button
+                            >
+                            <button
+                              type="button"
+                              class="btn"
+                              onclick={() =>
+                                onReject?.(
+                                  review!.source.id,
+                                  candidate.track.id,
+                                )}
+                              disabled={decisionBusy}>Reject</button
+                            >
                           {/if}
                         </div>
-                        <p class="mt-1 text-xs text-slate-500">
-                          {candidate.track.artists.join(', ') ||
-                            'Unknown artist'} ·
-                          {candidate.track.album ?? 'Unknown album'} ·
-                          {formatTrackDuration(candidate.track.durationMs)}
-                        </p>
-                      </div>
-                      <div class="flex shrink-0 gap-2">
-                        {#if isRejected(candidate)}
-                          <button
-                            type="button"
-                            onclick={() =>
-                              onClearRejection?.(
-                                review.source.id,
-                                candidate.track.id,
-                              )}
-                            disabled={decisionBusy}
-                            class="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-                          >
-                            Clear rejection
-                          </button>
-                        {:else}
-                          <button
-                            type="button"
-                            onclick={() =>
-                              onReject?.(review.source.id, candidate.track.id)}
-                            disabled={decisionBusy}
-                            class="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-                          >
-                            Reject
-                          </button>
-                          <button
-                            type="button"
-                            onclick={() =>
-                              onConfirm?.(review.source.id, candidate.track.id)}
-                            disabled={decisionBusy}
-                            class="rounded-md bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-950 hover:bg-white disabled:opacity-50"
-                          >
-                            Confirm match
-                          </button>
-                        {/if}
                       </div>
                     </div>
 
-                    {#if candidate.evidence.warnings.length > 0 || candidate.evidence.incompatibilities.length > 0}
-                      <p class="mt-3 text-xs leading-5 text-amber-300/70">
-                        {[
-                          ...candidate.evidence.warnings,
-                          ...candidate.evidence.incompatibilities,
-                        ].join(' · ')}
-                      </p>
-                    {/if}
-
-                    <div class="mt-3 grid gap-1.5">
+                    <div class="candidate-files">
+                      <div
+                        style="display:flex; align-items:center; gap:7px; color:var(--text-secondary); font-size:9px; font-weight:600;"
+                      >
+                        <Icon name="folder" size={13} /> Local Files ({candidate
+                          .files.length})
+                      </div>
                       {#if candidate.files.length === 0}
-                        <p class="text-xs text-slate-700">
+                        <p
+                          style="margin:6px 0 0; color:var(--text-tertiary); font-size:9px;"
+                        >
                           No local files linked to this candidate.
                         </p>
                       {:else}
                         {#each candidate.files as file (file.id)}
-                          <div class="flex min-w-0 items-center gap-2 text-xs">
+                          <div
+                            style="display:flex; align-items:center; gap:7px; margin-top:6px; min-width:0; font-size:9px;"
+                          >
                             <span
-                              class={`shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase ${file.state === 'present' ? 'bg-emerald-950 text-emerald-300' : file.state === 'invalid' ? 'bg-rose-950 text-rose-300' : 'bg-amber-950 text-amber-300'}`}
+                              class={file.state === 'present'
+                                ? 'chip success'
+                                : file.state === 'invalid'
+                                  ? 'chip error'
+                                  : 'chip warning'}>{file.state}</span
                             >
-                              {file.state}
-                            </span>
                             <span
-                              class="truncate font-mono text-slate-500"
-                              title={file.path}>{file.path}</span
+                              class="cell-truncate mono-path"
+                              title={file.path}
+                              style="flex:1; color:var(--text-secondary);"
+                              >{file.path}</span
                             >
-                            {#if file.isPreferred}
-                              <span class="shrink-0 text-slate-700"
-                                >preferred</span
-                              >
-                            {/if}
+                            {#if file.isPreferred}<span class="chip"
+                                >Preferred</span
+                              >{/if}
                           </div>
                         {/each}
                       {/if}
@@ -344,38 +441,38 @@
                 {/each}
               </div>
             {:else}
-              <p class="mt-6 text-sm text-slate-500">
+              <div class="empty-state" style="margin-top:14px;">
                 Match details are no longer available. Refresh the issue list.
-              </p>
-            {/if}
-          {:else}
-            {#if selectedIssue.detail}
-              <p class="mt-5 max-w-2xl text-sm leading-6 text-slate-400">
-                {selectedIssue.detail}
-              </p>
-            {/if}
-            {#if selectedIssue.path}
-              <div
-                class="mt-5 rounded-lg border border-slate-800 bg-slate-900/40 p-4"
-              >
-                <p
-                  class="text-xs font-medium uppercase tracking-wider text-slate-600"
-                >
-                  Path
-                </p>
-                <p
-                  class="mt-2 break-all font-mono text-xs leading-5 text-slate-400"
-                >
-                  {selectedIssue.path}
-                </p>
               </div>
             {/if}
-            <p class="mt-5 text-xs leading-5 text-slate-600">
-              This issue is derived from current state and disappears
-              automatically after the underlying condition is resolved and
-              Refrain refreshes that state.
-            </p>
+          {:else}
+            <div style="max-width:720px; padding-top:18px;">
+              {#if selectedIssue.detail}<p
+                  style="color:var(--text-secondary); font-size:11px; line-height:1.6;"
+                >
+                  {selectedIssue.detail}
+                </p>{/if}
+              {#if selectedIssue.path}
+                <section class="inspector-card" style="margin-top:14px;">
+                  <h3 class="inspector-title">File Path</h3>
+                  <p
+                    class="mono-path"
+                    style="margin:0; overflow-wrap:anywhere; color:var(--text-secondary); font-size:10px; line-height:1.5;"
+                  >
+                    {selectedIssue.path}
+                  </p>
+                </section>
+              {/if}
+              <p
+                style="color:var(--text-tertiary); font-size:10px; line-height:1.55;"
+              >
+                This issue disappears automatically after the underlying
+                condition is resolved and Refrain refreshes its state.
+              </p>
+            </div>
           {/if}
+        {:else}
+          <div class="empty-state">No issues match the current filters.</div>
         {/if}
       </section>
     </div>

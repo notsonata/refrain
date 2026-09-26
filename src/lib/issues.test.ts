@@ -15,6 +15,7 @@ const issuePage: IssuePage = {
   counts: {
     matchReview: 0,
     missingLocalFile: 0,
+    localOnlyTrack: 0,
     inaccessibleCollection: 0,
     invalidLocalFile: 0,
     acquisitionFailed: 0,

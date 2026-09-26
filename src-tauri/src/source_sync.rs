@@ -177,6 +177,7 @@ fn refresh_with_api<A: SpotifySourceApi>(
             provider: "spotify".into(),
             provider_account_id: profile.provider_account_id.clone(),
             display_name: profile.display_name.clone(),
+            image_url: profile.image_url.clone(),
             client_id: client_id.into(),
         })
         .map_err(|error| database_error("save Spotify account", error))?;
@@ -200,6 +201,9 @@ fn refresh_with_api<A: SpotifySourceApi>(
                 owner_provider_id: Some(profile.provider_account_id.clone()),
                 is_accessible: true,
                 access_issue: None,
+                image_url: None,
+                external_url: None,
+                album_metadata: None,
             },
             &liked_songs,
         )
@@ -251,6 +255,9 @@ fn refresh_with_api<A: SpotifySourceApi>(
             owner_provider_id: playlist.owner_provider_id.clone(),
             is_accessible: true,
             access_issue: None,
+            image_url: playlist.image_url.clone(),
+            external_url: playlist.external_url.clone(),
+            album_metadata: None,
         };
 
         if snapshot_unchanged {
@@ -322,6 +329,7 @@ fn database_error(operation: &str, error: DatabaseError) -> SourceRefreshError {
 struct SpotifyProfile {
     provider_account_id: String,
     display_name: Option<String>,
+    image_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,6 +339,8 @@ struct SpotifyPlaylist {
     snapshot_id: Option<String>,
     owner_provider_id: Option<String>,
     item_count: Option<usize>,
+    image_url: Option<String>,
+    external_url: Option<String>,
 }
 
 trait SpotifySourceApi {
@@ -676,6 +686,27 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifyApiClient<T, P> {
             "Spotify request failed after retrying.",
         ))
     }
+
+    fn playlist_image_url(
+        &mut self,
+        playlist_id: &str,
+        fallback: Option<String>,
+        control: &SourceRefreshControl,
+    ) -> Result<Option<String>, SourceRefreshError> {
+        let url = format!("{}/playlists/{playlist_id}/images", self.api_base);
+        match self.request_json::<Vec<SpotifyImageDto>>(&url, control) {
+            Ok(images) => Ok(images.into_iter().find_map(|image| image.url).or(fallback)),
+            Err(error) if error.code == "refreshCancelled" => Err(error),
+            Err(error) => {
+                tracing::warn!(
+                    playlist_id,
+                    code = %error.code,
+                    "Failed to refresh Spotify playlist cover; using playlist-list artwork fallback"
+                );
+                Ok(fallback)
+            }
+        }
+    }
 }
 
 impl<T: HttpTransport, P: AccessTokenProvider> SpotifySourceApi for SpotifyApiClient<T, P> {
@@ -694,6 +725,7 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifySourceApi for SpotifyApiCl
         Ok(SpotifyProfile {
             provider_account_id,
             display_name: profile.display_name,
+            image_url: profile.images.into_iter().find_map(|image| image.url),
         })
     }
 
@@ -762,6 +794,11 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifySourceApi for SpotifyApiCl
                         "Spotify returned a playlist without an identifier.",
                     )
                 })?;
+                let image_url = self.playlist_image_url(
+                    &id,
+                    playlist.images.into_iter().find_map(|image| image.url),
+                    control,
+                )?;
                 playlists.push(SpotifyPlaylist {
                     id,
                     name: playlist.name.unwrap_or_else(|| "Untitled playlist".into()),
@@ -773,6 +810,8 @@ impl<T: HttpTransport, P: AccessTokenProvider> SpotifySourceApi for SpotifyApiCl
                         .items
                         .and_then(|items| items.total)
                         .or_else(|| playlist.tracks.and_then(|tracks| tracks.total)),
+                    image_url,
+                    external_url: playlist.external_urls.and_then(|urls| urls.spotify),
                 });
             }
             next = page.next;
@@ -826,6 +865,8 @@ struct SpotifyProfileDto {
     account_id: Option<String>,
     id: Option<String>,
     display_name: Option<String>,
+    #[serde(default)]
+    images: Vec<SpotifyImageDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -850,6 +891,9 @@ struct SpotifyPlaylistDto {
     owner: Option<SpotifyOwnerDto>,
     items: Option<SpotifyCollectionCountDto>,
     tracks: Option<SpotifyCollectionCountDto>,
+    #[serde(default)]
+    images: Vec<SpotifyImageDto>,
+    external_urls: Option<SpotifyExternalUrlsDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1338,6 +1382,7 @@ mod tests {
                 provider: "spotify".into(),
                 provider_account_id: "account".into(),
                 display_name: Some("Listener".into()),
+                image_url: None,
                 client_id: "client".into(),
             })
             .expect("account should save");
@@ -1352,6 +1397,9 @@ mod tests {
                     owner_provider_id: Some("account".into()),
                     is_accessible: true,
                     access_issue: None,
+                    image_url: None,
+                    external_url: None,
+                    album_metadata: None,
                 },
                 &[sample_item("old")],
             )
@@ -1373,6 +1421,7 @@ mod tests {
             Ok(SpotifyProfile {
                 provider_account_id: "account".into(),
                 display_name: Some("Listener".into()),
+                image_url: None,
             })
         }
 
@@ -1407,6 +1456,8 @@ mod tests {
             snapshot_id: Some(snapshot.into()),
             owner_provider_id: Some("account".into()),
             item_count: Some(1),
+            image_url: Some("https://i.scdn.co/image/playlist".into()),
+            external_url: Some("https://open.spotify.com/playlist/playlist".into()),
         }
     }
 

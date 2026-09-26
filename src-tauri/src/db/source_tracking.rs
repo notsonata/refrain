@@ -35,8 +35,28 @@ impl Database {
         source_track_id: i64,
         included: Option<bool>,
     ) -> Result<(), DatabaseError> {
-        self.with_connection(|connection| {
-            let entry_exists = connection
+        self.set_source_tracks_tracking(collection_id, &[source_track_id], included)
+    }
+
+    pub fn set_source_tracks_tracking(
+        &self,
+        collection_id: i64,
+        source_track_ids: &[i64],
+        included: Option<bool>,
+    ) -> Result<(), DatabaseError> {
+        if source_track_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut ids = source_track_ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+
+        let mut connection = self.lock_connection()?;
+        let transaction = connection.transaction()?;
+
+        for source_track_id in &ids {
+            let entry_exists = transaction
                 .query_row(
                     "SELECT 1
                      FROM collection_entries
@@ -48,11 +68,14 @@ impl Database {
                 .optional()?
                 .is_some();
             if !entry_exists {
-                return Err(rusqlite::Error::QueryReturnedNoRows);
+                return Err(rusqlite::Error::QueryReturnedNoRows.into());
             }
+        }
 
+        let updated_at = now_ms();
+        for source_track_id in ids {
             if let Some(included) = included {
-                connection.execute(
+                transaction.execute(
                     "INSERT INTO source_track_sync_overrides (
                         collection_id, source_track_id, included, updated_at
                      ) VALUES (?1, ?2, ?3, ?4)
@@ -63,18 +86,20 @@ impl Database {
                         collection_id,
                         source_track_id,
                         i64::from(included),
-                        now_ms()
+                        updated_at
                     ],
                 )?;
             } else {
-                connection.execute(
+                transaction.execute(
                     "DELETE FROM source_track_sync_overrides
                      WHERE collection_id = ?1 AND source_track_id = ?2",
                     params![collection_id, source_track_id],
                 )?;
             }
-            Ok(())
-        })
+        }
+
+        transaction.commit()?;
+        Ok(())
     }
 
     pub(crate) fn tracked_source_track_ids(&self) -> Result<Vec<i64>, DatabaseError> {

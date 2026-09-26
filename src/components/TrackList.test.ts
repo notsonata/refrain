@@ -53,4 +53,21 @@ describe('TrackList', () => {
     expect(body).toContain('Nothing imported yet.');
     expect(body).not.toContain('Unavailable Spotify item');
   });
+
+  it('keeps per-song tracking controls and row selection available', () => {
+    const { body } = render(TrackList, {
+      props: {
+        entries: duplicateEntries,
+        total: 2,
+        trackingControls: true,
+      },
+    });
+
+    expect(body.match(/type="checkbox"/g)).toHaveLength(2);
+    expect(body).toContain('Select Repeated Track');
+    expect(body).not.toContain('Select All Shown');
+    expect(body).not.toContain('Use Default for Selected');
+    expect(body).toContain('Excluded');
+    expect(body).toContain('Tracking');
+  });
 });

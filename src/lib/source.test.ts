@@ -5,6 +5,7 @@ import {
   getSourceCollectionPage,
   hydrateSpotifySource,
   listSpotifySavedAlbums,
+  setSourceTracksTracking,
   type SourceCollectionListPage,
   type SourceCollectionPage,
   type SpotifySourceOverview,
@@ -13,6 +14,7 @@ import {
 const overview: SpotifySourceOverview = {
   account: {
     displayName: 'Listener',
+    imageUrl: null,
     lastSourceSyncAt: 1_790_000_000_000,
   },
   likedSongs: {
@@ -25,6 +27,8 @@ const overview: SpotifySourceOverview = {
     entryCount: 249,
     trackedByDefault: false,
     trackedEntryCount: 0,
+    localEntryCount: 0,
+    attentionEntryCount: 0,
     imageUrl: null,
   },
   playlistCount: 55,
@@ -42,6 +46,8 @@ const playlists: SourceCollectionListPage = {
       entryCount: 2,
       trackedByDefault: false,
       trackedEntryCount: 0,
+      localEntryCount: 0,
+      attentionEntryCount: 0,
       imageUrl: null,
     },
   ],
@@ -62,6 +68,8 @@ const savedAlbums: SourceCollectionListPage = {
       entryCount: 10,
       trackedByDefault: false,
       trackedEntryCount: 0,
+      localEntryCount: 0,
+      attentionEntryCount: 0,
       imageUrl: null,
     },
   ],
@@ -186,6 +194,23 @@ describe('Spotify source browsing commands', () => {
     expect(page.entries[0].track?.providerTrackId).toBe(
       page.entries[1].track?.providerTrackId,
     );
+  });
+
+  it('updates tracking for multiple source tracks in one command', async () => {
+    const invoke = vi.fn(
+      async <T>(command: string, args?: Record<string, unknown>) => {
+        expect(command).toBe('set_source_tracks_tracking');
+        expect(args).toEqual({
+          collectionId: 2,
+          sourceTrackIds: [10, 11, 12],
+          included: true,
+        });
+        return undefined as T;
+      },
+    ) as InvokeFn;
+
+    await setSourceTracksTracking(2, [10, 11, 12], true, invoke);
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it('formats durations for dense track rows', () => {

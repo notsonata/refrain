@@ -43,7 +43,7 @@ Tauri owns application lifecycle, native dialogs, process management, filesystem
 - Vite
 - Tailwind CSS 4
 - shadcn-svelte / Bits UI for accessible primitives where useful
-- Lucide for icons
+- Lucide plus Simple Icons, loaded on demand through `unplugin-icons`, for application and brand icons
 
 Use a plain Vite SPA. Do not introduce SvelteKit unless a concrete requirement appears that a static desktop SPA cannot satisfy.
 
@@ -340,6 +340,7 @@ id                   INTEGER PRIMARY KEY
 provider             TEXT NOT NULL
 provider_account_id  TEXT NOT NULL
 display_name         TEXT NULL
+image_url            TEXT NULL
 client_id            TEXT NOT NULL
 created_at           INTEGER NOT NULL
 updated_at           INTEGER NOT NULL
@@ -347,7 +348,7 @@ last_source_sync_at  INTEGER NULL
 UNIQUE(provider, provider_account_id)
 ```
 
-For Spotify, `provider_account_id` should use the stable account identifier returned for the authenticated user when available.
+For Spotify, `provider_account_id` should use the stable account identifier returned for the authenticated user when available. `image_url` stores the current Spotify profile image URL when the profile exposes one.
 
 Secrets are not stored here.
 
@@ -363,6 +364,14 @@ snapshot_id             TEXT NULL
 owner_provider_id       TEXT NULL
 is_accessible           INTEGER NOT NULL DEFAULT 1
 access_issue             TEXT NULL
+image_url                TEXT NULL
+external_url             TEXT NULL
+album_artists_json       TEXT NULL
+album_release_date       TEXT NULL
+album_type               TEXT NULL
+album_label              TEXT NULL
+album_copyrights_json    TEXT NULL
+album_external_url       TEXT NULL
 created_at              INTEGER NOT NULL
 updated_at              INTEGER NOT NULL
 UNIQUE(source_account_id, provider_collection_id)
@@ -372,8 +381,13 @@ UNIQUE(source_account_id, provider_collection_id)
 
 - `liked_songs`
 - `playlist`
+- `saved_album`
 
 Use a stable synthetic provider ID for Liked Songs, such as `spotify:liked-songs`.
+
+Saved-album collections persist album-level Spotify metadata separately from track metadata so album detail views can show the album artists, full release date, release type, copyrights, Spotify URL, and label when available without reconstructing them from an arbitrary track. Spotify removed the `label` field from Album responses in February 2026, so the album detail UI uses the phonographic copyright holder as a clearly labeled rights-holder fallback when `album_label` is absent.
+
+Spotify collection artwork and external URLs are also persisted at the collection level. During Spotify refresh, playlist covers are refreshed from Spotify's dedicated playlist-cover endpoint so Refrain follows custom artwork assigned to the playlist. The playlist-list response remains a fallback, and browse projections keep the first-track artwork fallback for rows created before collection artwork was persisted.
 
 ### `source_tracks`
 
@@ -1344,6 +1358,8 @@ Reconciliation computes actions without allowing the acquisition provider to def
 
 Synchronization runs carry a durable `scope` of `local` or `spotify`. Legacy pre-scope runs remain distinguishable in persistence.
 
+The desktop UI exposes one primary **Sync Library** action. It runs the local scope first and, unless that phase fails or is cancelled, runs the Spotify scope second. **Scan Files** invokes the local scanner directly without starting either synchronization scope. **Refresh Spotify** refreshes persisted source state without running the synchronization workflow.
+
 Local Sync executes:
 
 ```text
@@ -1656,7 +1672,7 @@ List commands support:
 - sort
 - filter where needed
 
-Local-library and Spotify track projections should support server-side filtering once a filter would otherwise require loading the entire collection into the webview. Common filters include search, artist, album, year, format, Spotify membership, and local/presence state. Technical filters such as path/location, acquisition state, match state, explicit state, and duration can use the same query boundary behind the UI's Advanced controls.
+Local-library and Spotify track projections should support server-side filtering once a filter would otherwise require loading the entire collection into the webview. Common filters include search, artist, album, year, format, Spotify membership, and local/presence state. Spotify collection summaries also project aggregate local-entry and attention-entry counts so Albums and Playlists can expose the same local-state overview without loading every collection's entries into the webview. Technical filters such as path/location, acquisition state, match state, explicit state, and duration can use the same query boundary behind the UI's Advanced controls.
 
 Long track lists should be virtualized in the UI.
 
@@ -1684,6 +1700,8 @@ Issues (secondary attention flow)
 ```
 
 The Local workspace shows only present local-library tracks and annotates matched Spotify membership. Each row includes its local file path and local artwork when available. The Spotify workspace contains Liked Songs, Saved Albums, and Playlists sections with persistent tracking controls. Inaccessible playlists are excluded from the normal playlist list and exposed in a collapsed secondary section.
+
+Spotify track tables support row multi-selection for tracking changes. Single-track changes continue through `set_source_track_tracking`; bulk `Track`, `Exclude`, and reset-to-default changes use `set_source_tracks_tracking`, which validates that every selected source track belongs to the collection and applies the deduplicated overrides in one SQLite transaction before the frontend reloads collection/source state once.
 
 Use a compact desktop-density system rather than a literal global CSS zoom. Reduce typography, spacing, controls, card dimensions, row heights, and shell chrome consistently so the application feels substantially denser while keeping normal desktop text readable. The primary sidebar should be materially narrower than the current 13rem shell.
 
@@ -1750,12 +1768,20 @@ Do not expose secrets or raw credential-bearing upstream responses.
 
 The Issues UI is a projection over unresolved durable state rather than a separate general-purpose ticket system.
 
+The primary synchronization issue projection is intentionally limited to two user-facing states:
+
+- `Local Only`: a logical library track has a present local file but no membership in any accessible imported Spotify collection.
+- `Needs Local Copy`: a Spotify source track is included by persistent tracking rules but has no linked present local file. Match-review candidates are a resolution path for this same state rather than a separate source-wide issue category.
+
+Issue matching must use the same persisted collection defaults and per-track overrides as Spotify Sync. Untracked Spotify entries must not become issues merely because they are absent locally.
+
 Examples:
 
-- source track needs match review
-- acquisition exhausted or failed
-- Spotify playlist items inaccessible
-- local file missing
+- local-only track is absent from Spotify source state
+- tracked Spotify track has no present local file
+- tracked source track needs match review
+- acquisition exhausted or failed for tracked desired state
+- Spotify playlist items inaccessible as retained diagnostic state
 - managed cleanup could not move file to trash
 - mirror target write conflict
 - acquired file failed verification

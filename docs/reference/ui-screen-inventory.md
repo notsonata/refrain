@@ -645,7 +645,7 @@ Must support:
 - current library root path
 - click path field to open native OS folder picker
 - **Save path**
-- **Scan library**
+- **Scan Files**
 - scan progress message
 - current library overview
   - present
@@ -661,7 +661,7 @@ Must support:
 
 Important product distinction:
 
-The direct **Scan library** operation indexes the folder. **Local Sync** is the broader reconciliation / normalization workflow.
+The direct **Scan Files** operation indexes the folder. **Sync Library** is the broader reconciliation / normalization workflow and internally runs the local reconciliation phase before the tracked Spotify phase.
 
 ### C. Acquisition / Sockseek Provider
 
@@ -984,8 +984,8 @@ The same visual system should be used across all generated screens so they can b
 When simplifying the current UI, preserve these distinctions:
 
 1. **Local and Spotify are different workspaces.** Local represents files that exist on disk. Spotify represents source state and tracking intent.
-2. **Refresh Spotify and Sync tracked are different operations.** Refresh imports Spotify state. Spotify Sync reconciles tracked selections into the local library workflow.
-3. **Scan library and Local Sync are different operations.** Scan indexes physical files. Local Sync performs the broader reconciliation / normalization workflow.
+2. **Refresh Spotify and Sync Library are different operations.** Refresh imports Spotify state only. Sync Library performs the end-to-end local reconciliation plus tracked Spotify workflow.
+3. **Scan Files and Sync Library are different operations.** Scan Files indexes physical files. Sync Library performs reconciliation, normalization, and tracked acquisition work.
 4. **Collection tracking has defaults plus per-track overrides.** Users need to understand both without excessive controls in every row.
 5. **Issues are actionable state, not a generic notifications page.** Match review needs strong comparison UX.
 6. **Unavailable Spotify playlists are informational.** They should remain separated from actionable local / acquisition issues.

@@ -2,9 +2,7 @@ use std::collections::HashSet;
 
 use rusqlite::{OptionalExtension, params};
 
-use crate::domain::{
-    SourceCollection, SourceCollectionItem, SourceCollectionListPage, SourceCollectionSummary,
-};
+use crate::domain::{SourceCollection, SourceCollectionItem, SourceCollectionListPage};
 
 use super::{Database, DatabaseError, source};
 
@@ -166,14 +164,49 @@ impl Database {
                         WHEN entries.source_track_id IS NOT NULL
                          AND COALESCE(override.included, rule.default_included, 0) = 1
                         THEN 1 ELSE 0 END),
-                    (SELECT track.image_url
-                     FROM collection_entries AS artwork_entry
-                     INNER JOIN source_tracks AS track
-                       ON track.id = artwork_entry.source_track_id
-                     WHERE artwork_entry.collection_id = collection.id
-                       AND track.image_url IS NOT NULL
-                     ORDER BY artwork_entry.position
-                     LIMIT 1)
+                    SUM(CASE
+                        WHEN entries.source_track_id IS NOT NULL
+                         AND EXISTS (
+                            SELECT 1
+                            FROM track_links AS source_link
+                            INNER JOIN local_files AS local_file
+                              ON local_file.library_track_id = source_link.library_track_id
+                            WHERE source_link.source_track_id = entries.source_track_id
+                              AND local_file.state = 'present'
+                         )
+                        THEN 1 ELSE 0 END),
+                    SUM(CASE
+                        WHEN COALESCE(override.included, rule.default_included, 0) = 1
+                         AND (
+                            entries.source_track_id IS NULL
+                            OR NOT EXISTS (
+                                SELECT 1
+                                FROM track_links AS source_link
+                                INNER JOIN local_files AS local_file
+                                  ON local_file.library_track_id = source_link.library_track_id
+                                WHERE source_link.source_track_id = entries.source_track_id
+                                  AND local_file.state = 'present'
+                            )
+                         )
+                        THEN 1 ELSE 0 END),
+                    COALESCE(
+                        collection.image_url,
+                        (SELECT track.image_url
+                         FROM collection_entries AS artwork_entry
+                         INNER JOIN source_tracks AS track
+                           ON track.id = artwork_entry.source_track_id
+                         WHERE artwork_entry.collection_id = collection.id
+                           AND track.image_url IS NOT NULL
+                         ORDER BY artwork_entry.position
+                         LIMIT 1)
+                    ),
+                    COALESCE(collection.external_url, collection.album_external_url),
+                    collection.album_artists_json,
+                    collection.album_release_date,
+                    collection.album_type,
+                    collection.album_label,
+                    collection.album_copyrights_json,
+                    collection.album_external_url
                  FROM source_collections AS collection
                  LEFT JOIN collection_entries AS entries
                    ON entries.collection_id = collection.id
@@ -190,20 +223,7 @@ impl Database {
             )?;
             let rows = statement.query_map(
                 params![account_id, i64::from(limit), i64::from(offset)],
-                |row| {
-                    Ok(SourceCollectionSummary {
-                        id: row.get(0)?,
-                        provider_collection_id: row.get(1)?,
-                        kind: row.get(2)?,
-                        name: row.get(3)?,
-                        is_accessible: row.get::<_, i64>(4)? != 0,
-                        access_issue: row.get(5)?,
-                        entry_count: row.get(6)?,
-                        tracked_by_default: row.get::<_, i64>(7)? != 0,
-                        tracked_entry_count: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        image_url: row.get(9)?,
-                    })
-                },
+                super::source_browse::collection_summary_from_row,
             )?;
             let items = rows.collect::<Result<Vec<_>, _>>()?;
 
@@ -294,6 +314,9 @@ mod tests {
                 owner_provider_id: None,
                 is_accessible: true,
                 access_issue: None,
+                image_url: None,
+                external_url: None,
+                album_metadata: None,
             },
             vec![SourceCollectionItem {
                 position: 0,
@@ -315,6 +338,7 @@ mod tests {
                 provider: "spotify".into(),
                 provider_account_id: "listener".into(),
                 display_name: Some("Listener".into()),
+                image_url: None,
                 client_id: "client".into(),
             })
             .expect("account should save");

@@ -6,6 +6,7 @@ import type { MatchCandidateEvidence, MatchOutcome } from './matching';
 export type IssueKind =
   | 'matchReview'
   | 'missingLocalFile'
+  | 'localOnlyTrack'
   | 'inaccessibleCollection'
   | 'invalidLocalFile'
   | 'acquisitionFailed';
@@ -28,6 +29,7 @@ export interface IssueRow {
 export interface IssueCounts {
   matchReview: number;
   missingLocalFile: number;
+  localOnlyTrack: number;
   inaccessibleCollection: number;
   invalidLocalFile: number;
   acquisitionFailed: number;

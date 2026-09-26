@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::{
     db::{Database, DatabaseError},
-    domain::{SourceCollection, SourceCollectionItem, SourceTrack},
+    domain::{SourceAlbumMetadata, SourceCollection, SourceCollectionItem, SourceTrack},
     source_sync::SourceRefreshError,
     spotify::{SpotifyAuthError, SpotifyClient},
 };
@@ -81,12 +81,21 @@ fn load_saved_albums<T: SavedAlbumTransport>(
             request_json::<SpotifyPage<SpotifySavedAlbumDto>, _>(transport, &url, access_token)?;
         for saved in page.items {
             check_cancelled()?;
-            let album = saved.album.ok_or_else(|| {
+            let saved_album = saved.album.ok_or_else(|| {
                 SourceRefreshError::new(
                     "spotifyInvalidResponse",
                     "Spotify returned a saved album without album metadata.",
                 )
             })?;
+            let album_id = saved_album.id.as_deref().ok_or_else(|| {
+                SourceRefreshError::new(
+                    "spotifyInvalidResponse",
+                    "Spotify returned a saved album without an identifier.",
+                )
+            })?;
+            let album_url = format!("{}/albums/{album_id}", api_base.trim_end_matches('/'));
+            let album =
+                request_json::<SpotifySavedAlbumObjectDto, _>(transport, &album_url, access_token)?;
             albums.push(map_saved_album(
                 transport,
                 access_token,
@@ -120,6 +129,25 @@ fn map_saved_album<T: SavedAlbumTransport>(
         .unwrap_or_else(|| "Untitled album".into());
     let album_image_url = album.images.iter().find_map(|image| image.url.clone());
     let release_year = album.release_date.as_deref().and_then(parse_release_year);
+    let album_metadata = SourceAlbumMetadata {
+        artists: album
+            .artists
+            .iter()
+            .filter_map(|artist| artist.name.clone())
+            .collect(),
+        release_date: album.release_date.clone(),
+        album_type: album.album_type.clone(),
+        label: album.label.clone(),
+        copyrights: album
+            .copyrights
+            .iter()
+            .filter_map(|copyright| copyright.text.clone())
+            .collect(),
+        external_url: album
+            .external_urls
+            .as_ref()
+            .and_then(|urls| urls.spotify.clone()),
+    };
     let mut items = Vec::new();
 
     for track in album.tracks.items {
@@ -168,6 +196,9 @@ fn map_saved_album<T: SavedAlbumTransport>(
             owner_provider_id: None,
             is_accessible: true,
             access_issue: None,
+            image_url: album_image_url,
+            external_url: album_metadata.external_url.clone(),
+            album_metadata: Some(album_metadata),
         },
         items,
     ))
@@ -446,10 +477,22 @@ struct SpotifySavedAlbumDto {
 struct SpotifySavedAlbumObjectDto {
     id: Option<String>,
     name: Option<String>,
+    album_type: Option<String>,
     release_date: Option<String>,
+    label: Option<String>,
+    #[serde(default)]
+    artists: Vec<SpotifyArtistDto>,
+    #[serde(default)]
+    copyrights: Vec<SpotifyCopyrightDto>,
+    external_urls: Option<SpotifyExternalUrlsDto>,
     #[serde(default)]
     images: Vec<SpotifyImageDto>,
     tracks: SpotifyPage<SpotifySimplifiedTrackDto>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SpotifyCopyrightDto {
+    text: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -589,6 +632,9 @@ mod tests {
         let transport = MockTransport::with_responses([
             response(
                 r#"{"items":[{"added_at":"2026-09-01T00:00:00Z","album":{"id":"album-one","name":"Album One","release_date":"2024-02-03","images":[{"url":"https://i.scdn.co/image/cover"}],"tracks":{"items":[{"id":"track-one","uri":"spotify:track:track-one","name":"One","artists":[{"name":"Artist"}],"duration_ms":180000,"disc_number":1,"track_number":1,"explicit":false}],"next":"https://api.test/albums/album-one/tracks?page=2"}}}],"next":null}"#,
+            ),
+            response(
+                r#"{"id":"album-one","name":"Album One","album_type":"album","release_date":"2024-02-03","label":"Example Records","artists":[{"name":"Artist"}],"copyrights":[{"text":"© 2024 Example Records"}],"external_urls":{"spotify":"https://open.spotify.com/album/album-one"},"images":[{"url":"https://i.scdn.co/image/cover"}],"tracks":{"items":[{"id":"track-one","uri":"spotify:track:track-one","name":"One","artists":[{"name":"Artist"}],"duration_ms":180000,"disc_number":1,"track_number":1,"explicit":false}],"next":"https://api.test/albums/album-one/tracks?page=2"}}"#,
             ),
             response(
                 r#"{"items":[{"id":"track-two","uri":"spotify:track:track-two","name":"Two","artists":[{"name":"Artist"}],"duration_ms":190000,"disc_number":1,"track_number":2,"explicit":false}],"next":null}"#,

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
+  import Icon from './components/Icon.svelte';
   import IssuesView from './components/IssuesView.svelte';
   import LibraryView from './components/LibraryView.svelte';
   import SpotifyWorkspace from './components/SpotifyWorkspace.svelte';
@@ -42,6 +44,7 @@
     listSpotifySavedAlbums,
     setSourceCollectionTracking,
     setSourceTrackTracking,
+    setSourceTracksTracking,
     type SourceCollectionEntryView,
     type SourceCollectionSummary,
     type SpotifySourceOverview,
@@ -102,6 +105,7 @@
   let spotifySyncRun: SyncRun | null = null;
   let syncError: string | null = null;
   let trackingBusyId: number | null = null;
+  let trackingBulkBusy = false;
   let sourceOverview: SpotifySourceOverview | null = null;
   let sourceHydrating = true;
   let sourceHydrationError: string | null = null;
@@ -135,18 +139,21 @@
   let issueCounts: IssueCounts = {
     matchReview: 0,
     missingLocalFile: 0,
+    localOnlyTrack: 0,
     inaccessibleCollection: 0,
     invalidLocalFile: 0,
     acquisitionFailed: 0,
   };
   $: actionableIssues = actionableIssueRows(issues);
-  $: actionableIssueTotal = Math.max(
-    0,
-    issueTotal - issueCounts.inaccessibleCollection,
-  );
+  $: actionableIssueTotal =
+    issueCounts.localOnlyTrack +
+    issueCounts.missingLocalFile +
+    issueCounts.matchReview;
   $: actionableIssueCounts = {
     ...issueCounts,
     inaccessibleCollection: 0,
+    invalidLocalFile: 0,
+    acquisitionFailed: 0,
   };
   let issuesLoading = false;
   let issuesLoadingMore = false;
@@ -155,8 +162,10 @@
   let matchReview: MatchReview | null = null;
   let matchReviewLoading = false;
   let matchDecisionBusy = false;
+  let isMacOS = false;
 
   onMount(() => {
+    isMacOS = navigator.userAgent.includes('Macintosh');
     let disposed = false;
     let sourceUnlisten: UnlistenFn | undefined;
     let libraryUnlisten: UnlistenFn | undefined;
@@ -310,7 +319,7 @@
     }
   }
 
-  async function runLocalSynchronization() {
+  async function runLibrarySynchronization() {
     if (syncBusy || sourceBusy || authBusy) return;
 
     syncBusy = true;
@@ -318,42 +327,32 @@
     syncRun = null;
     syncError = null;
     try {
-      const run = await startLocalSync('manual');
-      syncRun = run;
-      localSyncRun = run;
-      if (run.status === 'failed') {
-        syncError = run.errorMessage ?? 'Local synchronization failed.';
+      const localRun = await startLocalSync('manual');
+      syncRun = localRun;
+      localSyncRun = localRun;
+      if (localRun.status === 'failed') {
+        syncError = localRun.errorMessage ?? 'Local reconciliation failed.';
+        return;
+      }
+      if (localRun.status === 'cancelled') return;
+
+      syncScope = 'spotify';
+      const spotifyRun = await startSpotifySync('manual');
+      syncRun = spotifyRun;
+      spotifySyncRun = spotifyRun;
+      if (spotifyRun.status === 'failed') {
+        syncError =
+          spotifyRun.errorMessage ?? 'Library synchronization failed.';
       }
 
       libraryOverview = await getLocalLibraryOverview();
-      await Promise.all([loadLibraryTracks(), loadIssues()]);
+      await Promise.all([
+        hydrateSourceState(),
+        loadLibraryTracks(),
+        loadIssues(),
+      ]);
     } catch (error) {
-      syncError = operationError(error, 'Could not synchronize the local library.');
-    } finally {
-      syncBusy = false;
-      syncScope = null;
-    }
-  }
-
-  async function runSpotifySynchronization() {
-    if (syncBusy || sourceBusy || authBusy) return;
-
-    syncBusy = true;
-    syncScope = 'spotify';
-    syncRun = null;
-    syncError = null;
-    try {
-      const run = await startSpotifySync('manual');
-      syncRun = run;
-      spotifySyncRun = run;
-      if (run.status === 'failed') {
-        syncError = run.errorMessage ?? 'Spotify synchronization failed.';
-      }
-
-      libraryOverview = await getLocalLibraryOverview();
-      await Promise.all([hydrateSourceState(), loadLibraryTracks(), loadIssues()]);
-    } catch (error) {
-      syncError = operationError(error, 'Could not synchronize tracked Spotify music.');
+      syncError = operationError(error, 'Could not synchronize the library.');
     } finally {
       syncBusy = false;
       syncScope = null;
@@ -623,7 +622,12 @@
   }
 
   function actionableIssueRows(rows: IssueRow[]): IssueRow[] {
-    return rows.filter((issue) => issue.kind !== 'inaccessibleCollection');
+    return rows.filter(
+      (issue) =>
+        issue.kind === 'localOnlyTrack' ||
+        issue.kind === 'missingLocalFile' ||
+        issue.kind === 'matchReview',
+    );
   }
 
   async function loadMoreIssues() {
@@ -727,7 +731,10 @@
       await setSourceCollectionTracking(collection.id, included);
       await hydrateSourceState();
     } catch (error) {
-      collectionError = operationError(error, 'Could not update Spotify tracking.');
+      collectionError = operationError(
+        error,
+        'Could not update Spotify tracking.',
+      );
     } finally {
       trackingBusyId = null;
     }
@@ -749,9 +756,44 @@
       await loadCollection(currentCollection);
       await hydrateSourceState();
     } catch (error) {
-      collectionError = operationError(error, 'Could not update track tracking.');
+      collectionError = operationError(
+        error,
+        'Could not update track tracking.',
+      );
     } finally {
       trackingBusyId = null;
+    }
+  }
+
+  async function updateTracksTracking(
+    entries: SourceCollectionEntryView[],
+    included: boolean | null,
+  ) {
+    if (!currentCollection) return;
+    const sourceTrackIds = [
+      ...new Set(
+        entries.flatMap((entry) => (entry.track ? [entry.track.id] : [])),
+      ),
+    ];
+    if (sourceTrackIds.length === 0) return;
+
+    trackingBulkBusy = true;
+    collectionError = null;
+    try {
+      await setSourceTracksTracking(
+        currentCollection.id,
+        sourceTrackIds,
+        included,
+      );
+      await loadCollection(currentCollection);
+      await hydrateSourceState();
+    } catch (error) {
+      collectionError = operationError(
+        error,
+        'Could not update selected track tracking.',
+      );
+    } finally {
+      trackingBulkBusy = false;
     }
   }
 
@@ -849,12 +891,12 @@
   }
 
   function formatSyncTime(value: number | null | undefined): string {
-    if (!value) {
-      return 'Never refreshed';
-    }
+    if (!value) return 'Never';
     return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
     }).format(new Date(value));
   }
 
@@ -875,248 +917,314 @@
     }
     return fallback;
   }
+
+  function startWindowDrag(event: PointerEvent) {
+    if (event.button !== 0) return;
+    void getCurrentWindow().startDragging();
+  }
 </script>
 
 <svelte:head>
   <title>Refrain</title>
 </svelte:head>
 
-<main class="min-h-screen bg-slate-950 text-slate-100">
-  <div class="mx-auto min-h-screen max-w-[100rem] px-4 py-3">
-    <header
-      class="flex items-center justify-between gap-4 border-b border-slate-800 pb-3"
-    >
+<main class="app-shell">
+  {#if isMacOS}
+    <div
+      class="window-drag-region"
+      data-tauri-drag-region
+      aria-hidden="true"
+      onpointerdown={startWindowDrag}
+    ></div>
+  {/if}
+  <aside class="app-sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <span class="brand-wave"><i></i><i></i><i></i><i></i><i></i></span>
+      </div>
       <div>
-        <div class="flex items-center gap-2">
-          <h1 class="text-xl font-semibold tracking-tight">Refrain</h1>
-          <span
-            class="rounded-full border border-slate-800 px-2 py-0.5 text-[10px] text-slate-400"
-          >
-            v0.1 desktop
+        <p class="brand-name">Refrain</p>
+        <p class="brand-subtitle">Keep your music in sync</p>
+      </div>
+    </div>
+
+    <p class="sidebar-label">Library</p>
+    <nav class="sidebar-nav" aria-label="Primary navigation">
+      <button
+        type="button"
+        class:active={activeView === 'library'}
+        class="nav-row"
+        onclick={() => openView('library')}
+      >
+        <Icon name="local" size={17} />
+        <span>Local</span>
+        <span class="nav-count">{libraryTrackTotal.toLocaleString()}</span>
+      </button>
+
+      <button
+        type="button"
+        class:active={activeView === 'spotify'}
+        class="nav-row"
+        onclick={() => openView('spotify')}
+      >
+        <Icon name="spotify" size={17} />
+        <span>Spotify</span>
+        <span style="margin-left:auto"
+          ><Icon name="chevron-down" size={13} /></span
+        >
+      </button>
+      <button
+        type="button"
+        class:active={activeView === 'spotify' && spotifySection === 'liked'}
+        class="nav-subrow"
+        onclick={() => {
+          activeView = 'spotify';
+          void loadSpotifySection('liked');
+        }}
+      >
+        <Icon name="heart" size={16} />
+        <span>Liked Songs</span>
+        <span class="nav-count"
+          >{(
+            sourceOverview?.likedSongs?.entryCount ?? 0
+          ).toLocaleString()}</span
+        >
+      </button>
+      <button
+        type="button"
+        class:active={activeView === 'spotify' && spotifySection === 'albums'}
+        class="nav-subrow"
+        onclick={() => {
+          activeView = 'spotify';
+          void loadSpotifySection('albums');
+        }}
+      >
+        <Icon name="album" size={16} />
+        <span>Albums</span>
+        <span class="nav-count">{savedAlbumTotal.toLocaleString()}</span>
+      </button>
+      <button
+        type="button"
+        class:active={activeView === 'spotify' &&
+          spotifySection === 'playlists'}
+        class="nav-subrow"
+        onclick={() => {
+          activeView = 'spotify';
+          void loadSpotifySection('playlists');
+        }}
+      >
+        <Icon name="playlist" size={16} />
+        <span>Playlists</span>
+        <span class="nav-count"
+          >{(
+            sourceOverview?.playlistCount ?? playlistTotal
+          ).toLocaleString()}</span
+        >
+      </button>
+
+      <button
+        type="button"
+        class:active={activeView === 'issues'}
+        class="nav-row"
+        onclick={() => openView('issues')}
+      >
+        <Icon name="issues" size={17} />
+        <span>Issues</span>
+        <span class="nav-count">{actionableIssueTotal.toLocaleString()}</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-footer">
+      {#if sourceBusy && sourceProgress}
+        <div class="sidebar-progress" aria-live="polite">
+          <span title={sourceProgress.message}>
+            {sourceProgress.message}{sourceProgress.total !== null
+              ? ` · ${sourceProgress.completed}/${sourceProgress.total}`
+              : ''}
           </span>
+          <button type="button" onclick={cancelSourceRefresh}>Cancel</button>
         </div>
-        <p class="mt-0.5 text-xs text-slate-500">
-          Local collection and tracked Spotify music, kept in sync on your terms.
-        </p>
+      {/if}
+      <div class="sidebar-status" aria-label="Spotify synchronization status">
+        <span>
+          Last sync {formatSyncTime(
+            spotifySyncRun?.finishedAt ?? spotifySyncRun?.startedAt,
+          )}
+        </span>
+        <span>
+          Last refresh {formatSyncTime(
+            sourceOverview?.account?.lastSourceSyncAt,
+          )}
+        </span>
       </div>
+      <div
+        class="sidebar-sync-actions"
+        aria-label="Library synchronization controls"
+      >
+        <button
+          type="button"
+          class="sidebar-action-button"
+          onclick={runLibrarySynchronization}
+          disabled={!authStatus?.connected || syncBusy || sourceBusy}
+        >
+          <Icon name="sync" size={14} />
+          {syncBusy ? 'Syncing…' : 'Sync Library'}
+        </button>
+        <button
+          type="button"
+          class="sidebar-action-button primary"
+          onclick={refreshSource}
+          disabled={!authStatus?.connected || sourceBusy || syncBusy}
+        >
+          <Icon name="refresh" size={14} />
+          {sourceBusy ? 'Refreshing…' : 'Refresh Spotify'}
+        </button>
+      </div>
+      <button
+        type="button"
+        class:active={activeView === 'settings'}
+        class="nav-row"
+        onclick={() => openView('settings')}
+      >
+        <Icon name="settings" size={17} />
+        <span>Settings</span>
+      </button>
+    </div>
+  </aside>
 
-      <div class="flex items-center gap-3">
-        {#if sourceOverview?.account}
-          <div class="hidden text-right text-xs text-slate-500 sm:block">
-            <p class="text-slate-300">
-              {sourceOverview.account.displayName ?? 'Spotify account'}
-            </p>
-            <p>{formatSyncTime(sourceOverview.account.lastSourceSyncAt)}</p>
+  <section class="app-main">
+    <div class="status-stack">
+      {#if syncBusy}
+        <div class="status-banner">
+          <span
+            >{syncScope === 'local'
+              ? 'Reconciling local files…'
+              : 'Syncing tracked music…'}</span
+          >
+          <button type="button" class="btn" onclick={cancelSynchronization}
+            >Cancel</button
+          >
+        </div>
+      {:else if syncError}
+        <div class="status-banner error">{syncError}</div>
+      {/if}
+      {#if sourceError}
+        <div class="status-banner error">{sourceError}</div>
+      {/if}
+      {#if backendError}
+        <div class="status-banner error">{backendError}</div>
+      {/if}
+    </div>
+
+    <div class="app-content">
+      {#if isSpotifySourceView(activeView) && sourceHydrating && !sourceOverview}
+        <div class="screen" aria-label="Loading Spotify library">
+          <div class="skeleton" style="height:76px; margin-bottom:12px;"></div>
+          <div class="skeleton" style="height:86px; margin-bottom:12px;"></div>
+          <div class="skeleton" style="min-height:0; flex:1;"></div>
+        </div>
+      {:else if isSpotifySourceView(activeView) && sourceHydrationError}
+        <div class="error-state">
+          <div>
+            <strong>Could not load persisted Spotify state.</strong>
+            <p style="margin:4px 0 0;">{sourceHydrationError}</p>
           </div>
-        {/if}
-        {#if !authStatus?.connected}
-          <button
-            type="button"
-            onclick={() => openView('settings')}
-            class="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-900"
-          >
-            Connect Spotify
-          </button>
-        {/if}
-      </div>
-    </header>
-
-    {#if syncBusy}
-      <div
-        class="mt-2 flex items-center justify-between gap-3 rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs"
-      >
-        <div class="min-w-0">
-          <p class="text-slate-300">Synchronization is running.</p>
-          <p class="mt-0.5 text-xs text-slate-600">
-            {syncScope === 'local'
-              ? 'Scanning the local library, comparing it with Spotify, and normalizing files.'
-              : 'Refreshing Spotify and synchronizing only your tracked selections.'}
-          </p>
         </div>
-        <button
-          type="button"
-          onclick={cancelSynchronization}
-          class="shrink-0 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
-        >
-          Cancel
-        </button>
-      </div>
-    {:else if syncError}
-      <div
-        class="mt-2 rounded-md border border-amber-900 bg-amber-950/30 px-3 py-2 text-xs text-amber-200"
-      >
-        {syncError}
-      </div>
-    {:else if syncRun}
-      <div
-        class="mt-2 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400"
-      >
-        {syncRun.scope === 'local' ? 'Local' : 'Spotify'} sync {syncRun.status}. {syncRun.matched} matched · {syncRun.missing}
-        missing · {syncRun.needsReview} need review
-      </div>
-    {/if}
-
-    {#if sourceBusy && sourceProgress}
-      <div
-        class="mt-2 flex items-center justify-between gap-3 rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs"
-      >
-        <div class="min-w-0">
-          <p class="truncate text-slate-300">{sourceProgress.message}</p>
-          {#if sourceProgress.total !== null}
-            <p class="mt-0.5 text-xs text-slate-600">
-              {sourceProgress.completed} / {sourceProgress.total}
-            </p>
-          {/if}
-        </div>
-        <button
-          type="button"
-          onclick={cancelSourceRefresh}
-          class="shrink-0 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
-        >
-          Cancel
-        </button>
-      </div>
-    {:else if sourceError}
-      <div
-        class="mt-2 rounded-md border border-amber-900 bg-amber-950/30 px-3 py-2 text-xs text-amber-200"
-      >
-        {sourceError}
-      </div>
-    {/if}
-
-    {#if backendError}
-      <div
-        class="mt-2 rounded-md border border-amber-900 bg-amber-950/30 px-3 py-2 text-xs text-amber-200"
-      >
-        {backendError}
-      </div>
-    {/if}
-
-    <div class="grid gap-4 py-4 lg:grid-cols-[9.75rem_minmax(0,1fr)]">
-      <nav class="relative z-10 space-y-1" aria-label="Primary">
-        <button
-          type="button"
-          onclick={() => openView('library')}
-          class={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition ${activeView === 'library' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
-        >
-          <span>Local</span>
-          <span class="font-mono text-xs text-slate-600"
-            >{libraryTrackTotal}</span
-          >
-        </button>
-        <button
-          type="button"
-          onclick={() => openView('spotify')}
-          class={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs transition ${activeView === 'spotify' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
-        >
-          <span>Spotify</span>
-          <span class="font-mono text-xs text-slate-600">{savedAlbumTotal + (sourceOverview?.playlistCount ?? 0) + (sourceOverview?.likedSongs ? 1 : 0)}</span>
-        </button>
-        <button
-          type="button"
-          onclick={() => openView('settings')}
-          class={`w-full rounded-md px-2.5 py-1.5 text-left text-xs transition ${activeView === 'settings' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'}`}
-        >
-          Settings
-        </button>
-
-        <div class="pt-3">
-          <div class="border-t border-slate-900 pt-3 text-[10px] text-slate-600">
-            {#if authStatus?.connected}
-              <p class="text-emerald-500">Spotify connected</p>
-            {:else}
-              <p>Spotify disconnected</p>
-            {/if}
-            {#if sourceSummary}
-              <p class="mt-2 leading-5">
-                Last refresh: {sourceSummary.likedSongs} liked · {savedAlbumTotal}
-                albums · {sourceSummary.playlists} playlists
+      {:else if activeView === 'library'}
+        <LibraryView
+          tracks={libraryTracks}
+          total={libraryTrackTotal}
+          loading={libraryTracksLoading}
+          loadingMore={libraryTracksLoadingMore}
+          error={libraryTracksError}
+          onLoadMore={loadMoreLibraryTracks}
+          onScan={scanLibraryRoot}
+          onShowIssues={() => openView('issues')}
+          scanBusy={libraryBusy}
+          scanDisabled={!libraryRoot.trim()}
+          syncRun={localSyncRun}
+          indexedFiles={libraryOverview?.total ?? 0}
+          issueCount={actionableIssueCounts.localOnlyTrack}
+        />
+      {:else if activeView === 'spotify'}
+        <SpotifyWorkspace
+          section={spotifySection}
+          overview={sourceOverview}
+          {savedAlbums}
+          {savedAlbumTotal}
+          {playlists}
+          {playlistTotal}
+          {currentCollection}
+          entries={collectionEntries}
+          {collectionTotal}
+          {collectionLoading}
+          {collectionLoadingMore}
+          {collectionError}
+          {savedAlbumsLoadingMore}
+          {playlistsLoadingMore}
+          {trackingBusyId}
+          {trackingBulkBusy}
+          onSelectSavedAlbum={selectSavedAlbum}
+          onSelectPlaylist={selectPlaylist}
+          onBackToCollections={closeSpotifyCollection}
+          onLoadMoreSavedAlbums={loadMoreSavedAlbums}
+          onLoadMorePlaylists={loadMorePlaylists}
+          onLoadMoreCollection={loadMoreCollection}
+          onSetCollectionTracking={updateCollectionTracking}
+          onSetTrackTracking={updateTrackTracking}
+          onSetTracksTracking={updateTracksTracking}
+        />
+      {:else if activeView === 'issues'}
+        <IssuesView
+          issues={actionableIssues}
+          total={actionableIssueTotal}
+          counts={actionableIssueCounts}
+          {selectedIssueId}
+          review={matchReview}
+          loading={issuesLoading}
+          loadingMore={issuesLoadingMore}
+          reviewLoading={matchReviewLoading}
+          decisionBusy={matchDecisionBusy}
+          error={issueError}
+          onSelect={selectIssue}
+          onLoadMore={loadMoreIssues}
+          onConfirm={confirmIssueMatch}
+          onReject={rejectIssueMatch}
+          onClearRejection={clearIssueRejection}
+        />
+      {:else}
+        <div class="settings-page">
+          <header class="page-header">
+            <div>
+              <h1 class="page-title">Settings</h1>
+              <p class="page-description">
+                Configure Refrain, manage integrations, and control how your
+                music is synchronized.
               </p>
-            {/if}
+            </div>
+          </header>
+          <div class="settings-category-strip" aria-label="Settings categories">
+            <span class="settings-category active"
+              ><Icon name="settings" size={15} />General</span
+            >
+            <span class="settings-category"
+              ><Icon name="sync" size={15} />Sync</span
+            >
+            <span class="settings-category"
+              ><Icon name="spotify" size={15} />Spotify</span
+            >
+            <span class="settings-category"
+              ><Icon name="local" size={15} />Library</span
+            >
+            <span class="settings-category"
+              ><Icon name="download" size={15} />Acquisition</span
+            >
+            <span class="settings-category"
+              ><Icon name="sliders" size={15} />Advanced</span
+            >
           </div>
-        </div>
-      </nav>
-
-      <section class="relative z-0 min-w-0">
-        {#if isSpotifySourceView(activeView) && sourceHydrating && !sourceOverview}
-          <div class="grid gap-3">
-            <div class="h-16 animate-pulse rounded-xl bg-slate-900"></div>
-            <div class="h-[34rem] animate-pulse rounded-xl bg-slate-900"></div>
-          </div>
-        {:else if isSpotifySourceView(activeView) && sourceHydrationError}
-          <div
-            class="rounded-xl border border-amber-900 bg-amber-950/30 p-5 text-sm text-amber-200"
-          >
-            <p class="font-medium">Could not load persisted Spotify state.</p>
-            <p class="mt-1 text-amber-300/80">{sourceHydrationError}</p>
-          </div>
-        {:else if activeView === 'library'}
-          <LibraryView
-            tracks={libraryTracks}
-            total={libraryTrackTotal}
-            loading={libraryTracksLoading}
-            loadingMore={libraryTracksLoadingMore}
-            error={libraryTracksError}
-            onLoadMore={loadMoreLibraryTracks}
-            onSynchronize={runLocalSynchronization}
-            onShowIssues={() => openView('issues')}
-            syncBusy={syncBusy && syncScope === 'local'}
-            syncRun={localSyncRun}
-            indexedFiles={libraryOverview?.total ?? 0}
-            issueCount={actionableIssueTotal}
-          />
-        {:else if activeView === 'spotify'}
-          <SpotifyWorkspace
-            section={spotifySection}
-            overview={sourceOverview}
-            {savedAlbums}
-            {savedAlbumTotal}
-            {playlists}
-            {playlistTotal}
-            {currentCollection}
-            entries={collectionEntries}
-            {collectionTotal}
-            {collectionLoading}
-            {collectionLoadingMore}
-            {collectionError}
-            {savedAlbumsLoadingMore}
-            {playlistsLoadingMore}
-            {sourceBusy}
-            syncBusy={syncBusy && syncScope === 'spotify'}
-            syncRun={spotifySyncRun}
-            {trackingBusyId}
-            onSectionChange={loadSpotifySection}
-            onSelectSavedAlbum={selectSavedAlbum}
-            onSelectPlaylist={selectPlaylist}
-            onBackToCollections={closeSpotifyCollection}
-            onLoadMoreSavedAlbums={loadMoreSavedAlbums}
-            onLoadMorePlaylists={loadMorePlaylists}
-            onLoadMoreCollection={loadMoreCollection}
-            onSetCollectionTracking={updateCollectionTracking}
-            onSetTrackTracking={updateTrackTracking}
-            onSynchronize={runSpotifySynchronization}
-            onRefresh={refreshSource}
-          />
-        {:else if activeView === 'issues'}
-          <IssuesView
-            issues={actionableIssues}
-            total={actionableIssueTotal}
-            counts={actionableIssueCounts}
-            {selectedIssueId}
-            review={matchReview}
-            loading={issuesLoading}
-            loadingMore={issuesLoadingMore}
-            reviewLoading={matchReviewLoading}
-            decisionBusy={matchDecisionBusy}
-            error={issueError}
-            onSelect={selectIssue}
-            onLoadMore={loadMoreIssues}
-            onConfirm={confirmIssueMatch}
-            onReject={rejectIssueMatch}
-            onClearRejection={clearIssueRejection}
-          />
-        {:else}
-          <div class="settings-view grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
+          <div class="settings-view">
             <div class="grid gap-3">
               <div class="rounded-lg border border-slate-800 p-4">
                 <div class="flex items-start justify-between gap-4">
@@ -1284,7 +1392,7 @@
                     disabled={libraryBusy || !libraryRoot.trim()}
                     class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {libraryBusy ? 'Scanning…' : 'Scan library'}
+                    {libraryBusy ? 'Scanning…' : 'Scan Files'}
                   </button>
                 </div>
 
@@ -1533,8 +1641,8 @@
               {/if}
             </aside>
           </div>
-        {/if}
-      </section>
+        </div>
+      {/if}
     </div>
-  </div>
+  </section>
 </main>

@@ -213,6 +213,7 @@ mod tests {
             provider: "spotify".into(),
             provider_account_id: "account-1".into(),
             display_name: Some("Listener".into()),
+            image_url: None,
             client_id: "client-id".into(),
         }
     }
@@ -227,6 +228,9 @@ mod tests {
             owner_provider_id: Some("account-1".into()),
             is_accessible: true,
             access_issue: None,
+            image_url: None,
+            external_url: None,
+            album_metadata: None,
         }
     }
 
