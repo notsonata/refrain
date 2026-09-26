@@ -213,9 +213,9 @@ Examples of technical filters include:
 - explicit state
 - duration
 
-Spotify track views use the same filtering model where the fields are meaningful. In Spotify views, `Spotify Only` means the source item has no matching local file, while `Needs Local Copy` is the tracked subset that still lacks a present local file or requires match review. Liked Songs exposes its collection-level tracking default directly so users can choose between tracking the whole collection and tracking individual songs.
+Spotify track views use the same filtering model where the fields are meaningful. In Spotify views, `Spotify Only` means the source item has no matching local file, while `Needs Local Copy` is the tracked subset that still lacks a present local file or requires match review. Liked Songs exposes a collection-level tracking switch. The switch is on only when the whole collection is effectively tracked. Toggling it applies the requested state to the whole collection and clears older per-track overrides for that collection.
 
-Spotify track tables expose the per-song tracking state directly near the track title. Users can toggle one song at a time or select multiple loaded track rows and apply `Track`, `Exclude`, or `Use Default` in one bulk action. `Use Default` removes the per-track override so the collection's tracking default applies again. Bulk selection does not alter search or filter state.
+Spotify track tables expose the per-song tracking state directly near the track title. Users can toggle one song at a time or select multiple loaded track rows and use one stateful bulk action to include or exclude the selection from tracking. Bulk selection does not alter search or filter state.
 
 The user-facing Issues state has two synchronization discrepancies:
 

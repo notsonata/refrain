@@ -3,12 +3,25 @@
   import DataTableHeader from './DataTableHeader.svelte';
   import Icon from './Icon.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
+  import TrackStatusView from './TrackStatus.svelte';
   import type { OverflowMenuItem } from '../lib/menu';
   import {
     formatTrackDuration,
     type SourceCollectionEntryView,
   } from '../lib/source';
-  import { tableGridWidth, type TableColumn } from '../lib/table-columns';
+  import {
+    createSpotifyTrackColumns,
+    sharedTrackColumnIds,
+    tableGridTemplate,
+    type TableColumn,
+  } from '../lib/table-columns';
+  import {
+    spotifyLibraryTrackStatus,
+    spotifyLibraryTrackStatuses,
+    trackStatusLabel,
+    trackStatusSortValue,
+    type TrackStatus,
+  } from '../lib/track-status';
 
   export let entries: SourceCollectionEntryView[] = [];
   export let total = 0;
@@ -32,89 +45,39 @@
         included: boolean | null,
       ) => void | Promise<void>)
     | undefined = undefined;
-  export let onSelectionChange:
-    | ((state: {
-        selectedCount: number;
-        selectableFilteredCount: number;
-        allFilteredSelected: boolean;
-      }) => void)
-    | undefined = undefined;
+  export let selectedCount = 0;
+  export let selectableFilteredCount = 0;
+  export let allFilteredSelected = false;
+  export let allSelectedTracked = false;
 
   let search = '';
   let trackingFilter = 'all';
-  let localFilter = 'all';
+  let statusFilter: 'all' | TrackStatus = 'all';
   let advancedOpen = false;
   let acquisitionFilter = 'all';
   let matchFilter = 'all';
   let explicitFilter = 'all';
   let loadAllRequested = false;
   let lastAutoLoadOffset = -1;
-  let sortId = 'position';
+  let sortId = 'order';
   let sortDirection: 'asc' | 'desc' = 'asc';
   let selectedEntryKeys = new Set<string>();
   $: activeFilterCount = [
     trackingFilter !== 'all',
-    localFilter !== 'all',
+    statusFilter !== 'all',
     acquisitionFilter !== 'all',
     matchFilter !== 'all',
     explicitFilter !== 'all',
   ].filter(Boolean).length;
-  let columns: TableColumn[] = [
-    {
-      id: 'position',
-      label: '#',
-      width: trackingControls ? 58 : 38,
-      minWidth: trackingControls ? 54 : 34,
-      sortable: true,
-      align: 'center',
-    },
-    { id: 'title', label: 'Title', width: 280, minWidth: 220, sortable: true },
-    {
-      id: 'tracking',
-      label: 'Tracking',
-      width: 112,
-      minWidth: 96,
-      sortable: true,
-    },
-    {
-      id: 'local',
-      label: 'Local Status',
-      width: 108,
-      minWidth: 92,
-      sortable: true,
-    },
-    {
-      id: 'artist',
-      label: 'Artist',
-      width: 145,
-      minWidth: 100,
-      sortable: true,
-    },
-    { id: 'album', label: 'Album', width: 165, minWidth: 110, sortable: true },
-    { id: 'year', label: 'Year', width: 58, minWidth: 48, sortable: true },
-    {
-      id: 'duration',
-      label: 'Duration',
-      width: 72,
-      minWidth: 60,
-      sortable: true,
-    },
-    { id: 'format', label: 'Format', width: 62, minWidth: 54, sortable: true },
-    {
-      id: 'actions',
-      label: '',
-      width: 30,
-      minWidth: 30,
-      draggable: false,
-      align: 'center',
-    },
-  ];
+  let columns: TableColumn[] = createSpotifyTrackColumns();
 
   const rowHeight = 50;
   const overscan = 8;
   const skeletonRows = Array.from({ length: 9 }, (_, index) => index);
   let scrollTop = 0;
   let viewportHeight = 520;
+  let tableViewportWidth = 0;
+  $: compactRows = tableViewportWidth > 0 && tableViewportWidth <= 780;
 
   $: tracks = entries.flatMap((entry) => (entry.track ? [entry.track] : []));
   $: acquisitionOptions = uniqueSorted(
@@ -137,14 +100,11 @@
     selectableFilteredEntries.every((entry) =>
       selectedEntryKeys.has(entrySelectionKey(entry)),
     );
-  $: onSelectionChange?.({
-    selectedCount,
-    selectableFilteredCount,
-    allFilteredSelected,
-  });
+  $: allSelectedTracked =
+    selectedEntries.length > 0 &&
+    selectedEntries.every((entry) => entry.trackingIncluded);
   $: if (sortedEntries.length === 0) scrollTop = 0;
-  $: gridTemplate = columns.map((column) => `${column.width}px`).join(' ');
-  $: tableWidth = tableGridWidth(columns);
+  $: gridTemplate = tableGridTemplate(columns);
   $: visibleCount = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
   $: maxStartIndex = Math.max(0, sortedEntries.length - visibleCount);
   $: startIndex = Math.min(
@@ -157,7 +117,7 @@
   $: filterActive =
     search.trim() !== '' ||
     trackingFilter !== 'all' ||
-    localFilter !== 'all' ||
+    statusFilter !== 'all' ||
     acquisitionFilter !== 'all' ||
     matchFilter !== 'all' ||
     explicitFilter !== 'all';
@@ -183,14 +143,33 @@
   }
 
   function needsAttention(entry: SourceCollectionEntryView): boolean {
-    const track = entry.track;
-    if (!entry.trackingIncluded) return false;
-    if (!track) return true;
-    return !track.localPresent;
+    return entryStatus(entry) === 'needs-local-copy';
+  }
+
+  function entryStatus(entry: SourceCollectionEntryView): TrackStatus {
+    return spotifyLibraryTrackStatus(
+      entry.track?.localPresent ?? false,
+      entry.trackingIncluded,
+    );
   }
 
   function entrySelectionKey(entry: SourceCollectionEntryView): string {
     return `${entry.position}:${entry.track?.id ?? 'missing'}`;
+  }
+
+  function latestEntry(
+    entry: SourceCollectionEntryView,
+  ): SourceCollectionEntryView {
+    const key = entrySelectionKey(entry);
+    return (
+      entries.find((candidate) => entrySelectionKey(candidate) === key) ?? entry
+    );
+  }
+
+  function toggleEntryTracking(entry: SourceCollectionEntryView) {
+    const currentEntry = latestEntry(entry);
+    if (!currentEntry.track) return;
+    return onSetTracking?.(currentEntry, !currentEntry.trackingIncluded);
   }
 
   function toggleEntrySelection(
@@ -241,43 +220,57 @@
     await navigator.clipboard.writeText(value);
   }
 
+  function spotifyTrackUrl(providerTrackId: string): string {
+    return `https://open.spotify.com/track/${encodeURIComponent(providerTrackId)}`;
+  }
+
+  function trackDisplayName(entry: SourceCollectionEntryView): string {
+    const track = entry.track;
+    if (!track) return '';
+    return track.artists.length > 0
+      ? `${track.title} — ${track.artists.join(', ')}`
+      : track.title;
+  }
+
   function trackMenuItems(
     entry: SourceCollectionEntryView,
+    busyTrackId: number | null,
+    bulkBusy: boolean,
   ): OverflowMenuItem[] {
     const track = entry.track;
     if (!track) return [];
 
+    const spotifyUrl =
+      track.externalUrl ?? spotifyTrackUrl(track.providerTrackId);
     const items: OverflowMenuItem[] = [];
-    if (track.externalUrl) {
-      items.push(
-        {
-          label: 'Open in Spotify',
-          icon: 'link',
-          action: () => invoke('open_external_url', { url: track.externalUrl }),
-        },
-        {
-          label: 'Copy Spotify Link',
-          icon: 'copy',
-          action: () => copyText(track.externalUrl!),
-        },
-      );
-    }
+    items.push(
+      {
+        label: 'Open in Spotify',
+        icon: 'link',
+        action: () => invoke('open_external_url', { url: spotifyUrl }),
+      },
+      {
+        label: 'Copy Spotify Link',
+        icon: 'copy',
+        action: () => copyText(spotifyUrl),
+      },
+      {
+        label: 'Copy Track Name',
+        icon: 'copy',
+        action: () => copyText(trackDisplayName(entry)),
+      },
+    );
 
     if (trackingControls) {
+      const currentEntry = latestEntry(entry);
       items.push({
-        label: entry.trackingIncluded ? 'Exclude from Tracking' : 'Track Song',
-        icon: entry.trackingIncluded ? 'close' : 'check',
-        action: () => onSetTracking?.(entry, !entry.trackingIncluded),
-        disabled: trackingBulkBusy || trackingBusyId === track.id,
+        label: currentEntry.trackingIncluded
+          ? 'Exclude from Tracking'
+          : 'Include in Tracking',
+        icon: currentEntry.trackingIncluded ? 'close' : 'check',
+        action: () => toggleEntryTracking(entry),
+        disabled: bulkBusy || busyTrackId === track.id,
       });
-      if (entry.trackingOverridden) {
-        items.push({
-          label: 'Reset to Collection Default',
-          icon: 'refresh',
-          action: () => onSetTracking?.(entry, null),
-          disabled: trackingBulkBusy || trackingBusyId === track.id,
-        });
-      }
     }
 
     return items;
@@ -290,8 +283,8 @@
       if (query) return false;
       if (trackingFilter === 'tracked' && !entry.trackingIncluded) return false;
       if (trackingFilter === 'excluded' && entry.trackingIncluded) return false;
-      if (localFilter === 'present') return false;
-      if (localFilter === 'attention' && !entry.trackingIncluded) return false;
+      if (statusFilter !== 'all' && entryStatus(entry) !== statusFilter)
+        return false;
       if (
         acquisitionFilter !== 'all' ||
         matchFilter !== 'all' ||
@@ -313,9 +306,8 @@
 
     if (trackingFilter === 'tracked' && !entry.trackingIncluded) return false;
     if (trackingFilter === 'excluded' && entry.trackingIncluded) return false;
-    if (localFilter === 'present' && !track.localPresent) return false;
-    if (localFilter === 'missing' && track.localPresent) return false;
-    if (localFilter === 'attention' && !needsAttention(entry)) return false;
+    if (statusFilter !== 'all' && entryStatus(entry) !== statusFilter)
+      return false;
     if (
       acquisitionFilter !== 'all' &&
       track.acquisitionStatus !== acquisitionFilter
@@ -350,16 +342,11 @@
         return track?.durationMs ?? -1;
       case 'format':
         return track?.localFormat ?? '';
-      case 'local':
-        return !track
-          ? 3
-          : needsAttention(entry)
-            ? 2
-            : track.localPresent
-              ? 0
-              : 1;
+      case 'status':
+        return trackStatusSortValue(entryStatus(entry));
       case 'tracking':
         return entry.trackingIncluded ? 1 : 0;
+      case 'order':
       case 'position':
       default:
         return entry.position;
@@ -383,15 +370,15 @@
 
   function clearFilters() {
     trackingFilter = 'all';
-    localFilter = 'all';
+    statusFilter = 'all';
     acquisitionFilter = 'all';
     matchFilter = 'all';
     explicitFilter = 'all';
   }
 
-  function setLocalFilter(value: 'all' | 'missing' | 'attention') {
+  function setStatusFilter(value: 'all' | TrackStatus) {
     lastAutoLoadOffset = -1;
-    localFilter = value;
+    statusFilter = value;
     loadAllRequested = true;
   }
 
@@ -438,19 +425,20 @@
         </div>
         <div class="filters-grid">
           <label class="filter-field">
-            <span class="filter-label">Local Availability</span>
+            <span class="filter-label">Status</span>
             <select
-              value={localFilter}
-              aria-label="Local state"
+              value={statusFilter}
+              aria-label="Track status"
               class="filter-select"
               onchange={(event) =>
-                setLocalFilter(
-                  event.currentTarget.value as 'all' | 'missing' | 'attention',
+                setStatusFilter(
+                  event.currentTarget.value as 'all' | TrackStatus,
                 )}
             >
-              <option value="all">Any availability</option>
-              <option value="missing">Spotify Only</option>
-              <option value="attention">Needs Local Copy</option>
+              <option value="all">Any status</option>
+              {#each spotifyLibraryTrackStatuses as status (status)}
+                <option value={status}>{trackStatusLabel(status)}</option>
+              {/each}
             </select>
           </label>
           <label class="filter-field">
@@ -519,32 +507,36 @@
   {:else if filteredEntries.length === 0}
     <div class="empty-state">No tracks match the current filters.</div>
   {:else}
-    <div class="data-table" style="display:flex; flex-direction:column;">
+    <div
+      class="data-table spotify-track-table"
+      class:compact={compactRows}
+      bind:clientWidth={tableViewportWidth}
+    >
+      <DataTableHeader
+        bind:columns
+        bind:sortId
+        bind:sortDirection
+        compact={compactRows}
+        storageKey="refrain.table.spotify.columns.v4"
+        sharedStorageKey="refrain.table.track-columns.v1"
+        sharedColumnIds={sharedTrackColumnIds}
+        defaultSortId="order"
+      />
       <div
-        class="table-scroll"
-        style="position:relative; flex:1;"
+        class="table-scroll spotify-track-scroll"
+        style="position:relative;"
         bind:clientHeight={viewportHeight}
         onscroll={(event) => (scrollTop = event.currentTarget.scrollTop)}
         aria-label="Track list"
       >
-        <DataTableHeader
-          bind:columns
-          bind:sortId
-          bind:sortDirection
-          storageKey="refrain.table.spotify.columns.v2"
-        />
-        <div
-          class="relative"
-          style={`height:${sortedEntries.length * rowHeight}px; width:${tableWidth}px; min-width:${tableWidth}px;`}
-        >
-          {#each visibleEntries as entry, visibleIndex (`${entry.position}:${entry.track?.id ?? 'missing'}`)}
-            <div
-              class="table-row column-table-grid absolute left-0 right-0"
-              class:selected={selectedEntryKeys.has(entrySelectionKey(entry))}
-              style={`height:${rowHeight}px; transform:translateY(${(startIndex + visibleIndex) * rowHeight}px); grid-template-columns:${gridTemplate}; width:${tableWidth}px; min-width:${tableWidth}px;`}
-            >
-              {#each columns as column (column.id)}
-                {#if column.id === 'position'}
+        {#if compactRows}
+          <div class="track-card-list">
+            {#each sortedEntries as entry (`${entry.position}:${entry.track?.id ?? 'missing'}`)}
+              <article
+                class="track-card spotify-track-card"
+                class:selected={selectedEntryKeys.has(entrySelectionKey(entry))}
+              >
+                <div class="track-card-index">
                   {#if trackingControls}
                     <label class="track-selection-cell">
                       <input
@@ -565,61 +557,57 @@
                       <span>{entry.position + 1}</span>
                     </label>
                   {:else}
-                    <span class="table-cell-center muted-cell"
-                      >{entry.position + 1}</span
-                    >
+                    <span class="muted-cell">{entry.position + 1}</span>
                   {/if}
-                {:else if entry.track}
-                  {#if column.id === 'title'}
-                    <div class="track-primary">
-                      {#if entry.track.imageUrl}
-                        <img
-                          src={entry.track.imageUrl}
-                          alt=""
-                          loading="lazy"
-                          class="artwork-small"
-                        />
-                      {:else}
-                        <div class="artwork-small artwork-fallback">
-                          {entry.track.title.slice(0, 1).toUpperCase()}
-                        </div>
-                      {/if}
-                      <div class="track-copy">
-                        <div class="track-title-line">
-                          <p class="track-title">{entry.track.title}</p>
-                          {#if entry.track.explicit}<span class="explicit-badge"
-                              >E</span
-                            >{/if}
-                        </div>
-                        <p class="track-secondary">Spotify source</p>
+                </div>
+
+                {#if entry.track}
+                  <div class="track-card-main">
+                    {#if entry.track.imageUrl}
+                      <img
+                        src={entry.track.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        class="artwork-small"
+                      />
+                    {:else}
+                      <div class="artwork-small artwork-fallback">
+                        {entry.track.title.slice(0, 1).toUpperCase()}
                       </div>
+                    {/if}
+                    <div class="track-card-copy">
+                      <div class="track-title-line">
+                        <p class="track-title">{entry.track.title}</p>
+                        {#if entry.track.explicit}<span class="explicit-badge"
+                            >E</span
+                          >{/if}
+                      </div>
+                      <p class="track-card-context">
+                        {entry.track.artists.join(', ') || 'Unknown artist'} · {entry
+                          .track.album ?? 'Unknown album'}
+                      </p>
                     </div>
-                  {:else if column.id === 'artist'}
-                    <span class="cell-truncate"
-                      >{entry.track.artists.join(', ') ||
-                        'Unknown artist'}</span
-                    >
-                  {:else if column.id === 'album'}
-                    <span class="cell-truncate"
-                      >{entry.track.album ?? 'Unknown album'}</span
-                    >
-                  {:else if column.id === 'year'}
-                    <span>{entry.track.releaseYear ?? '—'}</span>
-                  {:else if column.id === 'duration'}
+                  </div>
+                  <div class="track-card-actions">
+                    <OverflowMenu
+                      items={trackMenuItems(
+                        entry,
+                        trackingBusyId,
+                        trackingBulkBusy,
+                      )}
+                      ariaLabel={`Actions for ${entry.track.title}`}
+                    />
+                  </div>
+                  <div class="track-card-meta" aria-label="Track metadata">
+                    <span>{entry.track.releaseYear ?? 'Unknown year'}</span>
                     <span>{formatTrackDuration(entry.track.durationMs)}</span>
-                  {:else if column.id === 'format'}
-                    <span>{entry.track.localFormat?.toUpperCase() ?? '—'}</span>
-                  {:else if column.id === 'local'}
-                    <span class="state-text">
-                      {#if needsAttention(entry)}
-                        <span class="state-dot warning"></span>Needs Local Copy
-                      {:else if entry.track.localPresent}
-                        <span class="state-dot success"></span>Local
-                      {:else}
-                        <Icon name="cloud" size={13} />Spotify Only
-                      {/if}
-                    </span>
-                  {:else if column.id === 'tracking'}
+                    <span
+                      >{entry.track.localFormat?.toUpperCase() ??
+                        'Unknown format'}</span
+                    >
+                  </div>
+                  <div class="track-card-footer">
+                    <TrackStatusView status={entryStatus(entry)} />
                     {#if trackingControls}
                       <div class="tracking-cell">
                         <button
@@ -630,57 +618,187 @@
                           title={entry.trackingIncluded
                             ? 'Exclude this song from tracking'
                             : 'Track this song'}
-                          onclick={() =>
-                            onSetTracking?.(entry, !entry.trackingIncluded)}
+                          onclick={() => toggleEntryTracking(entry)}
                           disabled={trackingBulkBusy ||
                             trackingBusyId === entry.track.id}
                         >
                           {entry.trackingIncluded ? 'Tracked' : 'Excluded'}
                         </button>
-                        {#if entry.trackingOverridden}
-                          <button
-                            type="button"
-                            class="link-button"
-                            style="font-size:8px;"
-                            onclick={() => onSetTracking?.(entry, null)}
-                            disabled={trackingBulkBusy ||
-                              trackingBusyId === entry.track.id}>Reset</button
-                          >
-                        {/if}
                       </div>
-                    {:else}
-                      <span class="chip">Spotify</span>
                     {/if}
-                  {:else if column.id === 'actions'}
-                    <OverflowMenu
-                      items={trackMenuItems(entry)}
-                      ariaLabel={`Actions for ${entry.track.title}`}
-                    />
-                  {/if}
-                {:else if column.id === 'title'}
-                  <div class="track-primary">
+                  </div>
+                {:else}
+                  <div class="track-card-main">
                     <div class="artwork-small artwork-fallback">?</div>
-                    <div class="track-copy">
+                    <div class="track-card-copy">
                       <p
                         class="track-title"
                         style="color:var(--text-secondary)"
                       >
                         Unavailable Spotify item
                       </p>
-                      <p class="track-secondary">
+                      <p class="track-card-context">
                         {entry.unavailableReason ?? entry.itemType}
                       </p>
                     </div>
                   </div>
-                {:else if column.id === 'actions'}
-                  <span class="muted-cell">—</span>
-                {:else}
-                  <span class="muted-cell">—</span>
                 {/if}
-              {/each}
-            </div>
-          {/each}
-        </div>
+              </article>
+            {/each}
+          </div>
+        {:else}
+          <div
+            class="relative"
+            style={`height:${sortedEntries.length * rowHeight}px; width:100%; min-width:0;`}
+          >
+            {#each visibleEntries as entry, visibleIndex (`${entry.position}:${entry.track?.id ?? 'missing'}`)}
+              <div
+                class="table-row column-table-grid absolute left-0 right-0"
+                class:selected={selectedEntryKeys.has(entrySelectionKey(entry))}
+                style={`height:${rowHeight}px; top:${(startIndex + visibleIndex) * rowHeight}px; grid-template-columns:${gridTemplate};`}
+              >
+                {#each columns as column (column.id)}
+                  {#if entry.track}
+                    {#if column.id === 'order'}
+                      <div class="track-order-cell">
+                        {#if trackingControls}
+                          <label class="track-selection-cell">
+                            <input
+                              type="checkbox"
+                              checked={selectedEntryKeys.has(
+                                entrySelectionKey(entry),
+                              )}
+                              disabled={trackingBulkBusy}
+                              aria-label={`Select ${entry.track.title}`}
+                              onchange={(event) =>
+                                toggleEntrySelection(
+                                  entry,
+                                  event.currentTarget.checked,
+                                )}
+                            />
+                            <span>{entry.position + 1}</span>
+                          </label>
+                        {:else}
+                          <span class="muted-cell">{entry.position + 1}</span>
+                        {/if}
+                      </div>
+                    {:else if column.id === 'title'}
+                      <div class="track-primary">
+                        {#if entry.track.imageUrl}
+                          <img
+                            src={entry.track.imageUrl}
+                            alt=""
+                            loading="lazy"
+                            class="artwork-small"
+                          />
+                        {:else}
+                          <div class="artwork-small artwork-fallback">
+                            {entry.track.title.slice(0, 1).toUpperCase()}
+                          </div>
+                        {/if}
+                        <div class="track-copy">
+                          <div class="track-title-line">
+                            <p class="track-title">{entry.track.title}</p>
+                            {#if entry.track.explicit}<span
+                                class="explicit-badge">E</span
+                              >{/if}
+                          </div>
+                          <p class="track-secondary">Spotify source</p>
+                        </div>
+                      </div>
+                    {:else if column.id === 'artist'}
+                      <span class="cell-truncate"
+                        >{entry.track.artists.join(', ') ||
+                          'Unknown artist'}</span
+                      >
+                    {:else if column.id === 'album'}
+                      <span class="cell-truncate"
+                        >{entry.track.album ?? 'Unknown album'}</span
+                      >
+                    {:else if column.id === 'year'}
+                      <span>{entry.track.releaseYear ?? '—'}</span>
+                    {:else if column.id === 'duration'}
+                      <span>{formatTrackDuration(entry.track.durationMs)}</span>
+                    {:else if column.id === 'format'}
+                      <span
+                        >{entry.track.localFormat?.toUpperCase() ?? '—'}</span
+                      >
+                    {:else if column.id === 'status'}
+                      <TrackStatusView status={entryStatus(entry)} />
+                    {:else if column.id === 'tracking'}
+                      {#if trackingControls}
+                        <div class="tracking-cell">
+                          <button
+                            type="button"
+                            class:success={entry.trackingIncluded}
+                            class="chip"
+                            aria-pressed={entry.trackingIncluded}
+                            title={entry.trackingIncluded
+                              ? 'Exclude this song from tracking'
+                              : 'Track this song'}
+                            onclick={() => toggleEntryTracking(entry)}
+                            disabled={trackingBulkBusy ||
+                              trackingBusyId === entry.track.id}
+                          >
+                            {entry.trackingIncluded ? 'Tracked' : 'Excluded'}
+                          </button>
+                        </div>
+                      {:else}
+                        <span class="chip">Spotify</span>
+                      {/if}
+                    {:else if column.id === 'actions'}
+                      <OverflowMenu
+                        items={trackMenuItems(
+                          entry,
+                          trackingBusyId,
+                          trackingBulkBusy,
+                        )}
+                        ariaLabel={`Actions for ${entry.track.title}`}
+                      />
+                    {/if}
+                  {:else if column.id === 'order'}
+                    <div class="track-order-cell">
+                      {#if trackingControls}
+                        <label class="track-selection-cell">
+                          <input
+                            type="checkbox"
+                            checked={selectedEntryKeys.has(
+                              entrySelectionKey(entry),
+                            )}
+                            disabled
+                            aria-label={`Select track ${entry.position + 1}`}
+                          />
+                          <span>{entry.position + 1}</span>
+                        </label>
+                      {:else}
+                        <span class="muted-cell">{entry.position + 1}</span>
+                      {/if}
+                    </div>
+                  {:else if column.id === 'title'}
+                    <div class="track-primary">
+                      <div class="artwork-small artwork-fallback">?</div>
+                      <div class="track-copy">
+                        <p
+                          class="track-title"
+                          style="color:var(--text-secondary)"
+                        >
+                          Unavailable Spotify item
+                        </p>
+                        <p class="track-secondary">
+                          {entry.unavailableReason ?? entry.itemType}
+                        </p>
+                      </div>
+                    </div>
+                  {:else if column.id === 'actions'}
+                    <span class="muted-cell">—</span>
+                  {:else}
+                    <span class="muted-cell">—</span>
+                  {/if}
+                {/each}
+              </div>
+            {/each}
+          </div>
+        {/if}
         {#if hasMore}
           <div class="table-load-more-row">
             <button

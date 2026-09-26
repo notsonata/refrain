@@ -24,6 +24,7 @@ pub(crate) struct LocalFileWrite {
     pub tag_title: Option<String>,
     pub tag_artists: Vec<String>,
     pub tag_album: Option<String>,
+    pub tag_year: Option<i64>,
     pub tag_isrc: Option<String>,
     pub artwork_path: Option<String>,
     pub artwork_mime: Option<String>,
@@ -54,7 +55,7 @@ impl Database {
                     track.title,
                     track.artists_json,
                     track.album,
-                    track.release_year,
+                    COALESCE(preferred.tag_year, track.release_year),
                     track.duration_ms,
                     track.explicit,
                     (SELECT COUNT(*) FROM track_links AS link
@@ -201,9 +202,9 @@ impl Database {
                 "INSERT INTO local_files (
                     path, ownership, state, format, file_size, modified_at, duration_ms,
                     bitrate, sample_rate, channels, content_hash, tag_title, tag_artists_json,
-                    tag_album, tag_isrc, artwork_path, artwork_mime, scan_error, created_at, updated_at
+                    tag_album, tag_year, tag_isrc, artwork_path, artwork_mime, scan_error, created_at, updated_at
                  ) VALUES (
-                    ?1, 'external', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18
+                    ?1, 'external', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19
                  )",
                 params![
                     value.path,
@@ -219,6 +220,7 @@ impl Database {
                     value.tag_title,
                     artists_json,
                     value.tag_album,
+                    value.tag_year,
                     value.tag_isrc,
                     value.artwork_path,
                     value.artwork_mime,
@@ -253,12 +255,13 @@ impl Database {
                      tag_title = ?11,
                      tag_artists_json = ?12,
                      tag_album = ?13,
-                     tag_isrc = ?14,
-                     artwork_path = ?15,
-                     artwork_mime = ?16,
-                     scan_error = ?17,
-                     updated_at = ?18
-                 WHERE id = ?19",
+                     tag_year = ?14,
+                     tag_isrc = ?15,
+                     artwork_path = ?16,
+                     artwork_mime = ?17,
+                     scan_error = ?18,
+                     updated_at = ?19
+                 WHERE id = ?20",
                 params![
                     value.path,
                     value.state,
@@ -273,6 +276,7 @@ impl Database {
                     value.tag_title,
                     artists_json,
                     value.tag_album,
+                    value.tag_year,
                     value.tag_isrc,
                     value.artwork_path,
                     value.artwork_mime,

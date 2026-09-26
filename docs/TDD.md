@@ -1413,7 +1413,7 @@ source_track_sync_overrides
   (collection_id, source_track_id) -> included
 ```
 
-Collection refresh replaces entry rows but preserves the collection and source-track identities, so these rules survive ordinary Spotify refreshes. A source track is desired for Spotify Sync if any accessible collection includes it after applying the per-track override first and the collection default second. Acquisition queueing uses the same predicate and cancels stale queued jobs that are no longer desired.
+Collection refresh replaces entry rows but preserves the collection and source-track identities, so these rules survive ordinary Spotify refreshes. A source track is desired for Spotify Sync if any accessible collection includes it after applying the per-track override first and the collection default second. Changing a collection-level tracking switch writes the new collection rule and clears that collection's per-track overrides atomically, so the collection action means all tracked or all untracked. Later per-track actions may create new overrides. Acquisition queueing uses the same predicate and cancels stale queued jobs that are no longer desired.
 
 ### Idempotency
 

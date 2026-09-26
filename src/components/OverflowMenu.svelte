@@ -47,9 +47,20 @@
   function run(item: OverflowMenuItem) {
     if (item.disabled) return;
     close();
-    void Promise.resolve(item.action()).catch((error) => {
+    try {
+      const result = item.action();
+      void Promise.resolve(result).catch((error) => {
+        console.error('Overflow menu action failed', error);
+      });
+    } catch (error) {
       console.error('Overflow menu action failed', error);
-    });
+    }
+  }
+
+  function runFromPointer(event: PointerEvent, item: OverflowMenuItem) {
+    if (event.button !== 0 || item.disabled) return;
+    event.preventDefault();
+    run(item);
   }
 
   onMount(() => {
@@ -84,6 +95,7 @@
       type="button"
       class="row-more"
       aria-label={ariaLabel}
+      title={ariaLabel}
       aria-haspopup="menu"
       aria-expanded={open}
       onclick={toggle}
@@ -98,12 +110,18 @@
         style={`top:${top}px; left:${left}px;`}
       >
         {#each items as item}
+          {#if item.separatorBefore}
+            <div class="overflow-menu-separator" role="separator"></div>
+          {/if}
           <button
             type="button"
             class="overflow-menu-item"
             role="menuitem"
             disabled={item.disabled}
-            onclick={() => run(item)}
+            onpointerdown={(event) => runFromPointer(event, item)}
+            onclick={(event) => {
+              if (event.detail === 0) run(item);
+            }}
           >
             <Icon name={item.icon} size={14} />
             <span>{item.label}</span>

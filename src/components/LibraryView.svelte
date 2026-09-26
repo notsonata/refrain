@@ -1,13 +1,27 @@
 <script lang="ts">
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import DataTableHeader from './DataTableHeader.svelte';
+  import CollectionChips from './CollectionChips.svelte';
   import Icon from './Icon.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
+  import TrackStatusView from './TrackStatus.svelte';
   import type { LibraryTrackRow } from '../lib/library';
   import type { OverflowMenuItem } from '../lib/menu';
   import type { SyncRun } from '../lib/sync';
   import { formatTrackDuration } from '../lib/source';
-  import { tableGridWidth, type TableColumn } from '../lib/table-columns';
+  import {
+    createLocalTrackColumns,
+    sharedTrackColumnIds,
+    tableGridTemplate,
+    type TableColumn,
+  } from '../lib/table-columns';
+  import {
+    localLibraryTrackStatus,
+    localLibraryTrackStatuses,
+    trackStatusLabel,
+    trackStatusSortValue,
+    type TrackStatus,
+  } from '../lib/track-status';
 
   export let tracks: LibraryTrackRow[] = [];
   export let total = 0;
@@ -24,7 +38,7 @@
   export let issueCount = 0;
 
   let search = '';
-  let spotifyState = 'all';
+  let statusFilter: 'all' | TrackStatus = 'all';
   let advancedOpen = false;
   let pathFilter = '';
   let acquisitionFilter = 'all';
@@ -34,55 +48,17 @@
   let lastAutoLoadOffset = -1;
   let sortId = 'title';
   let sortDirection: 'asc' | 'desc' = 'asc';
+  let tableViewportWidth = 0;
+  let selectedTrackIds = new Set<number>();
+  $: compactRows = tableViewportWidth > 0 && tableViewportWidth <= 820;
   $: activeFilterCount = [
-    spotifyState !== 'all',
+    statusFilter !== 'all',
     pathFilter.trim() !== '',
     acquisitionFilter !== 'all',
     matchFilter !== 'all',
     explicitFilter !== 'all',
   ].filter(Boolean).length;
-  let columns: TableColumn[] = [
-    { id: 'title', label: 'Title', width: 300, minWidth: 220, sortable: true },
-    {
-      id: 'artist',
-      label: 'Artist',
-      width: 150,
-      minWidth: 100,
-      sortable: true,
-    },
-    { id: 'album', label: 'Album', width: 170, minWidth: 110, sortable: true },
-    { id: 'year', label: 'Year', width: 58, minWidth: 48, sortable: true },
-    {
-      id: 'duration',
-      label: 'Duration',
-      width: 72,
-      minWidth: 60,
-      sortable: true,
-    },
-    { id: 'format', label: 'Format', width: 62, minWidth: 54, sortable: true },
-    {
-      id: 'spotify',
-      label: 'Spotify',
-      width: 100,
-      minWidth: 84,
-      sortable: true,
-    },
-    {
-      id: 'collections',
-      label: 'Collections',
-      width: 170,
-      minWidth: 120,
-      sortable: true,
-    },
-    {
-      id: 'actions',
-      label: '',
-      width: 30,
-      minWidth: 30,
-      draggable: false,
-      align: 'center',
-    },
-  ];
+  let columns: TableColumn[] = createLocalTrackColumns();
   $: acquisitionOptions = uniqueSorted(
     tracks.flatMap((track) =>
       track.acquisitionStatus ? [track.acquisitionStatus] : [],
@@ -92,15 +68,27 @@
   $: sortedTracks = [...filteredTracks].sort((a, b) =>
     compareTracks(a, b, sortId, sortDirection),
   );
-  $: gridTemplate = columns.map((column) => `${column.width}px`).join(' ');
-  $: tableWidth = tableGridWidth(columns);
+  $: selectedTracks = tracks.filter((track) => selectedTrackIds.has(track.id));
+  $: selectedTracksWithPaths = selectedTracks.filter(
+    (track) => !!track.preferredFile?.path,
+  );
+  $: allFilteredSelected =
+    filteredTracks.length > 0 &&
+    filteredTracks.every((track) => selectedTrackIds.has(track.id));
+  $: selectionMenuItems = buildSelectionMenuItems(
+    selectedTracks.length,
+    selectedTracksWithPaths.length,
+    filteredTracks.length,
+    allFilteredSelected,
+  );
+  $: gridTemplate = tableGridTemplate(columns);
   $: matchedCount =
     syncRun?.matched ??
     tracks.filter((track) => track.spotifyMemberships.length > 0).length;
   $: hasMore = tracks.length < total;
   $: filterActive =
     search.trim() !== '' ||
-    spotifyState !== 'all' ||
+    statusFilter !== 'all' ||
     pathFilter.trim() !== '' ||
     acquisitionFilter !== 'all' ||
     matchFilter !== 'all' ||
@@ -126,8 +114,10 @@
     );
   }
 
-  function membershipLabel(kind: string, name: string): string {
-    return kind === 'liked_songs' ? 'Liked Songs' : name;
+  function playlistLabels(track: LibraryTrackRow): string[] {
+    return track.spotifyMemberships
+      .filter((membership) => membership.kind === 'playlist')
+      .map((membership) => membership.name);
   }
 
   function artworkUrl(track: LibraryTrackRow): string | null {
@@ -141,6 +131,85 @@
 
   async function copyText(value: string) {
     await navigator.clipboard.writeText(value);
+  }
+
+  function toggleTrackSelection(track: LibraryTrackRow, selected: boolean) {
+    const next = new Set(selectedTrackIds);
+    if (selected) next.add(track.id);
+    else next.delete(track.id);
+    selectedTrackIds = next;
+  }
+
+  function toggleSelectAllShown() {
+    if (filteredTracks.length === 0) return;
+    const next = new Set(selectedTrackIds);
+    if (allFilteredSelected) {
+      for (const track of filteredTracks) next.delete(track.id);
+    } else {
+      for (const track of filteredTracks) next.add(track.id);
+    }
+    selectedTrackIds = next;
+  }
+
+  function clearSelection() {
+    if (selectedTrackIds.size === 0) return;
+    selectedTrackIds = new Set();
+  }
+
+  async function copySelectedFilePaths() {
+    const paths = selectedTracksWithPaths.flatMap((track) =>
+      track.preferredFile?.path ? [track.preferredFile.path] : [],
+    );
+    if (paths.length === 0) return;
+    await copyText(paths.join('\n'));
+  }
+
+  async function copySelectedTrackNames() {
+    if (selectedTracks.length === 0) return;
+    await copyText(
+      selectedTracks
+        .map((track) =>
+          track.artists.length > 0
+            ? `${track.title} — ${track.artists.join(', ')}`
+            : track.title,
+        )
+        .join('\n'),
+    );
+  }
+
+  function buildSelectionMenuItems(
+    selectedCount: number,
+    selectedPathCount: number,
+    shownCount: number,
+    allShownSelected: boolean,
+  ): OverflowMenuItem[] {
+    return [
+      {
+        label: allShownSelected ? 'Clear All Shown' : 'Select All Shown',
+        icon: allShownSelected ? 'close' : 'check',
+        action: toggleSelectAllShown,
+        disabled: shownCount === 0,
+      },
+      {
+        label: 'Clear Selection',
+        icon: 'close',
+        action: clearSelection,
+        disabled: selectedCount === 0,
+      },
+      {
+        label: 'Copy Selected File Paths',
+        icon: 'copy',
+        action: copySelectedFilePaths,
+        disabled: selectedPathCount === 0,
+        separatorBefore: true,
+      },
+      {
+        label: 'Copy Selected Track Names',
+        icon: 'copy',
+        action: copySelectedTrackNames,
+        disabled: selectedCount === 0,
+      },
+    ];
   }
 
   function trackMenuItems(track: LibraryTrackRow): OverflowMenuItem[] {
@@ -191,9 +260,12 @@
     )
       return false;
 
-    const onSpotify = track.spotifyMemberships.length > 0;
-    if (spotifyState === 'spotify' && !onSpotify) return false;
-    if (spotifyState === 'local' && onSpotify) return false;
+    if (
+      statusFilter !== 'all' &&
+      localLibraryTrackStatus(track.spotifyMemberships.length > 0) !==
+        statusFilter
+    )
+      return false;
 
     const normalizedPath = pathFilter.trim().toLocaleLowerCase();
     if (
@@ -234,14 +306,12 @@
         return track.durationMs ?? -1;
       case 'format':
         return track.preferredFile?.format ?? '';
-      case 'spotify':
-        return track.spotifyMemberships.length > 0 ? 1 : 0;
-      case 'collections':
-        return track.spotifyMemberships
-          .map((membership) =>
-            membershipLabel(membership.kind, membership.name),
-          )
-          .join(', ');
+      case 'status':
+        return trackStatusSortValue(
+          localLibraryTrackStatus(track.spotifyMemberships.length > 0),
+        );
+      case 'playlists':
+        return playlistLabels(track).join(', ');
       case 'title':
       default:
         return track.title;
@@ -264,16 +334,16 @@
   }
 
   function clearFilters() {
-    spotifyState = 'all';
+    statusFilter = 'all';
     pathFilter = '';
     acquisitionFilter = 'all';
     matchFilter = 'all';
     explicitFilter = 'all';
   }
 
-  function setSpotifyState(value: 'all' | 'spotify' | 'local') {
+  function setStatusFilter(value: 'all' | TrackStatus) {
     lastAutoLoadOffset = -1;
-    spotifyState = value;
+    statusFilter = value;
     loadAllRequested = true;
   }
 </script>
@@ -324,7 +394,7 @@
     </div>
     <div class="metric-inline">
       <div class="metric-value">{formatNumber(matchedCount)}</div>
-      <div class="metric-label">On Spotify</div>
+      <div class="metric-label">Local + Spotify</div>
     </div>
     <div class="metric-inline attention">
       <div class="metric-value">{formatNumber(issueCount)}</div>
@@ -357,6 +427,10 @@
       {/if}
       <Icon name="chevron-down" size={13} />
     </button>
+    <OverflowMenu
+      items={selectionMenuItems}
+      ariaLabel="Local library selection actions"
+    />
   </div>
 
   {#if advancedOpen}
@@ -369,19 +443,18 @@
       </div>
       <div class="filters-grid">
         <label class="filter-field">
-          <span class="filter-label">Spotify Status</span>
+          <span class="filter-label">Status</span>
           <select
-            value={spotifyState}
-            aria-label="Spotify state"
+            value={statusFilter}
+            aria-label="Track status"
             class="filter-select"
             onchange={(event) =>
-              setSpotifyState(
-                event.currentTarget.value as 'all' | 'spotify' | 'local',
-              )}
+              setStatusFilter(event.currentTarget.value as 'all' | TrackStatus)}
           >
             <option value="all">Any status</option>
-            <option value="spotify">On Spotify</option>
-            <option value="local">Local Only</option>
+            {#each localLibraryTrackStatuses as status (status)}
+              <option value={status}>{trackStatusLabel(status)}</option>
+            {/each}
           </select>
         </label>
         <label class="filter-field">
@@ -452,23 +525,44 @@
   {:else if filteredTracks.length === 0}
     <div class="empty-state">No local tracks match the current filters.</div>
   {:else}
-    <div class="data-table">
-      <div class="table-scroll">
-        <DataTableHeader
-          bind:columns
-          bind:sortId
-          bind:sortDirection
-          storageKey="refrain.table.local.columns.v1"
-        />
-        {#each sortedTracks as track (track.id)}
-          {@const art = artworkUrl(track)}
-          <article
-            class="table-row column-table-grid"
-            style={`grid-template-columns:${gridTemplate}; width:${tableWidth}px; min-width:${tableWidth}px;`}
-          >
-            {#each columns as column (column.id)}
-              {#if column.id === 'title'}
-                <div class="track-primary">
+    <div
+      class="data-table local-library-table"
+      class:compact={compactRows}
+      bind:clientWidth={tableViewportWidth}
+    >
+      <DataTableHeader
+        bind:columns
+        bind:sortId
+        bind:sortDirection
+        compact={compactRows}
+        storageKey="refrain.table.local.columns.v4"
+        sharedStorageKey="refrain.table.track-columns.v1"
+        sharedColumnIds={sharedTrackColumnIds}
+      />
+      <div class="table-scroll local-library-scroll">
+        {#if compactRows}
+          <div class="track-card-list">
+            {#each sortedTracks as track (track.id)}
+              {@const art = artworkUrl(track)}
+              <article
+                class="track-card local-track-card"
+                class:selected={selectedTrackIds.has(track.id)}
+              >
+                <div class="track-card-main">
+                  <label
+                    class="track-selection-cell local-track-selection-cell"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedTrackIds.has(track.id)}
+                      aria-label={`Select ${track.title}`}
+                      onchange={(event) =>
+                        toggleTrackSelection(
+                          track,
+                          event.currentTarget.checked,
+                        )}
+                    />
+                  </label>
                   {#if art}
                     <img
                       src={art}
@@ -483,74 +577,151 @@
                         .toUpperCase()}
                     </div>
                   {/if}
-                  <div class="track-copy">
+                  <div class="track-card-copy">
                     <div class="track-title-line">
                       <p class="track-title">{track.title}</p>
                       {#if track.explicit}<span class="explicit-badge">E</span
                         >{/if}
                     </div>
-                    {#if track.preferredFile}
-                      <p
-                        class="track-secondary mono-path"
-                        title={track.preferredFile.path}
-                      >
-                        {track.preferredFile.path}
-                      </p>
-                    {:else}
-                      <p class="track-secondary">No preferred file</p>
-                    {/if}
+                    <p class="track-card-context">
+                      {track.artists.join(', ') || 'Unknown artist'} · {track.album ??
+                        'Unknown album'}
+                    </p>
+                    <p
+                      class="track-secondary mono-path"
+                      title={track.preferredFile?.path ?? 'No preferred file'}
+                    >
+                      {track.preferredFile?.path ?? 'No preferred file'}
+                    </p>
                   </div>
                 </div>
-              {:else if column.id === 'artist'}
-                <span class="cell-truncate"
-                  >{track.artists.join(', ') || 'Unknown artist'}</span
-                >
-              {:else if column.id === 'album'}
-                <span class="cell-truncate"
-                  >{track.album ?? 'Unknown album'}</span
-                >
-              {:else if column.id === 'year'}
-                <span>{track.releaseYear ?? '—'}</span>
-              {:else if column.id === 'duration'}
-                <span>{formatTrackDuration(track.durationMs)}</span>
-              {:else if column.id === 'format'}
-                <span>{track.preferredFile?.format?.toUpperCase() ?? '—'}</span>
-              {:else if column.id === 'spotify'}
-                <span class="state-text">
-                  <span
-                    class:success={track.spotifyMemberships.length > 0}
-                    class:warning={track.spotifyMemberships.length === 0}
-                    class="state-dot"
-                  ></span>
-                  {track.spotifyMemberships.length > 0
-                    ? 'On Spotify'
-                    : 'Local Only'}
-                </span>
-              {:else if column.id === 'collections'}
-                <div class="cell-truncate collection-chip-cell">
-                  {#each track.spotifyMemberships.slice(0, 2) as membership (`${membership.kind}:${membership.name}`)}
-                    <span class="chip"
-                      >{membershipLabel(membership.kind, membership.name)}</span
-                    >
-                  {/each}
-                  {#if track.spotifyMemberships.length > 2}
-                    <span class="chip"
-                      >+{track.spotifyMemberships.length - 2}</span
-                    >
-                  {/if}
-                  {#if track.spotifyMemberships.length === 0}
-                    <span style="color:var(--text-tertiary)">—</span>
-                  {/if}
+                <div class="track-card-actions">
+                  <OverflowMenu
+                    items={trackMenuItems(track)}
+                    ariaLabel={`Actions for ${track.title}`}
+                  />
                 </div>
-              {:else if column.id === 'actions'}
-                <OverflowMenu
-                  items={trackMenuItems(track)}
-                  ariaLabel={`Actions for ${track.title}`}
-                />
-              {/if}
+                <div class="track-card-meta" aria-label="Track metadata">
+                  <span>{track.releaseYear ?? 'Unknown year'}</span>
+                  <span>{formatTrackDuration(track.durationMs)}</span>
+                  <span
+                    >{track.preferredFile?.format?.toUpperCase() ??
+                      'Unknown format'}</span
+                  >
+                </div>
+                <div class="track-card-footer">
+                  <TrackStatusView
+                    status={localLibraryTrackStatus(
+                      track.spotifyMemberships.length > 0,
+                    )}
+                  />
+                  <div class="track-card-collections">
+                    <CollectionChips labels={playlistLabels(track)} />
+                  </div>
+                </div>
+              </article>
             {/each}
-          </article>
-        {/each}
+          </div>
+        {:else}
+          {#each sortedTracks as track (track.id)}
+            {@const art = artworkUrl(track)}
+            <article
+              class="table-row column-table-grid"
+              class:selected={selectedTrackIds.has(track.id)}
+              style={`grid-template-columns:${gridTemplate};`}
+            >
+              {#each columns as column (column.id)}
+                {#if column.id === 'order'}
+                  <div class="track-order-cell">
+                    <label
+                      class="track-selection-cell local-track-selection-cell"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTrackIds.has(track.id)}
+                        aria-label={`Select ${track.title}`}
+                        onchange={(event) =>
+                          toggleTrackSelection(
+                            track,
+                            event.currentTarget.checked,
+                          )}
+                      />
+                    </label>
+                  </div>
+                {:else if column.id === 'title'}
+                  <div class="track-primary">
+                    {#if art}
+                      <img
+                        src={art}
+                        alt=""
+                        loading="lazy"
+                        class="artwork-small"
+                      />
+                    {:else}
+                      <div class="artwork-small artwork-fallback">
+                        {(track.artists[0] ?? track.title)
+                          .slice(0, 1)
+                          .toUpperCase()}
+                      </div>
+                    {/if}
+                    <div class="track-copy">
+                      <div class="track-title-line">
+                        <p class="track-title">{track.title}</p>
+                        {#if track.explicit}<span class="explicit-badge">E</span
+                          >{/if}
+                      </div>
+                      {#if track.preferredFile}
+                        <p
+                          class="track-secondary mono-path"
+                          title={track.preferredFile.path}
+                        >
+                          {track.preferredFile.path}
+                        </p>
+                      {:else}
+                        <p class="track-secondary">No preferred file</p>
+                      {/if}
+                    </div>
+                  </div>
+                {:else if column.id === 'artist'}
+                  <span class="cell-truncate"
+                    >{track.artists.join(', ') || 'Unknown artist'}</span
+                  >
+                {:else if column.id === 'album'}
+                  <span class="cell-truncate"
+                    >{track.album ?? 'Unknown album'}</span
+                  >
+                {:else if column.id === 'year'}
+                  <span>{track.releaseYear ?? '—'}</span>
+                {:else if column.id === 'duration'}
+                  <span>{formatTrackDuration(track.durationMs)}</span>
+                {:else if column.id === 'format'}
+                  <span
+                    >{track.preferredFile?.format?.toUpperCase() ?? '—'}</span
+                  >
+                {:else if column.id === 'status'}
+                  <TrackStatusView
+                    status={localLibraryTrackStatus(
+                      track.spotifyMemberships.length > 0,
+                    )}
+                  />
+                {:else if column.id === 'playlists'}
+                  {@const playlists = playlistLabels(track)}
+                  <div class="collection-chip-cell">
+                    <CollectionChips labels={playlists} />
+                    {#if playlists.length === 0}
+                      <span style="color:var(--text-tertiary)">—</span>
+                    {/if}
+                  </div>
+                {:else if column.id === 'actions'}
+                  <OverflowMenu
+                    items={trackMenuItems(track)}
+                    ariaLabel={`Actions for ${track.title}`}
+                  />
+                {/if}
+              {/each}
+            </article>
+          {/each}
+        {/if}
         {#if hasMore}
           <div class="table-load-more-row">
             <button

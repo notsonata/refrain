@@ -35,6 +35,7 @@
   export let playlistsLoadingMore = false;
   export let trackingBusyId: number | null = null;
   export let trackingBulkBusy = false;
+  export let detailsSidebarOpen = true;
 
   export let onSelectSavedAlbum:
     ((album: SourceCollectionSummary) => void) | undefined = undefined;
@@ -68,11 +69,18 @@
   let lastCollectionAutoLoadSection: SpotifySection | null = null;
   let collectionActionError: string | null = null;
   let coverDownloading = false;
-  let detailsSidebarOpen = true;
   let trackListController: TrackListSelectionController | undefined;
   let selectedTrackCount = 0;
   let selectableTrackCount = 0;
   let allShownSelected = false;
+  let allSelectedTracksTracked = false;
+  $: trackSelectionItems = buildTrackSelectionMenuItems(
+    selectedTrackCount,
+    selectableTrackCount,
+    allShownSelected,
+    allSelectedTracksTracked,
+    trackingBulkBusy,
+  );
 
   $: accessiblePlaylists = playlists.filter(
     (playlist) => playlist.isAccessible,
@@ -338,47 +346,41 @@
     return items;
   }
 
-  function updateTrackSelectionState(state: {
-    selectedCount: number;
-    selectableFilteredCount: number;
-    allFilteredSelected: boolean;
-  }) {
-    selectedTrackCount = state.selectedCount;
-    selectableTrackCount = state.selectableFilteredCount;
-    allShownSelected = state.allFilteredSelected;
+  function collectionFullyTracked(
+    collection: SourceCollectionSummary,
+  ): boolean {
+    if (collection.entryCount === 0) return collection.trackedByDefault;
+    return collection.trackedEntryCount >= collection.entryCount;
   }
 
-  function trackSelectionMenuItems(): OverflowMenuItem[] {
+  function buildTrackSelectionMenuItems(
+    selectedCount: number,
+    selectableCount: number,
+    allSelected: boolean,
+    allTracked: boolean,
+    busy: boolean,
+  ): OverflowMenuItem[] {
     return [
       {
-        label: allShownSelected ? 'Clear All Shown' : 'Select All Shown',
-        icon: allShownSelected ? 'close' : 'check',
+        label: allSelected ? 'Clear All Shown' : 'Select All Shown',
+        icon: allSelected ? 'close' : 'check',
         action: () => trackListController?.toggleSelectAllShown(),
-        disabled: trackingBulkBusy || selectableTrackCount === 0,
-      },
-      {
-        label: 'Track Selected',
-        icon: 'check',
-        action: () => trackListController?.applySelectedTracking(true),
-        disabled: trackingBulkBusy || selectedTrackCount === 0,
-      },
-      {
-        label: 'Exclude Selected',
-        icon: 'close',
-        action: () => trackListController?.applySelectedTracking(false),
-        disabled: trackingBulkBusy || selectedTrackCount === 0,
-      },
-      {
-        label: 'Use Default for Selected',
-        icon: 'refresh',
-        action: () => trackListController?.applySelectedTracking(null),
-        disabled: trackingBulkBusy || selectedTrackCount === 0,
+        disabled: busy || selectableCount === 0,
       },
       {
         label: 'Clear Selection',
         icon: 'close',
         action: () => trackListController?.clearSelection(),
-        disabled: trackingBulkBusy || selectedTrackCount === 0,
+        disabled: busy || selectedCount === 0,
+      },
+      {
+        label: allTracked
+          ? 'Exclude Selected from Tracking'
+          : 'Include Selected in Tracking',
+        icon: allTracked ? 'close' : 'check',
+        action: () => trackListController?.applySelectedTracking(!allTracked),
+        disabled: busy || selectedCount === 0,
+        separatorBefore: true,
       },
     ];
   }
@@ -404,6 +406,7 @@
           type="button"
           class="icon-button"
           aria-label="Back to collections"
+          title="Back to collections"
           onclick={() => onBackToCollections?.()}
         >
           <Icon name="back" size={17} />
@@ -517,24 +520,31 @@
                 </span>
                 <button
                   type="button"
-                  class="tracking-switch"
-                  class:active={displayedCollection.trackedByDefault}
+                  class="tracking-switch tracking-switch-emphasis"
+                  class:active={collectionFullyTracked(displayedCollection)}
                   aria-label={section === 'albums'
                     ? 'Track Album'
                     : 'Track Playlist'}
-                  aria-pressed={displayedCollection.trackedByDefault}
+                  title={collectionFullyTracked(displayedCollection)
+                    ? section === 'albums'
+                      ? 'Stop tracking this album'
+                      : 'Stop tracking this playlist'
+                    : section === 'albums'
+                      ? 'Track every song in this album'
+                      : 'Track every song in this playlist'}
+                  aria-pressed={collectionFullyTracked(displayedCollection)}
                   disabled={trackingBusyId === -displayedCollection.id}
                   onclick={() =>
                     onSetCollectionTracking?.(
                       displayedCollection!,
-                      !displayedCollection!.trackedByDefault,
+                      !collectionFullyTracked(displayedCollection!),
                     )}
                 >
                   <span class="tracking-switch-thumb"></span>
                 </button>
               </div>
               <OverflowMenu
-                items={trackSelectionMenuItems()}
+                items={trackSelectionItems}
                 ariaLabel={`${displayedCollection.name} selection actions`}
               />
             </div>
@@ -550,7 +560,10 @@
         {#key displayedCollection.id}
           <TrackList
             bind:this={trackListController}
-            onSelectionChange={updateTrackSelectionState}
+            bind:selectedCount={selectedTrackCount}
+            bind:selectableFilteredCount={selectableTrackCount}
+            bind:allFilteredSelected={allShownSelected}
+            bind:allSelectedTracked={allSelectedTracksTracked}
             {entries}
             total={collectionTotal}
             loading={collectionLoading}
@@ -746,21 +759,24 @@
             <span class="liked-tracking-label">Track Liked Songs</span>
             <button
               type="button"
-              class="tracking-switch"
-              class:active={displayedCollection.trackedByDefault}
+              class="tracking-switch tracking-switch-emphasis"
+              class:active={collectionFullyTracked(displayedCollection)}
               aria-label="Track Liked Songs"
-              aria-pressed={displayedCollection.trackedByDefault}
+              title={collectionFullyTracked(displayedCollection)
+                ? 'Stop tracking Liked Songs'
+                : 'Track every song in Liked Songs'}
+              aria-pressed={collectionFullyTracked(displayedCollection)}
               disabled={trackingBusyId === -displayedCollection.id}
               onclick={() =>
                 onSetCollectionTracking?.(
                   displayedCollection!,
-                  !displayedCollection!.trackedByDefault,
+                  !collectionFullyTracked(displayedCollection!),
                 )}
             >
               <span class="tracking-switch-thumb"></span>
             </button>
             <OverflowMenu
-              items={trackSelectionMenuItems()}
+              items={trackSelectionItems}
               ariaLabel="Liked Songs selection actions"
             />
           </div>
@@ -774,7 +790,10 @@
         {#key displayedCollection.id}
           <TrackList
             bind:this={trackListController}
-            onSelectionChange={updateTrackSelectionState}
+            bind:selectedCount={selectedTrackCount}
+            bind:selectableFilteredCount={selectableTrackCount}
+            bind:allFilteredSelected={allShownSelected}
+            bind:allSelectedTracked={allSelectedTracksTracked}
             {entries}
             total={collectionTotal}
             loading={collectionLoading}

@@ -304,6 +304,10 @@ fn refresh_with_api<A: SpotifySourceApi>(
                         .item_count
                         .is_some_and(|item_count| item_count == state.entry_count)
             });
+        let inaccessible_snapshot_unchanged = playlist.snapshot_id.is_some()
+            && stored.as_ref().is_some_and(|state| {
+                !state.is_accessible && state.snapshot_id == playlist.snapshot_id
+            });
 
         let base_collection = SourceCollection {
             source_account_id: account_id,
@@ -324,6 +328,19 @@ fn refresh_with_api<A: SpotifySourceApi>(
                 .upsert_source_collection(&base_collection)
                 .map_err(|error| database_error("update playlist metadata", error))?;
             unchanged_playlists += 1;
+            continue;
+        }
+
+        if inaccessible_snapshot_unchanged {
+            let mut inaccessible = base_collection;
+            inaccessible.is_accessible = false;
+            inaccessible.access_issue = Some(
+                "Spotify only allows item access for playlists you own or collaborate on.".into(),
+            );
+            database
+                .upsert_source_collection(&inaccessible)
+                .map_err(|error| database_error("update inaccessible playlist metadata", error))?;
+            inaccessible_playlists += 1;
             continue;
         }
 

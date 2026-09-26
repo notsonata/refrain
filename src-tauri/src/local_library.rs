@@ -323,6 +323,9 @@ fn inspect_audio_file(
             let tag_album = tag
                 .and_then(|tag| tag.album())
                 .map(|value| value.into_owned());
+            let tag_year = tag
+                .and_then(|tag| tag.date())
+                .map(|date| i64::from(date.year));
             let mut tag_artists = tag
                 .map(|tag| {
                     tag.get_strings(ItemKey::TrackArtists)
@@ -368,6 +371,7 @@ fn inspect_audio_file(
                 tag_title,
                 tag_artists,
                 tag_album,
+                tag_year,
                 tag_isrc,
                 artwork_path,
                 artwork_mime,
@@ -388,6 +392,7 @@ fn inspect_audio_file(
             tag_title: None,
             tag_artists: Vec::new(),
             tag_album: None,
+            tag_year: None,
             tag_isrc: None,
             artwork_path: None,
             artwork_mime: None,
@@ -600,6 +605,7 @@ mod tests {
             tag_title: Some("Song".into()),
             tag_artists: vec!["Artist".into()],
             tag_album: Some("Album".into()),
+            tag_year: Some(2026),
             tag_isrc: Some("USABC1234567".into()),
             artwork_path: None,
             artwork_mime: None,

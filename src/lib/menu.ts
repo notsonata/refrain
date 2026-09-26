@@ -6,4 +6,5 @@ export interface OverflowMenuItem {
   icon: OverflowMenuIcon;
   action: () => void | Promise<void>;
   disabled?: boolean;
+  separatorBefore?: boolean;
 }

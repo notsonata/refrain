@@ -16,6 +16,7 @@ const MIGRATION_ARRAY: &[M] = &[
     M::up(include_str!(
         "../../migrations/0011_source_account_profile_image.sql"
     )),
+    M::up(include_str!("../../migrations/0012_local_file_year.sql")),
 ];
 
 pub static MIGRATIONS: Migrations = Migrations::from_slice(MIGRATION_ARRAY);

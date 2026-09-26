@@ -14,11 +14,11 @@ This plan records the implementation sequence from the initial project foundatio
 
 ## Current State
 
-Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 11 are complete. Milestone 12 is implemented locally and awaiting final native UI smoke verification.
+Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 12 are complete. Milestone 13 is implemented locally and awaiting its documented mock-daemon provider verification plus one real Soulseek download smoke test before release packaging.
 
 The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, scoped Local/Spotify synchronization, persistent Spotify tracking rules, automated validation, native bundle configuration, and tag-triggered release packaging.
 
-Milestones 7 through 11, Local Library Index, Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, and Issues and Manual Resolution UI, are complete. Milestone 12, Acquisition Provider Boundary, now has its provider-neutral persistence/orchestration boundary, fake-provider coverage, acquisition status projection, failed-job issue projection, staging lifecycle, retry/cancellation behavior, and the two carried UI fixes implemented locally. Milestone 13, Sockseek Sidecar Provider, follows after the final native UI smoke check. Provider verification/import, exports, and scheduling remain future v1 work.
+Milestones 7 through 12, Local Library Index, Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, Issues and Manual Resolution UI, and Acquisition Provider Boundary, are complete. Milestone 13, Sockseek Sidecar Provider, has its pinned sidecar integration, provider adapter, credential handling, acquisition settings, release packaging support, and staging flow implemented locally. Its remaining exit gate is the documented mock-daemon provider verification plus one real Soulseek download smoke test. Acquisition verification/import, exports, mirroring, scheduling, and v1 hardening remain future work.
 
 The approved v1 direction remains:
 

@@ -893,6 +893,7 @@ mod tests {
                 tag_title: Some("Song".into()),
                 tag_artists: vec!["Artist".into()],
                 tag_album: Some("Album".into()),
+                tag_year: Some(2026),
                 tag_isrc: Some("USAAA0000002".into()),
                 artwork_path: None,
                 artwork_mime: None,

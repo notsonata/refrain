@@ -8,25 +8,33 @@ impl Database {
         collection_id: i64,
         included: bool,
     ) -> Result<(), DatabaseError> {
-        self.with_connection(|connection| {
-            let exists = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM source_collections WHERE id = ?1)",
-                [collection_id],
-                |row| row.get::<_, i64>(0),
-            )? != 0;
-            if !exists {
-                return Err(rusqlite::Error::QueryReturnedNoRows);
-            }
-            connection.execute(
-                "INSERT INTO source_collection_sync_rules (collection_id, default_included, updated_at)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(collection_id) DO UPDATE SET
-                    default_included = excluded.default_included,
-                    updated_at = excluded.updated_at",
-                params![collection_id, i64::from(included), now_ms()],
-            )?;
-            Ok(())
-        })
+        let mut connection = self.lock_connection()?;
+        let transaction = connection.transaction()?;
+
+        let exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM source_collections WHERE id = ?1)",
+            [collection_id],
+            |row| row.get::<_, i64>(0),
+        )? != 0;
+        if !exists {
+            return Err(rusqlite::Error::QueryReturnedNoRows.into());
+        }
+
+        transaction.execute(
+            "INSERT INTO source_collection_sync_rules (collection_id, default_included, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(collection_id) DO UPDATE SET
+                default_included = excluded.default_included,
+                updated_at = excluded.updated_at",
+            params![collection_id, i64::from(included), now_ms()],
+        )?;
+        transaction.execute(
+            "DELETE FROM source_track_sync_overrides WHERE collection_id = ?1",
+            [collection_id],
+        )?;
+
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn set_source_track_tracking(

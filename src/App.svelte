@@ -117,6 +117,7 @@
   let playlistTotal = 0;
   let playlistsLoadingMore = false;
   let selectedPlaylist: SourceCollectionSummary | null = null;
+  let spotifyDetailsSidebarOpen = true;
   let currentCollection: SourceCollectionSummary | null = null;
   let collectionEntries: SourceCollectionEntryView[] = [];
   let collectionTotal = 0;
@@ -170,6 +171,21 @@
     let sourceUnlisten: UnlistenFn | undefined;
     let libraryUnlisten: UnlistenFn | undefined;
 
+    const suppressWebviewContextMenu = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        event.preventDefault();
+        return;
+      }
+
+      const editable = target.closest(
+        'input, textarea, [contenteditable="true"], [contenteditable=""]',
+      );
+      if (!editable) event.preventDefault();
+    };
+
+    window.addEventListener('contextmenu', suppressWebviewContextMenu);
+
     void listen<SpotifySourceRefreshProgress>(sourceProgressEvent, (event) => {
       sourceProgress = event.payload;
     }).then((stopListening) => {
@@ -194,6 +210,7 @@
       disposed = true;
       sourceUnlisten?.();
       libraryUnlisten?.();
+      window.removeEventListener('contextmenu', suppressWebviewContextMenu);
     };
   });
 
@@ -230,7 +247,7 @@
     }
   }
 
-  async function hydrateSourceState() {
+  async function hydrateSourceState(reloadActiveSection = true) {
     sourceHydrating = true;
     sourceHydrationError = null;
     try {
@@ -253,7 +270,7 @@
           null;
       }
 
-      if (activeView === 'spotify') {
+      if (reloadActiveSection && activeView === 'spotify') {
         await loadSpotifySection(spotifySection);
       }
     } catch (error) {
@@ -523,14 +540,8 @@
   }
 
   async function loadSpotifySection(section: SpotifySection) {
-    const sectionChanged = spotifySection !== section;
     spotifySection = section;
     collectionError = null;
-
-    if (sectionChanged) {
-      if (section === 'albums') selectedSavedAlbum = null;
-      if (section === 'playlists') selectedPlaylist = null;
-    }
 
     if (section === 'liked' && sourceOverview?.likedSongs) {
       await loadCollection(sourceOverview.likedSongs);
@@ -745,16 +756,14 @@
     included: boolean | null,
   ) {
     if (!currentCollection || !entry.track) return;
+    const collection = currentCollection;
+    let updated = false;
     trackingBusyId = entry.track.id;
     collectionError = null;
     try {
-      await setSourceTrackTracking(
-        currentCollection.id,
-        entry.track.id,
-        included,
-      );
-      await loadCollection(currentCollection);
-      await hydrateSourceState();
+      await setSourceTrackTracking(collection.id, entry.track.id, included);
+      await loadCollection(collection);
+      updated = true;
     } catch (error) {
       collectionError = operationError(
         error,
@@ -763,6 +772,8 @@
     } finally {
       trackingBusyId = null;
     }
+
+    if (updated) void hydrateSourceState(false);
   }
 
   async function updateTracksTracking(
@@ -770,6 +781,7 @@
     included: boolean | null,
   ) {
     if (!currentCollection) return;
+    const collection = currentCollection;
     const sourceTrackIds = [
       ...new Set(
         entries.flatMap((entry) => (entry.track ? [entry.track.id] : [])),
@@ -777,16 +789,13 @@
     ];
     if (sourceTrackIds.length === 0) return;
 
+    let updated = false;
     trackingBulkBusy = true;
     collectionError = null;
     try {
-      await setSourceTracksTracking(
-        currentCollection.id,
-        sourceTrackIds,
-        included,
-      );
-      await loadCollection(currentCollection);
-      await hydrateSourceState();
+      await setSourceTracksTracking(collection.id, sourceTrackIds, included);
+      await loadCollection(collection);
+      updated = true;
     } catch (error) {
       collectionError = operationError(
         error,
@@ -795,6 +804,8 @@
     } finally {
       trackingBulkBusy = false;
     }
+
+    if (updated) void hydrateSourceState(false);
   }
 
   async function loadCollection(
@@ -1163,6 +1174,7 @@
         />
       {:else if activeView === 'spotify'}
         <SpotifyWorkspace
+          bind:detailsSidebarOpen={spotifyDetailsSidebarOpen}
           section={spotifySection}
           overview={sourceOverview}
           {savedAlbums}
