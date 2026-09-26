@@ -556,7 +556,7 @@ impl SockseekProvider {
 
     fn compatible_daemon(&self) -> Result<(), ProviderError> {
         let info: ServerInfo = self.get_json("/api/server/info")?;
-        if info.version != SOCKSEEK_VERSION {
+        if !versions_equivalent(SOCKSEEK_VERSION, &info.version) {
             return Err(ProviderError::new(
                 "providerVersionMismatch",
                 format!(
@@ -638,6 +638,34 @@ impl SockseekProvider {
     }
 }
 
+fn versions_equivalent(required: &str, reported: &str) -> bool {
+    fn numeric_parts(version: &str) -> Option<Vec<u64>> {
+        let mut parts = version
+            .split('.')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        while parts.len() > 1 && parts.last() == Some(&0) {
+            parts.pop();
+        }
+        Some(parts)
+    }
+
+    match (numeric_parts(required), numeric_parts(reported)) {
+        (Some(required), Some(reported)) => required == reported,
+        _ => false,
+    }
+}
+
+fn soulseek_not_ready_message(state: &str) -> String {
+    let state = state.trim();
+    if state.is_empty() || state.eq_ignore_ascii_case("none") {
+        "Sockseek is ready. Soulseek connects when acquisition starts.".to_owned()
+    } else {
+        format!("Sockseek is ready. Soulseek state: {state}.")
+    }
+}
+
 impl AcquisitionProvider for SockseekProvider {
     fn id(&self) -> &'static str {
         SOCKSEEK_PROVIDER_ID
@@ -647,13 +675,15 @@ impl AcquisitionProvider for SockseekProvider {
         self.compatible_daemon()?;
         let status: ServerStatus = self.get_json("/api/server/status")?;
         Ok(ProviderHealth {
-            available: status.soulseek_client.is_ready,
+            // Sockseek 3.0.5 creates and logs in its Soulseek client lazily
+            // when a login-requiring job is submitted. The normal idle state
+            // is therefore `None`, not provider unavailability.
+            available: true,
             version: Some(SOCKSEEK_VERSION.to_owned()),
-            message: (!status.soulseek_client.is_ready).then(|| {
-                format!(
-                    "Sockseek is running, but Soulseek is not ready ({})",
-                    status.soulseek_client.state
-                )
+            message: Some(if status.soulseek_client.is_ready {
+                "Soulseek connected.".to_owned()
+            } else {
+                soulseek_not_ready_message(&status.soulseek_client.state)
             }),
         })
     }
@@ -977,4 +1007,36 @@ struct JobSummary {
 #[derive(Debug, Deserialize)]
 struct ApiError {
     error: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{soulseek_not_ready_message, versions_equivalent};
+
+    #[test]
+    fn sockseek_versions_accept_trailing_zero_components() {
+        assert!(versions_equivalent("3.0.5", "3.0.5"));
+        assert!(versions_equivalent("3.0.5", "3.0.5.0"));
+        assert!(versions_equivalent("3.0.5.0", "3.0.5"));
+        assert!(versions_equivalent("3.0.5", "3.0.5.0.0"));
+    }
+
+    #[test]
+    fn sockseek_versions_reject_actual_version_differences() {
+        assert!(!versions_equivalent("3.0.5", "3.0.5.1"));
+        assert!(!versions_equivalent("3.0.5", "3.0.6.0"));
+        assert!(!versions_equivalent("3.0.5", "3.0.5-beta"));
+    }
+
+    #[test]
+    fn sockseek_health_hides_empty_none_state() {
+        assert_eq!(
+            soulseek_not_ready_message("None"),
+            "Sockseek is ready. Soulseek connects when acquisition starts."
+        );
+        assert_eq!(
+            soulseek_not_ready_message("Connecting"),
+            "Sockseek is ready. Soulseek state: Connecting."
+        );
+    }
 }

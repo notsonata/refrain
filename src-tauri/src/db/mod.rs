@@ -12,6 +12,7 @@ mod settings;
 mod source;
 mod source_browse;
 mod source_refresh;
+mod source_tracking;
 
 use std::{
     error::Error,

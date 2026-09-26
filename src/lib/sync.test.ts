@@ -10,6 +10,7 @@ import {
 
 const run: SyncRun = {
   id: 14,
+  scope: 'spotify',
   trigger: 'manual',
   status: 'succeeded',
   phase: 'complete',
@@ -49,13 +50,13 @@ describe('sync commands', () => {
           return run as T;
         }
         expect(command).toBe('list_sync_runs');
-        expect(args).toEqual({ offset: 20, limit: 10 });
+        expect(args).toEqual({ scope: null, offset: 20, limit: 10 });
         return { items: [run], total: 21, offset: 20, limit: 10 } as T;
       },
     ) as InvokeFn;
 
     await expect(getSyncRun(14, invoke)).resolves.toEqual(run);
-    await expect(listSyncRuns(20, 10, invoke)).resolves.toEqual({
+    await expect(listSyncRuns(null, 20, 10, invoke)).resolves.toEqual({
       items: [run],
       total: 21,
       offset: 20,

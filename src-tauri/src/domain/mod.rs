@@ -17,7 +17,7 @@ pub use issues::{
 };
 pub use library::{
     LibraryTrackFileSummary, LibraryTrackPage, LibraryTrackRow, LocalFile, LocalFilePage,
-    LocalLibraryOverview,
+    LocalLibraryOverview, SpotifyMembership,
 };
 pub(crate) use matching::MatchTrackDescriptor;
 pub use matching::{

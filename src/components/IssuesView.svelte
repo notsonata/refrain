@@ -79,13 +79,13 @@
 </script>
 
 <div class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-  <div class="mb-5 flex flex-wrap items-end justify-between gap-4">
+  <div class="mb-3 flex flex-wrap items-end justify-between gap-3">
     <div>
       <p class="text-xs uppercase tracking-wider text-slate-600">
         Resolution queue
       </p>
-      <h2 class="mt-1 text-2xl font-semibold">Issues</h2>
-      <p class="mt-1 text-sm text-slate-500">
+      <h2 class="mt-0.5 text-lg font-semibold">Issues</h2>
+      <p class="mt-0.5 text-xs text-slate-500">
         {total} unresolved {total === 1 ? 'condition' : 'conditions'}
       </p>
     </div>
@@ -100,9 +100,6 @@
         >{counts.invalidLocalFile} invalid</span
       >
       <span class="rounded bg-slate-900 px-2 py-1"
-        >{counts.inaccessibleCollection} inaccessible</span
-      >
-      <span class="rounded bg-slate-900 px-2 py-1"
         >{counts.acquisitionFailed} acquisition</span
       >
     </div>
@@ -110,7 +107,7 @@
 
   {#if error}
     <div
-      class="mb-4 rounded-xl border border-amber-900 bg-amber-950/30 p-5 text-sm text-amber-200"
+      class="mb-3 rounded-lg border border-amber-900 bg-amber-950/30 p-3 text-xs text-amber-200"
     >
       {error}
     </div>
@@ -118,13 +115,13 @@
 
   {#if loading && issues.length === 0}
     <div class="grid gap-2" aria-label="Loading issues">
-      {#each Array.from({ length: 6 }) as index (index)}
+      {#each Array.from({ length: 6 }, (_, index) => index) as index (index)}
         <div class="h-16 animate-pulse rounded-lg bg-slate-900"></div>
       {/each}
     </div>
   {:else if issues.length === 0}
     <div
-      class="rounded-xl border border-dashed border-emerald-900/60 px-6 py-14 text-center"
+      class="rounded-lg border border-dashed border-emerald-900/60 px-5 py-10 text-center"
     >
       <p class="text-sm font-medium text-emerald-300">No unresolved issues.</p>
       <p class="mt-2 text-sm text-slate-500">
@@ -134,21 +131,21 @@
     </div>
   {:else}
     <div
-      class="grid min-h-0 min-w-0 flex-1 grid-cols-[14rem_minmax(0,1fr)] gap-4 overflow-hidden"
+      class="grid min-h-0 min-w-0 flex-1 grid-cols-[12rem_minmax(0,1fr)] gap-3 overflow-hidden"
     >
       <aside
-        class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40"
+        class="flex min-h-0 flex-col overflow-hidden rounded-lg border border-slate-800 bg-slate-950/40"
       >
         <div class="min-h-0 flex-1 overflow-y-auto p-2">
           {#each issues as issue (issue.id)}
             <button
               type="button"
               onclick={() => onSelect?.(issue)}
-              class={`mb-1 w-full rounded-lg px-3 py-3 text-left transition ${selectedIssue?.id === issue.id ? 'bg-slate-900' : 'hover:bg-slate-900/60'}`}
+              class={`mb-1 w-full rounded-md px-2.5 py-2 text-left transition ${selectedIssue?.id === issue.id ? 'bg-slate-900' : 'hover:bg-slate-900/60'}`}
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <p class="truncate text-sm font-medium text-slate-200">
+                  <p class="truncate text-xs font-medium text-slate-200">
                     {issue.title}
                   </p>
                   <p class="mt-0.5 truncate text-xs text-slate-600">
@@ -181,7 +178,7 @@
       </aside>
 
       <section
-        class="min-h-0 min-w-0 overflow-y-auto rounded-xl border border-slate-800 p-5"
+        class="min-h-0 min-w-0 overflow-y-auto rounded-lg border border-slate-800 p-4"
       >
         {#if selectedIssue}
           <div class="flex flex-wrap items-start justify-between gap-3">
@@ -191,11 +188,11 @@
               >
                 {issueLabel(selectedIssue.kind)}
               </span>
-              <h3 class="mt-3 truncate text-xl font-semibold">
+              <h3 class="mt-2 truncate text-base font-semibold">
                 {selectedIssue.title}
               </h3>
               {#if selectedIssue.subtitle}
-                <p class="mt-1 text-sm text-slate-500">
+                <p class="mt-1 text-xs text-slate-500">
                   {selectedIssue.subtitle}
                 </p>
               {/if}
@@ -209,7 +206,7 @@
               ></div>
             {:else if review}
               <div
-                class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40 p-4"
+                class="mt-4 rounded-lg border border-slate-800 bg-slate-900/40 p-3"
               >
                 <p
                   class="text-xs font-medium uppercase tracking-wider text-slate-600"
@@ -233,10 +230,10 @@
                 {/if}
               </div>
 
-              <div class="mt-5 grid gap-3">
+              <div class="mt-4 grid gap-2">
                 {#each review.candidates as candidate (candidate.track.id)}
                   <article
-                    class={`rounded-lg border p-4 ${isRejected(candidate) ? 'border-slate-800 bg-slate-950/60 opacity-70' : 'border-slate-800 bg-slate-900/25'}`}
+                    class={`rounded-lg border p-3 ${isRejected(candidate) ? 'border-slate-800 bg-slate-950/60 opacity-70' : 'border-slate-800 bg-slate-900/25'}`}
                   >
                     <div
                       class="flex flex-wrap items-start justify-between gap-3"

@@ -63,6 +63,7 @@ impl SyncCoordinator {
     fn begin(
         self: &Arc<Self>,
         database: &Database,
+        scope: &str,
         trigger: &str,
     ) -> Result<SyncBegin, DatabaseError> {
         let mut active = self
@@ -73,7 +74,7 @@ impl SyncCoordinator {
             return Ok(SyncBegin::Existing(run_id));
         }
 
-        let run = database.create_sync_run(trigger)?;
+        let run = database.create_sync_run(scope, trigger)?;
         *active = Some(run.id);
         self.cancelled.store(false, Ordering::Release);
         Ok(SyncBegin::Started(SyncLease {
@@ -136,6 +137,33 @@ pub async fn start_sync(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncRun, String> {
+    start_scoped_sync("spotify", trigger, app, state).await
+}
+
+#[tauri::command]
+pub async fn start_local_sync(
+    trigger: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SyncRun, String> {
+    start_scoped_sync("local", trigger, app, state).await
+}
+
+#[tauri::command]
+pub async fn start_spotify_sync(
+    trigger: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SyncRun, String> {
+    start_scoped_sync("spotify", trigger, app, state).await
+}
+
+async fn start_scoped_sync(
+    scope: &'static str,
+    trigger: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SyncRun, String> {
     let trigger = trigger.unwrap_or_else(|| "manual".into());
     if !matches!(trigger.as_str(), "manual" | "startup" | "scheduled") {
         return Err("Sync trigger must be manual, startup, or scheduled.".into());
@@ -143,7 +171,7 @@ pub async fn start_sync(
 
     let begin = state
         .sync
-        .begin(&state.database, &trigger)
+        .begin(&state.database, scope, &trigger)
         .map_err(|error| sync_database_error("start sync", error))?;
     let lease = match begin {
         SyncBegin::Existing(run_id) => {
@@ -175,7 +203,7 @@ pub async fn start_sync(
             app: &app,
             app_data_dir: &app_data_dir,
         };
-        execute_sync(&context, spotify, run_id)
+        execute_sync(&context, spotify, run_id, scope)
     })
     .await
     {
@@ -220,13 +248,14 @@ pub fn get_sync_run(
 
 #[tauri::command]
 pub fn list_sync_runs(
+    scope: Option<String>,
     offset: u32,
     limit: u32,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncRunPage, String> {
     state
         .database
-        .sync_runs_page(offset, limit)
+        .sync_runs_page(scope.as_deref(), offset, limit)
         .map_err(|error| sync_database_error("list sync runs", error))
 }
 
@@ -234,8 +263,13 @@ fn execute_sync(
     context: &SyncExecutionContext<'_>,
     spotify: Arc<SpotifyClient>,
     run_id: i64,
+    scope: &str,
 ) -> Result<SyncRun, String> {
-    let outcome = run_initial_sync(context, spotify, run_id);
+    let outcome = if scope == "local" {
+        run_local_sync(context, run_id)
+    } else {
+        run_spotify_sync(context, spotify, run_id)
+    };
     let finish_result =
         match outcome {
             Ok(counts) => context
@@ -258,7 +292,7 @@ fn execute_sync(
         .ok_or_else(|| "Completed sync run could not be loaded.".to_owned())
 }
 
-fn run_initial_sync(
+fn run_spotify_sync(
     context: &SyncExecutionContext<'_>,
     spotify: Arc<SpotifyClient>,
     run_id: i64,
@@ -345,7 +379,7 @@ fn run_initial_sync(
     if sync.is_cancelled() {
         return Err(SyncExecutionFailure::Cancelled(empty_counts));
     }
-    let reconciliation = run_reconciliation_core(database, run_id, || sync.is_cancelled());
+    let reconciliation = run_spotify_reconciliation_core(database, run_id, || sync.is_cancelled());
     drop(source_guard);
     let counts = match reconciliation {
         Ok(counts) => counts,
@@ -415,7 +449,129 @@ fn run_initial_sync(
     }
 }
 
-fn run_reconciliation_core(
+fn run_local_sync(
+    context: &SyncExecutionContext<'_>,
+    run_id: i64,
+) -> Result<ReconciliationCounts, SyncExecutionFailure> {
+    let database = context.database;
+    let sync = context.sync;
+    let empty_counts = ReconciliationCounts::default();
+    let settings = database
+        .get_settings()
+        .map_err(|error| failed(empty_counts, "load sync settings", error))?;
+    let library_root = settings
+        .library_root
+        .filter(|root| !root.trim().is_empty())
+        .ok_or_else(|| SyncExecutionFailure::Failed {
+            counts: empty_counts,
+            message: "Choose a local library folder before starting synchronization.".into(),
+        })?;
+
+    database
+        .update_sync_run_phase(run_id, "scanLocalLibrary")
+        .map_err(|error| failed(empty_counts, "update sync phase", error))?;
+    scan_library(database, Path::new(&library_root), |_| {}).map_err(|error| {
+        SyncExecutionFailure::Failed {
+            counts: empty_counts,
+            message: error.to_string(),
+        }
+    })?;
+    if sync.is_cancelled() {
+        return Err(SyncExecutionFailure::Cancelled(empty_counts));
+    }
+
+    let counts = run_local_reconciliation_core(database, run_id, || sync.is_cancelled()).map_err(
+        |error| match error {
+            ReconciliationFailure::Cancelled(counts) => SyncExecutionFailure::Cancelled(counts),
+            ReconciliationFailure::Database(error) => SyncExecutionFailure::Failed {
+                counts: empty_counts,
+                message: error.to_string(),
+            },
+            ReconciliationFailure::InvalidState(message) => SyncExecutionFailure::Failed {
+                counts: empty_counts,
+                message,
+            },
+        },
+    )?;
+
+    database
+        .update_sync_run_phase(run_id, "normalizeFiles")
+        .map_err(|error| failed(counts, "update sync phase", error))?;
+    match normalize_resolved_files(database, Path::new(&library_root), || sync.is_cancelled()) {
+        Ok(summary) => {
+            tracing::info!(
+                run_id,
+                moved = summary.moved,
+                unchanged = summary.unchanged,
+                "local filesystem normalization completed"
+            );
+            Ok(counts)
+        }
+        Err(NormalizationError::Cancelled) => Err(SyncExecutionFailure::Cancelled(counts)),
+        Err(error) => Err(SyncExecutionFailure::Failed {
+            counts,
+            message: error.to_string(),
+        }),
+    }
+}
+
+fn run_local_reconciliation_core(
+    database: &Database,
+    run_id: i64,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<ReconciliationCounts, ReconciliationFailure> {
+    let mut counts = ReconciliationCounts::default();
+    database.update_sync_run_phase(run_id, "compareWithSpotify")?;
+    database.ensure_library_tracks_for_present_local_files()?;
+    let source_track_ids = database.accessible_source_track_ids()?;
+    let library_tracks = database.present_library_match_tracks()?;
+    let matcher = MatcherIndex::new(library_tracks);
+
+    for source_track_id in source_track_ids {
+        if is_cancelled() {
+            return Err(ReconciliationFailure::Cancelled(counts));
+        }
+        let source = database
+            .source_match_track(source_track_id)?
+            .ok_or_else(|| {
+                ReconciliationFailure::InvalidState(format!(
+                    "source track {source_track_id} disappeared during local comparison"
+                ))
+            })?;
+        let existing_link = database.persisted_track_link(source_track_id)?;
+        let rejected = database.rejected_library_track_ids(source_track_id)?;
+        let result = matcher.match_track(&source, existing_link.as_ref(), &rejected);
+
+        match result.outcome {
+            MatchOutcome::Automatic => {
+                let library_track_id = result.selected_library_track_id.ok_or_else(|| {
+                    ReconciliationFailure::InvalidState(
+                        "automatic match did not select a library track".into(),
+                    )
+                })?;
+                let link_changed = existing_link
+                    .as_ref()
+                    .map(|link| link.library_track_id != library_track_id)
+                    .unwrap_or(true);
+                if link_changed {
+                    database.persist_track_link(
+                        source_track_id,
+                        library_track_id,
+                        result.method.as_deref().unwrap_or("metadata"),
+                        result.confidence.unwrap_or_default(),
+                    )?;
+                }
+                counts.matched += 1;
+            }
+            MatchOutcome::Review => counts.needs_review += 1,
+            MatchOutcome::Unresolved => {}
+        }
+    }
+
+    Ok(counts)
+}
+
+fn run_spotify_reconciliation_core(
     database: &Database,
     run_id: i64,
     mut is_cancelled: impl FnMut() -> bool,
@@ -427,7 +583,7 @@ fn run_reconciliation_core(
     }
     database.ensure_library_tracks_for_present_local_files()?;
 
-    let source_track_ids = database.accessible_source_track_ids()?;
+    let source_track_ids = database.tracked_source_track_ids()?;
     let library_tracks = database.library_match_tracks()?;
     let matcher = MatcherIndex::new(library_tracks);
     let mut unresolved = Vec::new();
@@ -734,6 +890,8 @@ mod tests {
                 tag_artists: vec!["Artist".into()],
                 tag_album: Some("Album".into()),
                 tag_isrc: Some("USAAA0000002".into()),
+                artwork_path: None,
+                artwork_mime: None,
                 scan_error: None,
             })
             .unwrap();

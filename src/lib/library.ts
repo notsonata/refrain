@@ -20,6 +20,8 @@ export interface LocalFile {
   tagArtists: string[];
   tagAlbum: string | null;
   tagIsrc: string | null;
+  artworkPath: string | null;
+  artworkMime: string | null;
   scanError: string | null;
 }
 
@@ -43,6 +45,13 @@ export interface LibraryTrackFileSummary {
   ownership: 'managed' | 'external';
   state: 'present' | 'missing' | 'invalid';
   format: string | null;
+  artworkPath: string | null;
+  artworkMime: string | null;
+}
+
+export interface SpotifyMembership {
+  kind: 'liked_songs' | 'saved_album' | 'playlist' | string;
+  name: string;
 }
 
 export interface LibraryTrackRow {
@@ -52,12 +61,15 @@ export interface LibraryTrackRow {
   album: string | null;
   releaseYear: number | null;
   durationMs: number | null;
+  explicit: boolean | null;
   sourceTrackCount: number;
+  acquisitionStatus: string | null;
   localFileCount: number;
   presentFileCount: number;
   missingFileCount: number;
   invalidFileCount: number;
   preferredFile: LibraryTrackFileSummary | null;
+  spotifyMemberships: SpotifyMembership[];
 }
 
 export interface LibraryTrackPage {

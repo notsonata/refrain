@@ -42,13 +42,17 @@ struct SourceTrackSeed {
 }
 
 impl Database {
-    pub(crate) fn create_sync_run(&self, trigger: &str) -> Result<SyncRun, DatabaseError> {
+    pub(crate) fn create_sync_run(
+        &self,
+        scope: &str,
+        trigger: &str,
+    ) -> Result<SyncRun, DatabaseError> {
         self.with_connection(|connection| {
             let now = now_ms();
             connection.execute(
-                "INSERT INTO sync_runs (trigger, status, phase, started_at)
-                 VALUES (?1, 'running', 'prepare', ?2)",
-                params![trigger, now],
+                "INSERT INTO sync_runs (scope, trigger, status, phase, started_at)
+                 VALUES (?1, ?2, 'running', 'prepare', ?3)",
+                params![scope, trigger, now],
             )?;
             let id = connection.last_insert_rowid();
             sync_run_by_id(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
@@ -59,27 +63,58 @@ impl Database {
         self.with_connection(|connection| sync_run_by_id(connection, id))
     }
 
-    pub fn sync_runs_page(&self, offset: u32, limit: u32) -> Result<SyncRunPage, DatabaseError> {
+    pub fn sync_runs_page(
+        &self,
+        scope: Option<&str>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<SyncRunPage, DatabaseError> {
         let limit = limit.clamp(1, MAX_SYNC_RUN_PAGE_LIMIT);
         self.with_connection(|connection| {
-            let total = connection.query_row("SELECT COUNT(*) FROM sync_runs", [], |row| {
-                row.get::<_, i64>(0)
-            })? as usize;
-            let mut statement = connection.prepare(
-                "SELECT
-                    id, trigger, status, phase, started_at, finished_at,
-                    source_added, source_removed, matched, missing, needs_review,
-                    acquisition_failed, error_message
-                 FROM sync_runs
-                 ORDER BY started_at DESC, id DESC
-                 LIMIT ?1 OFFSET ?2",
-            )?;
-            let items = statement
-                .query_map(
-                    params![i64::from(limit), i64::from(offset)],
-                    sync_run_from_row,
-                )?
-                .collect::<Result<Vec<_>, _>>()?;
+            let (total, items) = if let Some(scope) = scope {
+                let total = connection.query_row(
+                    "SELECT COUNT(*) FROM sync_runs WHERE scope = ?1",
+                    [scope],
+                    |row| row.get::<_, i64>(0),
+                )? as usize;
+                let mut statement = connection.prepare(
+                    "SELECT
+                        id, scope, trigger, status, phase, started_at, finished_at,
+                        source_added, source_removed, matched, missing, needs_review,
+                        acquisition_failed, error_message
+                     FROM sync_runs
+                     WHERE scope = ?1
+                     ORDER BY started_at DESC, id DESC
+                     LIMIT ?2 OFFSET ?3",
+                )?;
+                let items = statement
+                    .query_map(
+                        params![scope, i64::from(limit), i64::from(offset)],
+                        sync_run_from_row,
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                (total, items)
+            } else {
+                let total = connection.query_row("SELECT COUNT(*) FROM sync_runs", [], |row| {
+                    row.get::<_, i64>(0)
+                })? as usize;
+                let mut statement = connection.prepare(
+                    "SELECT
+                        id, scope, trigger, status, phase, started_at, finished_at,
+                        source_added, source_removed, matched, missing, needs_review,
+                        acquisition_failed, error_message
+                     FROM sync_runs
+                     ORDER BY started_at DESC, id DESC
+                     LIMIT ?1 OFFSET ?2",
+                )?;
+                let items = statement
+                    .query_map(
+                        params![i64::from(limit), i64::from(offset)],
+                        sync_run_from_row,
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                (total, items)
+            };
             Ok(SyncRunPage {
                 items,
                 total,
@@ -357,7 +392,7 @@ fn sync_run_by_id(connection: &Connection, id: i64) -> Result<Option<SyncRun>, r
     connection
         .query_row(
             "SELECT
-                id, trigger, status, phase, started_at, finished_at,
+                id, scope, trigger, status, phase, started_at, finished_at,
                 source_added, source_removed, matched, missing, needs_review,
                 acquisition_failed, error_message
              FROM sync_runs
@@ -371,18 +406,19 @@ fn sync_run_by_id(connection: &Connection, id: i64) -> Result<Option<SyncRun>, r
 fn sync_run_from_row(row: &Row<'_>) -> Result<SyncRun, rusqlite::Error> {
     Ok(SyncRun {
         id: row.get(0)?,
-        trigger: row.get(1)?,
-        status: row.get(2)?,
-        phase: row.get(3)?,
-        started_at: row.get(4)?,
-        finished_at: row.get(5)?,
-        source_added: row.get(6)?,
-        source_removed: row.get(7)?,
-        matched: row.get(8)?,
-        missing: row.get(9)?,
-        needs_review: row.get(10)?,
-        acquisition_failed: row.get(11)?,
-        error_message: row.get(12)?,
+        scope: row.get(1)?,
+        trigger: row.get(2)?,
+        status: row.get(3)?,
+        phase: row.get(4)?,
+        started_at: row.get(5)?,
+        finished_at: row.get(6)?,
+        source_added: row.get(7)?,
+        source_removed: row.get(8)?,
+        matched: row.get(9)?,
+        missing: row.get(10)?,
+        needs_review: row.get(11)?,
+        acquisition_failed: row.get(12)?,
+        error_message: row.get(13)?,
     })
 }
 

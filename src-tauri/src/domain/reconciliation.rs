@@ -11,6 +11,7 @@ pub(crate) struct ReconciliationCounts {
 #[serde(rename_all = "camelCase")]
 pub struct SyncRun {
     pub id: i64,
+    pub scope: String,
     pub trigger: String,
     pub status: String,
     pub phase: Option<String>,

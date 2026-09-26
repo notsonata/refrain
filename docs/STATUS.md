@@ -15,7 +15,7 @@ The application includes:
 - `sync_runs` persistence with prepare-through-normalization phase tracking
 - one-active-sync coordination with cooperative cancellation at synchronization phase boundaries
 - source-to-library reconciliation that reuses persisted links, creates stable `LibraryTrack` records, resolves preferred present files, and classifies desired tracks as matched, missing, or needing review
-- canonical filesystem normalization for confidently resolved preferred files, using Spotify track metadata for stable artist/album/track paths
+- canonical filesystem normalization for preferred present files, using Spotify metadata when linked and local canonical metadata when unmatched or local-only
 - cross-platform filename sanitization, case-insensitive collision handling, stable collision suffixes, case-only rename staging, and verified copy fallback for cross-filesystem moves
 - path-boundary validation plus ownership-preserving moves that keep external files external and never automatically delete external duplicates
 - Trash / Recycle Bin integration guarded to managed files for future cleanup work
@@ -36,12 +36,25 @@ The application includes:
 - native Library root folder selection through the Tauri dialog plugin
 - a fixed-height Issues workspace whose queue and detail panes scroll independently instead of clipping at the supported desktop window sizes
 - typed sync-run Tauri commands and frontend wrappers for starting, cancelling, reading, and listing synchronization runs
+- separate Local and Spotify primary workspaces with contextual sync actions instead of one mixed source/library navigation model
+- scoped `local` / `spotify` sync runs and scope-filtered history queries
+- persistent Spotify collection tracking defaults plus per-track include/exclude overrides used as Spotify Sync desired state
+- Local library rows restricted to present local music and annotated with matched Spotify memberships
+- media-row Local/Spotify browsing UI with unavailable playlists moved into a collapsed secondary section and excluded from the actionable Issues queue
+- compact desktop-density shell and workspaces with a materially narrower primary sidebar and reduced typography/control spacing
+- artwork-first Saved Albums and Playlists grids that open into collection detail views, while Liked Songs remains track-oriented
+- persistent collection tracking controls that can be changed directly from the collection grid without forcing navigation into the collection
+- default Local/Spotify filters for common metadata/state fields plus technical filters grouped under Advanced
+- Local rows with directly visible file paths and embedded artwork when present
+- embedded local artwork extraction with content-hash deduplication into the application-data artwork cache, referenced from `local_files` rather than stored as SQLite blobs
 
 Milestones 7 through 9 remain non-destructive with respect to user audio. Milestone 10 may move confidently resolved preferred files into the canonical library structure, but it preserves each file's ownership classification and does not automatically delete external files.
 
 ## Active Work
 
 Milestone 13 implementation is complete locally. Static/build validation is being completed against the pinned sidecar. The remaining milestone verification is Sockseek's documented mock-daemon provider flow plus one real Soulseek acquisition smoke test before an acquisition-enabled release is packaged.
+
+The approved v1 desktop-density and library-browsing refinement is implemented locally. Remaining active work is the Milestone 13 provider verification gate described above.
 
 ## Recent Changes
 
@@ -71,15 +84,31 @@ Milestone 13 implementation is complete locally. Static/build validation is bein
 - wired acquisition-enabled synchronization through the production Sockseek provider while preserving `staged` as the pre-verification boundary
 - added acquisition Settings controls and third-party AGPL/source notices for distributed Sockseek builds
 - fixed the Windows Rust CI Clippy failure by platform-gating the Unix-only `std::io::Write` import used for restricted Sockseek runtime configuration writes
+- fixed Sockseek compatibility checks so the pinned `3.0.5` release accepts Sockseek's equivalent `3.0.5.0` server version while still rejecting real version differences
+- corrected Sockseek health semantics for v3.0.5: an idle daemon with Soulseek state `None` is ready because the Soulseek client is created and logged in lazily on the first acquisition job; Settings now reflects this and shows configured accounts in green
+- clarified acquisition Settings with separate account/configuration and live Sockseek connection chips, plus an explanation that missing-track downloads remain staged for later verification/import
+- replaced Sockseek's unhelpful `Soulseek is not ready (None)` health text with a clearer not-ready message when no meaningful client state is reported
+- added a visible Run synchronization control in the app header and empty Library state, refreshed Library/Issues/source projections after a run, and decoupled Library/Settings/Issues navigation from Spotify hydration failures
+- clarified that local-library scanning indexes physical files while synchronization builds the logical Library shown in the main Library view
+- fixed duplicate-key loading skeletons in Library and Issues that could crash Svelte rendering while those views reloaded
 - released Refrain v0.1.0 on 2026-09-25
+
+- extended filesystem normalization to organize unmatched and local-only preferred files using scanned local metadata when no accessible Spotify link exists
+- split synchronization into Local Sync and Spotify Sync, with Local Sync remaining local-first and Spotify Sync materializing only persisted tracked selections
+- added durable source-tracking rules, per-track overrides, scoped sync metadata, and acquisition filtering so stale untracked queued jobs cannot run
+- replaced the old Library/Liked Songs/Saved Albums/Playlists primary navigation with Local and Spotify workspaces and removed the spreadsheet-style track tables from those flows
+- approved the follow-up desktop-density/library-browser design: compact shell and rows, collection grids for albums/playlists, expanded filters with an Advanced technical group, visible local paths, and embedded local artwork when available
+- implemented the desktop-density/library-browser pass across the shell, Local, Spotify, Issues, and Settings views, including a narrower primary sidebar and denser controls
+- replaced Saved Albums and Playlists master-detail browsing with artwork-first collection grids and explicit grid-to-detail/back navigation
+- added default metadata/state filters and Advanced technical filters to dense Local and Spotify track views
+- added visible Local file paths plus embedded-cover extraction, hashed application-data artwork caching, and scoped Tauri asset serving
+- added migration `0008_local_artwork.sql` for cached artwork references and MIME metadata on `local_files`
 
 ## Known Issues
 
 Port `43817` must be available while starting Spotify authorization. Refrain reports an authentication error rather than choosing a different port when it is occupied.
 
 Unsigned or ad-hoc-signed release packages may require platform security confirmation. Production signing/notarization depends on release credentials being available.
-
-Page-level layout dimensions and placements are not yet fully standardized across all desktop views. Functionality is intact; this remains UI polish rather than a current workflow blocker.
 
 Milestone 13 has not yet completed the documented Sockseek mock-daemon integration verification or the real Soulseek download smoke test. Do not treat the provider as release-verified until those checks pass.
 

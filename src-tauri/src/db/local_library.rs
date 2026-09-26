@@ -2,7 +2,7 @@ use rusqlite::{OptionalExtension, Row, params};
 
 use crate::domain::{
     LibraryTrackFileSummary, LibraryTrackPage, LibraryTrackRow, LocalFile, LocalFilePage,
-    LocalLibraryOverview,
+    LocalLibraryOverview, SpotifyMembership,
 };
 
 use super::{Database, DatabaseError, now_ms};
@@ -25,6 +25,8 @@ pub(crate) struct LocalFileWrite {
     pub tag_artists: Vec<String>,
     pub tag_album: Option<String>,
     pub tag_isrc: Option<String>,
+    pub artwork_path: Option<String>,
+    pub artwork_mime: Option<String>,
     pub scan_error: Option<String>,
 }
 
@@ -36,9 +38,16 @@ impl Database {
     ) -> Result<LibraryTrackPage, DatabaseError> {
         let limit = limit.clamp(1, MAX_PAGE_LIMIT);
         self.with_connection(|connection| {
-            let total = connection.query_row("SELECT COUNT(*) FROM library_tracks", [], |row| {
-                row.get::<_, i64>(0)
-            })? as usize;
+            let total = connection.query_row(
+                "SELECT COUNT(*)
+                 FROM library_tracks AS track
+                 WHERE EXISTS (
+                    SELECT 1 FROM local_files AS file
+                    WHERE file.library_track_id = track.id AND file.state = 'present'
+                 )",
+                [],
+                |row| row.get::<_, i64>(0),
+            )? as usize;
             let mut statement = connection.prepare(
                 "SELECT
                     track.id,
@@ -47,8 +56,13 @@ impl Database {
                     track.album,
                     track.release_year,
                     track.duration_ms,
+                    track.explicit,
                     (SELECT COUNT(*) FROM track_links AS link
                      WHERE link.library_track_id = track.id),
+                    (SELECT job.status FROM acquisition_jobs AS job
+                     WHERE job.library_track_id = track.id
+                     ORDER BY job.updated_at DESC, job.id DESC
+                     LIMIT 1),
                     (SELECT COUNT(*) FROM local_files AS file
                      WHERE file.library_track_id = track.id),
                     (SELECT COUNT(*) FROM local_files AS file
@@ -61,7 +75,9 @@ impl Database {
                     preferred.path,
                     preferred.ownership,
                     preferred.state,
-                    preferred.format
+                    preferred.format,
+                    preferred.artwork_path,
+                    preferred.artwork_mime
                  FROM library_tracks AS track
                  LEFT JOIN local_files AS preferred
                    ON preferred.id = (
@@ -72,15 +88,24 @@ impl Database {
                         ORDER BY file.is_preferred DESC, file.id
                         LIMIT 1
                    )
+                 WHERE EXISTS (
+                    SELECT 1 FROM local_files AS present_file
+                    WHERE present_file.library_track_id = track.id
+                      AND present_file.state = 'present'
+                 )
                  ORDER BY track.normalized_artists, track.normalized_title, track.id
                  LIMIT ?1 OFFSET ?2",
             )?;
-            let items = statement
+            let mut items = statement
                 .query_map(
                     params![i64::from(limit), i64::from(offset)],
                     library_track_row_from_row,
                 )?
                 .collect::<Result<Vec<_>, _>>()?;
+            for item in &mut items {
+                item.spotify_memberships =
+                    spotify_memberships_for_library_track(connection, item.id)?;
+            }
             Ok(LibraryTrackPage {
                 items,
                 total,
@@ -96,7 +121,8 @@ impl Database {
                 "SELECT
                     id, library_track_id, path, ownership, is_preferred, state, format,
                     file_size, modified_at, duration_ms, bitrate, sample_rate, channels,
-                    content_hash, tag_title, tag_artists_json, tag_album, tag_isrc, scan_error
+                    content_hash, tag_title, tag_artists_json, tag_album, tag_isrc,
+                    artwork_path, artwork_mime, scan_error
                  FROM local_files
                  ORDER BY id",
             )?;
@@ -119,7 +145,8 @@ impl Database {
                 "SELECT
                     id, library_track_id, path, ownership, is_preferred, state, format,
                     file_size, modified_at, duration_ms, bitrate, sample_rate, channels,
-                    content_hash, tag_title, tag_artists_json, tag_album, tag_isrc, scan_error
+                    content_hash, tag_title, tag_artists_json, tag_album, tag_isrc,
+                    artwork_path, artwork_mime, scan_error
                  FROM local_files
                  ORDER BY lower(path), id
                  LIMIT ?1 OFFSET ?2",
@@ -174,9 +201,9 @@ impl Database {
                 "INSERT INTO local_files (
                     path, ownership, state, format, file_size, modified_at, duration_ms,
                     bitrate, sample_rate, channels, content_hash, tag_title, tag_artists_json,
-                    tag_album, tag_isrc, scan_error, created_at, updated_at
+                    tag_album, tag_isrc, artwork_path, artwork_mime, scan_error, created_at, updated_at
                  ) VALUES (
-                    ?1, 'external', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16
+                    ?1, 'external', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18
                  )",
                 params![
                     value.path,
@@ -193,6 +220,8 @@ impl Database {
                     artists_json,
                     value.tag_album,
                     value.tag_isrc,
+                    value.artwork_path,
+                    value.artwork_mime,
                     value.scan_error,
                     now,
                 ],
@@ -225,9 +254,11 @@ impl Database {
                      tag_artists_json = ?12,
                      tag_album = ?13,
                      tag_isrc = ?14,
-                     scan_error = ?15,
-                     updated_at = ?16
-                 WHERE id = ?17",
+                     artwork_path = ?15,
+                     artwork_mime = ?16,
+                     scan_error = ?17,
+                     updated_at = ?18
+                 WHERE id = ?19",
                 params![
                     value.path,
                     value.state,
@@ -243,6 +274,8 @@ impl Database {
                     artists_json,
                     value.tag_album,
                     value.tag_isrc,
+                    value.artwork_path,
+                    value.artwork_mime,
                     value.scan_error,
                     now_ms(),
                     id,
@@ -279,7 +312,8 @@ impl Database {
                     "SELECT
                         id, library_track_id, path, ownership, is_preferred, state, format,
                         file_size, modified_at, duration_ms, bitrate, sample_rate, channels,
-                        content_hash, tag_title, tag_artists_json, tag_album, tag_isrc, scan_error
+                        content_hash, tag_title, tag_artists_json, tag_album, tag_isrc,
+                        artwork_path, artwork_mime, scan_error
                      FROM local_files
                      WHERE id = ?1",
                     [id],
@@ -298,7 +332,8 @@ impl Database {
                 "SELECT
                     id, library_track_id, path, ownership, is_preferred, state, format,
                     file_size, modified_at, duration_ms, bitrate, sample_rate, channels,
-                    content_hash, tag_title, tag_artists_json, tag_album, tag_isrc, scan_error
+                    content_hash, tag_title, tag_artists_json, tag_album, tag_isrc,
+                    artwork_path, artwork_mime, scan_error
                  FROM local_files
                  WHERE library_track_id = ?1
                  ORDER BY is_preferred DESC, state = 'present' DESC, lower(path), id",
@@ -374,21 +409,25 @@ fn local_file_from_row(row: &Row<'_>) -> Result<LocalFile, rusqlite::Error> {
         tag_artists,
         tag_album: row.get(16)?,
         tag_isrc: row.get(17)?,
-        scan_error: row.get(18)?,
+        artwork_path: row.get(18)?,
+        artwork_mime: row.get(19)?,
+        scan_error: row.get(20)?,
     })
 }
 
 fn library_track_row_from_row(row: &Row<'_>) -> Result<LibraryTrackRow, rusqlite::Error> {
     let artists_json = row.get::<_, String>(2)?;
     let preferred_file = row
-        .get::<_, Option<i64>>(11)?
+        .get::<_, Option<i64>>(13)?
         .map(|id| -> Result<LibraryTrackFileSummary, rusqlite::Error> {
             Ok(LibraryTrackFileSummary {
                 id,
-                path: row.get(12)?,
-                ownership: row.get(13)?,
-                state: row.get(14)?,
-                format: row.get(15)?,
+                path: row.get(14)?,
+                ownership: row.get(15)?,
+                state: row.get(16)?,
+                format: row.get(17)?,
+                artwork_path: row.get(18)?,
+                artwork_mime: row.get(19)?,
             })
         })
         .transpose()?;
@@ -399,13 +438,49 @@ fn library_track_row_from_row(row: &Row<'_>) -> Result<LibraryTrackRow, rusqlite
         album: row.get(3)?,
         release_year: row.get(4)?,
         duration_ms: row.get(5)?,
-        source_track_count: row.get::<_, i64>(6)? as usize,
-        local_file_count: row.get::<_, i64>(7)? as usize,
-        present_file_count: row.get::<_, i64>(8)? as usize,
-        missing_file_count: row.get::<_, i64>(9)? as usize,
-        invalid_file_count: row.get::<_, i64>(10)? as usize,
+        explicit: row.get::<_, Option<i64>>(6)?.map(|value| value != 0),
+        source_track_count: row.get::<_, i64>(7)? as usize,
+        acquisition_status: row.get(8)?,
+        local_file_count: row.get::<_, i64>(9)? as usize,
+        present_file_count: row.get::<_, i64>(10)? as usize,
+        missing_file_count: row.get::<_, i64>(11)? as usize,
+        invalid_file_count: row.get::<_, i64>(12)? as usize,
         preferred_file,
+        spotify_memberships: Vec::new(),
     })
+}
+
+fn spotify_memberships_for_library_track(
+    connection: &rusqlite::Connection,
+    library_track_id: i64,
+) -> Result<Vec<SpotifyMembership>, rusqlite::Error> {
+    let mut statement = connection.prepare(
+        "SELECT DISTINCT collection.kind, collection.name
+         FROM track_links AS link
+         INNER JOIN collection_entries AS entry
+            ON entry.source_track_id = link.source_track_id
+         INNER JOIN source_collections AS collection
+            ON collection.id = entry.collection_id
+         WHERE link.library_track_id = ?1
+           AND collection.is_accessible = 1
+           AND entry.item_type = 'track'
+         ORDER BY
+            CASE collection.kind
+                WHEN 'liked_songs' THEN 0
+                WHEN 'saved_album' THEN 1
+                WHEN 'playlist' THEN 2
+                ELSE 3
+            END,
+            lower(collection.name)",
+    )?;
+    statement
+        .query_map([library_track_id], |row| {
+            Ok(SpotifyMembership {
+                kind: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()
 }
 
 #[cfg(test)]

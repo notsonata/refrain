@@ -861,6 +861,51 @@ mod tests {
     }
 
     #[test]
+    fn normalization_uses_local_library_metadata_without_a_spotify_link() {
+        let directory = TestDir::new("local-only");
+        let database_path = directory.0.join("refrain.sqlite3");
+        let library_root = directory.0.join("Music");
+        fs::create_dir_all(&library_root).unwrap();
+        let source_path = library_root.join("loose.flac");
+        fs::write(&source_path, b"audio").unwrap();
+        let database = Database::open(database_path).unwrap();
+
+        let local_file_id = database
+            .insert_local_file(&LocalFileWrite {
+                path: source_path.to_string_lossy().into_owned(),
+                state: "present".into(),
+                format: Some("flac".into()),
+                file_size: 5,
+                modified_at: 1,
+                duration_ms: Some(180_000),
+                bitrate: None,
+                sample_rate: None,
+                channels: None,
+                content_hash: None,
+                tag_title: Some("Local Track".into()),
+                tag_artists: vec!["Local Artist".into()],
+                tag_album: Some("Local Album".into()),
+                tag_isrc: Some("LOCAL1234567".into()),
+                artwork_path: None,
+                artwork_mime: None,
+                scan_error: None,
+            })
+            .unwrap();
+        database
+            .ensure_library_tracks_for_present_local_files()
+            .unwrap();
+
+        let summary = normalize_resolved_files(&database, &library_root, || false).unwrap();
+        assert_eq!(summary.moved, 1);
+        let file = database.local_file(local_file_id).unwrap().unwrap();
+        let canonical_root = fs::canonicalize(&library_root).unwrap();
+        assert_eq!(
+            PathBuf::from(file.path),
+            canonical_root.join("Local Artist/Local Album/00 - Local Track.flac")
+        );
+    }
+
+    #[test]
     fn normalization_preserves_external_ownership_and_preferred_file() {
         let directory = TestDir::new("ownership");
         let database_path = directory.0.join("refrain.sqlite3");
@@ -942,6 +987,8 @@ mod tests {
                 tag_artists: vec!["Artist".into()],
                 tag_album: Some("Album".into()),
                 tag_isrc: Some("USABC1234567".into()),
+                artwork_path: None,
+                artwork_mime: None,
                 scan_error: None,
             })
             .unwrap();

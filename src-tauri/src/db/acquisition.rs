@@ -15,14 +15,50 @@ impl Database {
         let transaction = connection.transaction()?;
         let now = now_ms();
         transaction.execute(
+            "UPDATE acquisition_jobs AS job
+             SET status = 'cancelled', finished_at = ?1, updated_at = ?1
+             WHERE job.status = 'queued'
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM track_links AS link
+                 INNER JOIN collection_entries AS entry
+                    ON entry.source_track_id = link.source_track_id
+                 INNER JOIN source_collections AS collection
+                    ON collection.id = entry.collection_id
+                 LEFT JOIN source_collection_sync_rules AS rule
+                    ON rule.collection_id = collection.id
+                 LEFT JOIN source_track_sync_overrides AS override
+                    ON override.collection_id = collection.id
+                   AND override.source_track_id = entry.source_track_id
+                 WHERE link.library_track_id = job.library_track_id
+                   AND collection.is_accessible = 1
+                   AND entry.item_type = 'track'
+                   AND COALESCE(override.included, rule.default_included, 0) = 1
+               )",
+            [now],
+        )?;
+        transaction.execute(
             "INSERT OR IGNORE INTO acquisition_jobs (
                 library_track_id, provider, status, attempt, created_at, updated_at
              )
              SELECT track.id, ?1, 'queued', 1, ?2, ?2
              FROM library_tracks AS track
              WHERE EXISTS (
-                 SELECT 1 FROM track_links AS link
+                 SELECT 1
+                 FROM track_links AS link
+                 INNER JOIN collection_entries AS entry
+                    ON entry.source_track_id = link.source_track_id
+                 INNER JOIN source_collections AS collection
+                    ON collection.id = entry.collection_id
+                 LEFT JOIN source_collection_sync_rules AS rule
+                    ON rule.collection_id = collection.id
+                 LEFT JOIN source_track_sync_overrides AS override
+                    ON override.collection_id = collection.id
+                   AND override.source_track_id = entry.source_track_id
                  WHERE link.library_track_id = track.id
+                   AND collection.is_accessible = 1
+                   AND entry.item_type = 'track'
+                   AND COALESCE(override.included, rule.default_included, 0) = 1
              )
                AND NOT EXISTS (
                  SELECT 1 FROM local_files AS file

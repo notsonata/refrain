@@ -49,6 +49,8 @@ pub fn run() {
             commands::clear_soulseek_credentials,
             commands::get_sockseek_provider_health,
             reconciliation::start_sync,
+            reconciliation::start_local_sync,
+            reconciliation::start_spotify_sync,
             reconciliation::cancel_sync,
             reconciliation::get_sync_run,
             reconciliation::list_sync_runs,
@@ -61,6 +63,8 @@ pub fn run() {
             commands::list_spotify_playlists,
             commands::list_spotify_saved_albums,
             commands::get_source_collection_page,
+            commands::set_source_collection_tracking,
+            commands::set_source_track_tracking,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Refrain");

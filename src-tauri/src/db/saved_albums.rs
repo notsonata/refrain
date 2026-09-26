@@ -160,13 +160,31 @@ impl Database {
                     collection.name,
                     collection.is_accessible,
                     collection.access_issue,
-                    COUNT(entries.id)
+                    COUNT(entries.id),
+                    COALESCE(rule.default_included, 0),
+                    SUM(CASE
+                        WHEN entries.source_track_id IS NOT NULL
+                         AND COALESCE(override.included, rule.default_included, 0) = 1
+                        THEN 1 ELSE 0 END),
+                    (SELECT track.image_url
+                     FROM collection_entries AS artwork_entry
+                     INNER JOIN source_tracks AS track
+                       ON track.id = artwork_entry.source_track_id
+                     WHERE artwork_entry.collection_id = collection.id
+                       AND track.image_url IS NOT NULL
+                     ORDER BY artwork_entry.position
+                     LIMIT 1)
                  FROM source_collections AS collection
                  LEFT JOIN collection_entries AS entries
                    ON entries.collection_id = collection.id
+                 LEFT JOIN source_collection_sync_rules AS rule
+                   ON rule.collection_id = collection.id
+                 LEFT JOIN source_track_sync_overrides AS override
+                   ON override.collection_id = collection.id
+                  AND override.source_track_id = entries.source_track_id
                  WHERE collection.source_account_id = ?1
                    AND collection.kind = 'saved_album'
-                 GROUP BY collection.id
+                 GROUP BY collection.id, rule.default_included
                  ORDER BY lower(collection.name), collection.id
                  LIMIT ?2 OFFSET ?3",
             )?;
@@ -181,6 +199,9 @@ impl Database {
                         is_accessible: row.get::<_, i64>(4)? != 0,
                         access_issue: row.get(5)?,
                         entry_count: row.get(6)?,
+                        tracked_by_default: row.get::<_, i64>(7)? != 0,
+                        tracked_entry_count: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        image_url: row.get(9)?,
                     })
                 },
             )?;

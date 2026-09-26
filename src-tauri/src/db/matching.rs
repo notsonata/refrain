@@ -41,6 +41,29 @@ impl Database {
         })
     }
 
+    pub(crate) fn present_library_match_tracks(
+        &self,
+    ) -> Result<Vec<MatchTrackDescriptor>, DatabaseError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT
+                    track.id, track.title, track.artists_json, track.album, track.isrc,
+                    track.duration_ms, track.disc_number, track.track_number, track.explicit,
+                    track.version_kind, track.version_detail
+                 FROM library_tracks AS track
+                 WHERE EXISTS (
+                    SELECT 1 FROM local_files AS file
+                    WHERE file.library_track_id = track.id
+                      AND file.state = 'present'
+                 )
+                 ORDER BY track.id",
+            )?;
+            statement
+                .query_map([], match_track_from_row)?
+                .collect::<Result<Vec<_>, _>>()
+        })
+    }
+
     pub(crate) fn persisted_track_link(
         &self,
         source_track_id: i64,

@@ -486,6 +486,31 @@ pub fn get_source_collection_page(
         .ok_or_else(|| "Spotify collection was not found.".to_owned())
 }
 
+#[tauri::command]
+pub fn set_source_collection_tracking(
+    collection_id: i64,
+    included: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .set_source_collection_tracking(collection_id, included)
+        .map_err(|error| command_database_error("update Spotify collection tracking", error))
+}
+
+#[tauri::command]
+pub fn set_source_track_tracking(
+    collection_id: i64,
+    source_track_id: i64,
+    included: Option<bool>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .database
+        .set_source_track_tracking(collection_id, source_track_id, included)
+        .map_err(|error| command_database_error("update Spotify track tracking", error))
+}
+
 fn spotify_client_id(database: &Database) -> Result<Option<String>, SpotifyAuthError> {
     database
         .get_settings()

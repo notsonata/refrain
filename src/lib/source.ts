@@ -14,6 +14,9 @@ export interface SourceCollectionSummary {
   isAccessible: boolean;
   accessIssue: string | null;
   entryCount: number;
+  trackedByDefault: boolean;
+  trackedEntryCount: number;
+  imageUrl: string | null;
 }
 
 export interface SpotifySourceOverview {
@@ -30,14 +33,20 @@ export interface SourceCollectionListPage {
 }
 
 export interface SourceTrackView {
+  id: number;
   providerTrackId: string;
   title: string;
   artists: string[];
   album: string | null;
+  releaseYear: number | null;
   durationMs: number | null;
   explicit: boolean | null;
   imageUrl: string | null;
   externalUrl: string | null;
+  localPresent: boolean;
+  localFormat: string | null;
+  matchState: 'matched' | 'unmatched' | string;
+  acquisitionStatus: string | null;
 }
 
 export interface SourceCollectionEntryView {
@@ -46,6 +55,8 @@ export interface SourceCollectionEntryView {
   addedAt: number | null;
   unavailableReason: string | null;
   track: SourceTrackView | null;
+  trackingIncluded: boolean;
+  trackingOverridden: boolean;
 }
 
 export interface SourceCollectionPage {
@@ -100,6 +111,30 @@ export function getSourceCollectionPage(
     collectionId,
     offset,
     limit,
+  });
+}
+
+export function setSourceCollectionTracking(
+  collectionId: number,
+  included: boolean,
+  invokeFn: InvokeFn = invoke,
+): Promise<void> {
+  return invokeFn<void>('set_source_collection_tracking', {
+    collectionId,
+    included,
+  });
+}
+
+export function setSourceTrackTracking(
+  collectionId: number,
+  sourceTrackId: number,
+  included: boolean | null,
+  invokeFn: InvokeFn = invoke,
+): Promise<void> {
+  return invokeFn<void>('set_source_track_tracking', {
+    collectionId,
+    sourceTrackId,
+    included,
   });
 }
 

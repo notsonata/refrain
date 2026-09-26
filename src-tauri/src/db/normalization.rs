@@ -25,15 +25,15 @@ impl Database {
             let mut statement = connection.prepare(
                 "SELECT
                     track.id,
-                    source.title,
-                    source.artists_json,
-                    source.album,
-                    source.release_year,
-                    source.disc_number,
-                    source.track_number,
+                    COALESCE(source.title, track.title),
+                    COALESCE(source.artists_json, track.artists_json),
+                    COALESCE(source.album, track.album),
+                    COALESCE(source.release_year, track.release_year),
+                    COALESCE(source.disc_number, track.disc_number),
+                    COALESCE(source.track_number, track.track_number),
                     CASE
-                        WHEN COALESCE(source.disc_number, 1) > 1 THEN 1
-                        WHEN EXISTS (
+                        WHEN COALESCE(source.disc_number, track.disc_number, 1) > 1 THEN 1
+                        WHEN source.id IS NOT NULL AND EXISTS (
                             SELECT 1
                             FROM source_tracks AS sibling
                             WHERE sibling.id != source.id
@@ -60,7 +60,7 @@ impl Database {
                     ON file.library_track_id = track.id
                    AND file.state = 'present'
                    AND file.is_preferred = 1
-                 INNER JOIN source_tracks AS source
+                 LEFT JOIN source_tracks AS source
                     ON source.id = (
                         SELECT link.source_track_id
                         FROM track_links AS link

@@ -2,11 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import type { InvokeFn } from './app-info';
 
 export type SyncTrigger = 'manual' | 'startup' | 'scheduled';
+export type SyncScope = 'legacy' | 'local' | 'spotify';
 export type SyncStatus =
   'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled';
 
 export interface SyncRun {
   id: number;
+  scope: SyncScope;
   trigger: SyncTrigger;
   status: SyncStatus;
   phase: string | null;
@@ -35,6 +37,20 @@ export function startSync(
   return invokeFn<SyncRun>('start_sync', { trigger });
 }
 
+export function startLocalSync(
+  trigger: SyncTrigger = 'manual',
+  invokeFn: InvokeFn = invoke,
+): Promise<SyncRun> {
+  return invokeFn<SyncRun>('start_local_sync', { trigger });
+}
+
+export function startSpotifySync(
+  trigger: SyncTrigger = 'manual',
+  invokeFn: InvokeFn = invoke,
+): Promise<SyncRun> {
+  return invokeFn<SyncRun>('start_spotify_sync', { trigger });
+}
+
 export function cancelSync(invokeFn: InvokeFn = invoke): Promise<boolean> {
   return invokeFn<boolean>('cancel_sync');
 }
@@ -47,9 +63,10 @@ export function getSyncRun(
 }
 
 export function listSyncRuns(
+  scope: SyncScope | null = null,
   offset = 0,
   limit = 20,
   invokeFn: InvokeFn = invoke,
 ): Promise<SyncRunPage> {
-  return invokeFn<SyncRunPage>('list_sync_runs', { offset, limit });
+  return invokeFn<SyncRunPage>('list_sync_runs', { scope, offset, limit });
 }

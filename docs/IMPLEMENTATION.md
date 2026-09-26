@@ -16,7 +16,7 @@ This plan records the implementation sequence from the initial project foundatio
 
 Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 11 are complete. Milestone 12 is implemented locally and awaiting final native UI smoke verification.
 
-The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, automated validation, native bundle configuration, and tag-triggered release packaging.
+The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, scoped Local/Spotify synchronization, persistent Spotify tracking rules, automated validation, native bundle configuration, and tag-triggered release packaging.
 
 Milestones 7 through 11, Local Library Index, Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, and Issues and Manual Resolution UI, are complete. Milestone 12, Acquisition Provider Boundary, now has its provider-neutral persistence/orchestration boundary, fake-provider coverage, acquisition status projection, failed-job issue projection, staging lifecycle, retry/cancellation behavior, and the two carried UI fixes implemented locally. Milestone 13, Sockseek Sidecar Provider, follows after the final native UI smoke check. Provider verification/import, exports, and scheduling remain future v1 work.
 
@@ -26,6 +26,10 @@ The approved v1 direction remains:
 - direct Spotify integration using Authorization Code with PKCE
 - provider-neutral acquisition layer with Sockseek as the initial provider
 - normalized local library owned and reconciled by Refrain
+- Local and Spotify workspaces with independent sync actions
+- selective Spotify desired state using persistent collection defaults and per-track overrides
+
+The Local/Spotify synchronization redesign is implemented locally: Local Sync scans, compares, links, and normalizes existing local files; Spotify Sync refreshes source state and reconciles only user-tracked Spotify selections. The frontend now uses media-row browsing, keeps unavailable playlists in a collapsed secondary section, and exposes sync state per workspace.
 
 ## Delivery Principles
 
@@ -540,7 +544,7 @@ Implement:
 - atomic same-filesystem moves
 - verified copy-and-move fallback
 - managed vs external ownership persistence
-- normalization of confidently matched existing files
+- normalization of preferred present files, using linked source metadata when available and local metadata otherwise
 - preferred-file updates after moves
 - safe path-boundary validation
 - Trash / Recycle Bin integration for future managed cleanup
@@ -972,14 +976,26 @@ Present the complete pipeline clearly in the desktop application.
 
 ### Work
 
-Complete the primary navigation:
+Complete and refine the primary workspace navigation:
 
-- Library
-- Liked Songs
-- Playlists
-- Downloads
-- Issues
+- Local
+- Spotify
 - Settings
+- Issues as a secondary attention flow
+
+Apply the approved compact desktop-density pass across all pages:
+
+- materially reduce oversized typography, padding, gaps, controls, rows, and cards without relying on a literal 60% CSS zoom
+- narrow the primary sidebar so it consumes substantially less horizontal space
+- keep dense track rows readable at supported desktop window sizes
+- replace the Saved Albums and Playlists permanent collection sidebar with responsive artwork-first collection grids that open into collection detail views
+- keep Liked Songs as a dense track-oriented view
+- add default-visible filters for search, Spotify/local state, artist, album, year, file format, and Spotify membership where meaningful
+- group path/location, acquisition state, match state, explicit state, and duration under an Advanced filter control
+- display local file paths directly in Local rows
+- extract embedded local artwork during scanning, cache it outside SQLite, and expose it through a narrowly scoped backend/Tauri image boundary
+- fall back to matched Spotify artwork or a neutral placeholder when local embedded artwork is unavailable
+- keep inaccessible playlists in the existing collapsed secondary flow
 
 Add user-facing state for:
 
@@ -1015,6 +1031,9 @@ Playwright with mocked Tauri IPC covers the major user journeys:
 - mirror run
 - settings changes
 - scheduled-sync state presentation
+- compact Local browsing with visible paths and filters
+- Saved Albums and Playlists grid-to-detail navigation
+- local artwork fallback behavior
 
 ### Exit Criteria
 

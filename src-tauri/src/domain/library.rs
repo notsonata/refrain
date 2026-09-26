@@ -43,6 +43,8 @@ pub struct LocalFile {
     pub tag_artists: Vec<String>,
     pub tag_album: Option<String>,
     pub tag_isrc: Option<String>,
+    pub artwork_path: Option<String>,
+    pub artwork_mime: Option<String>,
     pub scan_error: Option<String>,
 }
 
@@ -72,6 +74,15 @@ pub struct LibraryTrackFileSummary {
     pub ownership: String,
     pub state: String,
     pub format: Option<String>,
+    pub artwork_path: Option<String>,
+    pub artwork_mime: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotifyMembership {
+    pub kind: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,12 +94,15 @@ pub struct LibraryTrackRow {
     pub album: Option<String>,
     pub release_year: Option<i64>,
     pub duration_ms: Option<i64>,
+    pub explicit: Option<bool>,
     pub source_track_count: usize,
+    pub acquisition_status: Option<String>,
     pub local_file_count: usize,
     pub present_file_count: usize,
     pub missing_file_count: usize,
     pub invalid_file_count: usize,
     pub preferred_file: Option<LibraryTrackFileSummary>,
+    pub spotify_memberships: Vec<SpotifyMembership>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,9 +2,9 @@
 
 ## Overview
 
-Refrain is a desktop application for Windows, macOS, and Linux that mirrors a user's Spotify playlists, Liked Songs, and saved albums to a normalized local music library.
+Refrain is a desktop application for Windows, macOS, and Linux that manages an existing local music library alongside selectively tracked Spotify playlists, Liked Songs, and saved albums.
 
-Spotify represents the desired library state. Refrain imports that state, compares it with the local collection, resolves Spotify tracks to logical local tracks, acquires missing audio through replaceable acquisition providers, and keeps playlists and mirror destinations aligned with the resulting local library.
+The local library and Spotify are separate workspaces. Refrain can inspect the whole local collection against imported Spotify state, while only Spotify collections and tracks the user explicitly tracks become desired local state for downloading and reconciliation.
 
 Refrain is designed to work directly with ordinary local files. It does not require Plex, Jellyfin, Navidrome, Lidarr, or another media server.
 
@@ -15,6 +15,8 @@ The primary user is someone who uses Spotify to organize music but also wants a 
 The user needs to be able to:
 
 - see their Spotify playlists, Liked Songs, and saved albums in a desktop application
+- browse their actual local library independently from Spotify
+- choose exactly which Spotify collections and individual tracks Refrain should keep locally
 - understand which Spotify tracks already exist locally
 - acquire tracks that are missing
 - avoid downloading the same recording multiple times
@@ -24,7 +26,7 @@ The user needs to be able to:
 - review ambiguous matches instead of accepting incorrect substitutions
 - export playlists for use outside Refrain
 - copy or mirror the library to another mounted filesystem location
-- run synchronization manually or automatically
+- run Local Sync and Spotify Sync independently
 - keep existing personal files safe from unintended deletion
 
 ## Release Scope
@@ -70,6 +72,8 @@ It includes:
 - synchronization on application startup
 - configurable periodic synchronization
 - configurable handling of tracks removed from Spotify collections
+- persistent collection-level Spotify tracking defaults with per-track include/exclude overrides
+- separate Local and Spotify workspaces and scoped synchronization runs
 
 ## Core Concepts
 
@@ -92,6 +96,12 @@ For v1 this includes:
 Liked Songs should behave like a collection even though Spotify does not expose it as a normal playlist.
 
 Each saved album is represented as its own source collection. Its entries preserve the album's track order. Tracks shared with Liked Songs or playlists still refer to the same Spotify source-track identity rather than creating album-specific audio identities.
+
+### Spotify Tracking Rule
+
+Each Spotify collection has a persistent default inclusion state. Individual track entries may override that default to include or exclude a track. A Spotify track is desired locally when at least one accessible collection includes it after applying its collection default and per-track override.
+
+Refreshing Spotify must preserve tracking rules for collections and tracks that still exist. Inaccessible playlists are retained as source state but kept out of the normal browsing flow and actionable Issues queue in a secondary collapsed section.
 
 ### Playlist Entry
 
@@ -167,26 +177,49 @@ The user can browse:
 - playlists
 - track order within a collection
 - basic track metadata
-- synchronization status when local mirroring is available
+- persistent tracking status for each collection and track
 
 Repeated occurrences of the same track in a playlist remain visible as repeated entries.
 
-### Synchronize the Library
+Saved Albums and Playlists use an artwork-first grid browser rather than a permanent collection sidebar. Selecting a card opens that collection's track view, with a clear action to return to the collection grid. Liked Songs remains track-oriented.
 
-When synchronization runs:
+The normal Playlists grid contains only accessible playlists. Inaccessible playlists remain available in a collapsed secondary section so they do not compete with collections the user can act on.
 
-1. Refrain refreshes desired Spotify state as needed.
-2. Refrain scans or refreshes known local-library state.
-3. Existing persisted links are reused when still valid.
-4. Unlinked source tracks are compared against local library tracks and files.
-5. Confident matches are linked.
-6. Ambiguous matches are surfaced for review.
-7. Missing library tracks are queued for acquisition when acquisition is enabled.
-8. Acquired files are verified before entering the canonical library.
-9. Verified files are normalized into the managed library.
-10. Resolved local playlists are updated.
+### Browse and Filter the Local Library
 
-Synchronization must be repeatable. Running it again without source or local changes should not create duplicate downloads or duplicate managed files.
+The Local workspace is a compact desktop library browser. Each local track row shows its file path directly, not only at unusually wide window sizes. When embedded cover art is available in the audio metadata, Refrain should use it as the local artwork; otherwise it may fall back to matched Spotify artwork or a neutral placeholder.
+
+The default filter surface should expose commonly useful filters without requiring an advanced panel:
+
+- search
+- Spotify/local state
+- artist
+- album
+- year
+- file format
+- Spotify membership
+
+More technical filters belong behind an Advanced control:
+
+- file path or location
+- acquisition state
+- match state
+- explicit state
+- duration
+
+Spotify track views use the same filtering model where the fields are meaningful. In Spotify views, local state distinguishes tracks already present locally from tracks that are missing.
+
+### Local Sync
+
+Local Sync starts from the files the user already has. It scans the configured local library, ensures present files are represented as logical library tracks, compares those tracks against all accessible imported Spotify source data, persists confident links, surfaces ambiguous matches, and normalizes present local files when usable metadata exists.
+
+Local Sync does not create or acquire missing tracks merely because they exist on Spotify. The Local workspace shows each present local track and, when matched, where it appears on Spotify such as Liked Songs, a saved album, or one or more playlists.
+
+### Spotify Sync
+
+Spotify Sync refreshes Spotify source state, applies the user's persistent tracking rules, scans the local library, and reconciles only the resulting tracked subset. Missing tracked tracks may be queued for acquisition when acquisition is enabled. Untracked Spotify material remains browseable but does not become desired local state.
+
+Both synchronization scopes are repeatable. Running either scope again without relevant source, tracking, or local changes must not create duplicate downloads or duplicate managed files.
 
 ### Review an Ambiguous Match
 
@@ -362,7 +395,7 @@ Tracks that cannot be acquired through the active provider remain visible. They 
 
 ## Library Normalization
 
-Files managed by Refrain must be normalized into a consistent canonical library structure.
+Preferred present files inside the configured library root should be normalized into a consistent canonical library structure whenever Refrain has usable track metadata. Spotify-linked tracks use the selected Spotify source metadata; local-only or unmatched tracks fall back to metadata derived from the local file.
 
 Normalization includes:
 
@@ -374,7 +407,7 @@ The exact naming template and sanitization rules belong in the technical design.
 
 ## Synchronization Modes
 
-Refrain supports:
+Every synchronization run has a `local` or `spotify` scope. Refrain supports:
 
 - manual synchronization
 - synchronization on application startup
@@ -382,7 +415,7 @@ Refrain supports:
 
 Automatic synchronization must not prevent the user from triggering a manual sync.
 
-The UI should make current and recent synchronization state understandable.
+The UI should keep Local Sync and Spotify Sync state distinct rather than combining their histories into one undifferentiated list.
 
 ## Track States
 
@@ -401,7 +434,7 @@ Internal implementation may use additional states, but user-visible state should
 
 ## Business Rules
 
-1. Spotify is the desired state for managed collections.
+1. Only Spotify entries included by persistent tracking rules are desired local state for Spotify Sync.
 2. Collection entries represent membership and order, not file ownership.
 3. One recording should normally occupy storage once, regardless of how many managed collections reference it.
 4. Intentional duplicate entries inside a playlist must be preserved.
@@ -531,6 +564,15 @@ v0.1.0 is complete when:
 v1.0.0 is complete when:
 
 - Refrain can scan and represent an existing local music library
+- Local and Spotify are separate primary workspaces
+- Local Sync compares and normalizes the existing local library without materializing every Spotify track
+- Spotify collection tracking and per-track overrides persist across application restarts and source refreshes
+- Spotify Sync reconciles and acquires only tracked Spotify selections
+- the Local workspace shows matched Spotify membership such as Liked Songs, saved albums, and playlists
+- Local rows show their file path and use embedded local cover art when available
+- Local and Spotify track views provide search plus common metadata/state filters, with technical filters grouped under an Advanced control
+- Saved Albums and Playlists use artwork-first collection grids that open into collection track views instead of permanently reserving width for a collection sidebar
+- inaccessible playlists stay out of the normal playlist flow and are available only in a secondary hidden/collapsed section
 - existing local audio can be matched and reused when confidence is sufficient
 - ambiguous matches can be reviewed and user decisions persist
 - repeated references to the same recording do not create repeated managed downloads

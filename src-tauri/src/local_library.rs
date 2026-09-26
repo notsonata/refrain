@@ -9,6 +9,7 @@ use std::{
 
 use lofty::{
     file::{AudioFile, TaggedFileExt},
+    picture::PictureType,
     tag::{Accessor, ItemKey},
 };
 use serde::{Deserialize, Serialize};
@@ -118,6 +119,12 @@ pub fn scan_library(
     }
 
     let root = fs::canonicalize(root)?;
+    let artwork_cache_dir = database
+        .path()
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("artwork");
+    fs::create_dir_all(&artwork_cache_dir)?;
     progress(LocalLibraryScanProgress::new(
         "starting",
         0,
@@ -172,13 +179,15 @@ pub fn scan_library(
             if existing_file.file_size == file_size
                 && existing_file.modified_at == modified_at
                 && existing_file.state != "missing"
+                && existing_file.artwork_path.is_some()
             {
                 summary.unchanged += 1;
                 if existing_file.state == "invalid" {
                     summary.invalid += 1;
                 }
             } else {
-                let scanned = inspect_audio_file(canonical_path, file_size, modified_at);
+                let scanned =
+                    inspect_audio_file(canonical_path, file_size, modified_at, &artwork_cache_dir);
                 database.update_local_file_scan(existing_file.id, &scanned)?;
                 summary.updated += 1;
                 if scanned.state == "invalid" {
@@ -186,7 +195,8 @@ pub fn scan_library(
                 }
             }
         } else {
-            let mut scanned = inspect_audio_file(canonical_path, file_size, modified_at);
+            let mut scanned =
+                inspect_audio_file(canonical_path, file_size, modified_at, &artwork_cache_dir);
             let moved_match = find_moved_match(canonical_path, &mut scanned, &unmatched_existing)?;
             if let Some(existing_file) = moved_match {
                 database.update_local_file_scan(existing_file.id, &scanned)?;
@@ -291,7 +301,12 @@ fn is_supported_audio_path(path: &Path) -> bool {
     )
 }
 
-fn inspect_audio_file(path: &Path, file_size: i64, modified_at: i64) -> LocalFileWrite {
+fn inspect_audio_file(
+    path: &Path,
+    file_size: i64,
+    modified_at: i64,
+    artwork_cache_dir: &Path,
+) -> LocalFileWrite {
     let format = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -332,6 +347,13 @@ fn inspect_audio_file(path: &Path, file_size: i64, modified_at: i64) -> LocalFil
             let tag_isrc = tag
                 .and_then(|tag| tag.get_string(ItemKey::Isrc))
                 .map(str::to_owned);
+            let (artwork_path, artwork_mime) = tag
+                .and_then(|tag| {
+                    tag.get_picture_type(PictureType::CoverFront)
+                        .or_else(|| tag.pictures().first())
+                })
+                .and_then(|picture| cache_artwork(artwork_cache_dir, picture))
+                .map_or((None, None), |(path, mime)| (Some(path), Some(mime)));
             LocalFileWrite {
                 path: path.to_string_lossy().into_owned(),
                 state: "present".into(),
@@ -347,6 +369,8 @@ fn inspect_audio_file(path: &Path, file_size: i64, modified_at: i64) -> LocalFil
                 tag_artists,
                 tag_album,
                 tag_isrc,
+                artwork_path,
+                artwork_mime,
                 scan_error: None,
             }
         }
@@ -365,9 +389,35 @@ fn inspect_audio_file(path: &Path, file_size: i64, modified_at: i64) -> LocalFil
             tag_artists: Vec::new(),
             tag_album: None,
             tag_isrc: None,
+            artwork_path: None,
+            artwork_mime: None,
             scan_error: Some(error.to_string()),
         },
     }
+}
+
+fn cache_artwork(cache_dir: &Path, picture: &lofty::picture::Picture) -> Option<(String, String)> {
+    if picture.data().is_empty() {
+        return None;
+    }
+    let mime = picture.mime_type()?.as_str();
+    let extension = match mime {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        _ => return None,
+    };
+    let hash = blake3::hash(picture.data()).to_hex().to_string();
+    let path = cache_dir.join(format!("{hash}.{extension}"));
+    if !path.exists()
+        && let Err(error) = fs::write(&path, picture.data())
+    {
+        tracing::warn!(%error, path = %path.display(), "failed to cache embedded artwork");
+        return None;
+    }
+    Some((path.to_string_lossy().into_owned(), mime.to_owned()))
 }
 
 fn find_moved_match(
@@ -551,6 +601,8 @@ mod tests {
             tag_artists: vec!["Artist".into()],
             tag_album: Some("Album".into()),
             tag_isrc: Some("USABC1234567".into()),
+            artwork_path: None,
+            artwork_mime: None,
             scan_error: None,
         }
     }
@@ -571,6 +623,8 @@ mod tests {
             tag_artists: vec!["Artist".into()],
             tag_album: Some("Album".into()),
             tag_isrc: Some("USABC1234567".into()),
+            artwork_path: None,
+            artwork_mime: None,
             scan_error: None,
         }
     }

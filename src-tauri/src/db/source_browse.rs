@@ -90,13 +90,31 @@ impl Database {
                     collection.name,
                     collection.is_accessible,
                     collection.access_issue,
-                    COUNT(entries.id)
+                    COUNT(entries.id),
+                    COALESCE(rule.default_included, 0),
+                    SUM(CASE
+                        WHEN entries.source_track_id IS NOT NULL
+                         AND COALESCE(override.included, rule.default_included, 0) = 1
+                        THEN 1 ELSE 0 END),
+                    (SELECT track.image_url
+                     FROM collection_entries AS artwork_entry
+                     INNER JOIN source_tracks AS track
+                       ON track.id = artwork_entry.source_track_id
+                     WHERE artwork_entry.collection_id = collection.id
+                       AND track.image_url IS NOT NULL
+                     ORDER BY artwork_entry.position
+                     LIMIT 1)
                  FROM source_collections AS collection
                  LEFT JOIN collection_entries AS entries
                    ON entries.collection_id = collection.id
+                 LEFT JOIN source_collection_sync_rules AS rule
+                   ON rule.collection_id = collection.id
+                 LEFT JOIN source_track_sync_overrides AS override
+                   ON override.collection_id = collection.id
+                  AND override.source_track_id = entries.source_track_id
                  WHERE collection.source_account_id = ?1
                    AND collection.kind = 'playlist'
-                 GROUP BY collection.id
+                 GROUP BY collection.id, rule.default_included
                  ORDER BY lower(collection.name), collection.id
                  LIMIT ?2 OFFSET ?3",
             )?;
@@ -132,15 +150,33 @@ impl Database {
                         collection.name,
                         collection.is_accessible,
                         collection.access_issue,
-                        COUNT(entries.id)
+                        COUNT(entries.id),
+                        COALESCE(rule.default_included, 0),
+                        SUM(CASE
+                            WHEN entries.source_track_id IS NOT NULL
+                             AND COALESCE(override.included, rule.default_included, 0) = 1
+                            THEN 1 ELSE 0 END),
+                        (SELECT track.image_url
+                         FROM collection_entries AS artwork_entry
+                         INNER JOIN source_tracks AS track
+                           ON track.id = artwork_entry.source_track_id
+                         WHERE artwork_entry.collection_id = collection.id
+                           AND track.image_url IS NOT NULL
+                         ORDER BY artwork_entry.position
+                         LIMIT 1)
                      FROM source_collections AS collection
                      JOIN source_accounts AS account
                        ON account.id = collection.source_account_id
                      LEFT JOIN collection_entries AS entries
                        ON entries.collection_id = collection.id
+                     LEFT JOIN source_collection_sync_rules AS rule
+                       ON rule.collection_id = collection.id
+                     LEFT JOIN source_track_sync_overrides AS override
+                       ON override.collection_id = collection.id
+                      AND override.source_track_id = entries.source_track_id
                      WHERE collection.id = ?1
                        AND account.provider = 'spotify'
-                     GROUP BY collection.id",
+                     GROUP BY collection.id, rule.default_included",
                     [collection_id],
                     collection_summary_from_row,
                 )
@@ -156,17 +192,55 @@ impl Database {
                     entry.item_type,
                     entry.added_at,
                     entry.unavailable_reason,
+                    track.id,
                     track.provider_track_id,
                     track.title,
                     track.artists_json,
                     track.album,
+                    track.release_year,
                     track.duration_ms,
                     track.explicit,
                     track.image_url,
-                    track.external_url
+                    track.external_url,
+                    EXISTS (
+                        SELECT 1
+                        FROM track_links AS source_link
+                        INNER JOIN local_files AS local_file
+                          ON local_file.library_track_id = source_link.library_track_id
+                        WHERE source_link.source_track_id = track.id
+                          AND local_file.state = 'present'
+                    ),
+                    (SELECT local_file.format
+                     FROM track_links AS source_link
+                     INNER JOIN local_files AS local_file
+                       ON local_file.library_track_id = source_link.library_track_id
+                     WHERE source_link.source_track_id = track.id
+                       AND local_file.state = 'present'
+                     ORDER BY local_file.is_preferred DESC, local_file.id
+                     LIMIT 1),
+                    CASE WHEN EXISTS (
+                        SELECT 1 FROM track_links AS source_link
+                        WHERE source_link.source_track_id = track.id
+                    ) THEN 'matched' ELSE 'unmatched' END,
+                    (SELECT job.status
+                     FROM track_links AS source_link
+                     INNER JOIN acquisition_jobs AS job
+                       ON job.library_track_id = source_link.library_track_id
+                     WHERE source_link.source_track_id = track.id
+                     ORDER BY job.updated_at DESC, job.id DESC
+                     LIMIT 1),
+                    COALESCE(override.included, rule.default_included, 0),
+                    CASE WHEN override.source_track_id IS NULL THEN 0 ELSE 1 END
                  FROM collection_entries AS entry
+                 INNER JOIN source_collections AS collection
+                   ON collection.id = entry.collection_id
+                 LEFT JOIN source_collection_sync_rules AS rule
+                   ON rule.collection_id = collection.id
                  LEFT JOIN source_tracks AS track
                    ON track.id = entry.source_track_id
+                 LEFT JOIN source_track_sync_overrides AS override
+                   ON override.collection_id = entry.collection_id
+                  AND override.source_track_id = entry.source_track_id
                  WHERE entry.collection_id = ?1
                  ORDER BY entry.position
                  LIMIT ?2 OFFSET ?3",
@@ -174,22 +248,30 @@ impl Database {
             let rows = statement.query_map(
                 params![collection_id, i64::from(limit), i64::from(offset)],
                 |row| {
-                    let track = if let Some(provider_track_id) = row.get::<_, Option<String>>(4)? {
+                    let track = if let Some(source_track_id) = row.get::<_, Option<i64>>(4)? {
+                        let provider_track_id =
+                            row.get::<_, Option<String>>(5)?.unwrap_or_default();
                         let artists_json = row
-                            .get::<_, Option<String>>(6)?
+                            .get::<_, Option<String>>(7)?
                             .unwrap_or_else(|| "[]".to_owned());
                         let artists = serde_json::from_str::<Vec<String>>(&artists_json)
                             .unwrap_or_else(|_| Vec::new());
 
                         Some(SourceTrackView {
+                            id: source_track_id,
                             provider_track_id,
-                            title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                            title: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
                             artists,
-                            album: row.get(7)?,
-                            duration_ms: row.get(8)?,
-                            explicit: row.get::<_, Option<i64>>(9)?.map(|value| value != 0),
-                            image_url: row.get(10)?,
-                            external_url: row.get(11)?,
+                            album: row.get(8)?,
+                            release_year: row.get(9)?,
+                            duration_ms: row.get(10)?,
+                            explicit: row.get::<_, Option<i64>>(11)?.map(|value| value != 0),
+                            image_url: row.get(12)?,
+                            external_url: row.get(13)?,
+                            local_present: row.get::<_, i64>(14)? != 0,
+                            local_format: row.get(15)?,
+                            match_state: row.get(16)?,
+                            acquisition_status: row.get(17)?,
                         })
                     } else {
                         None
@@ -201,6 +283,8 @@ impl Database {
                         added_at: row.get(2)?,
                         unavailable_reason: row.get(3)?,
                         track,
+                        tracking_included: row.get::<_, i64>(18)? != 0,
+                        tracking_overridden: row.get::<_, i64>(19)? != 0,
                     })
                 },
             )?;
@@ -248,13 +332,31 @@ fn collection_summary_by_kind(
                 collection.name,
                 collection.is_accessible,
                 collection.access_issue,
-                COUNT(entries.id)
+                COUNT(entries.id),
+                COALESCE(rule.default_included, 0),
+                SUM(CASE
+                    WHEN entries.source_track_id IS NOT NULL
+                     AND COALESCE(override.included, rule.default_included, 0) = 1
+                    THEN 1 ELSE 0 END),
+                (SELECT track.image_url
+                 FROM collection_entries AS artwork_entry
+                 INNER JOIN source_tracks AS track
+                   ON track.id = artwork_entry.source_track_id
+                 WHERE artwork_entry.collection_id = collection.id
+                   AND track.image_url IS NOT NULL
+                 ORDER BY artwork_entry.position
+                 LIMIT 1)
              FROM source_collections AS collection
              LEFT JOIN collection_entries AS entries
                ON entries.collection_id = collection.id
+             LEFT JOIN source_collection_sync_rules AS rule
+               ON rule.collection_id = collection.id
+             LEFT JOIN source_track_sync_overrides AS override
+               ON override.collection_id = collection.id
+              AND override.source_track_id = entries.source_track_id
              WHERE collection.source_account_id = ?1
                AND collection.kind = ?2
-             GROUP BY collection.id
+             GROUP BY collection.id, rule.default_included
              ORDER BY collection.id
              LIMIT 1",
             params![account_id, kind],
@@ -274,6 +376,9 @@ fn collection_summary_from_row(
         is_accessible: row.get::<_, i64>(4)? != 0,
         access_issue: row.get(5)?,
         entry_count: row.get(6)?,
+        tracked_by_default: row.get::<_, i64>(7)? != 0,
+        tracked_entry_count: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+        image_url: row.get(9)?,
     })
 }
 

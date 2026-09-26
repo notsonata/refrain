@@ -16,7 +16,7 @@ The repository now contains the released v0.1 desktop application and the v1 Loc
 The implementation should:
 
 - keep Spotify source state, local-library state, and acquisition state clearly separated
-- make synchronization deterministic and repeatable
+- make Local Sync and Spotify Sync deterministic, repeatable, and independently observable
 - avoid duplicate managed audio for the same recording
 - prefer unresolved state over incorrect automatic matching
 - keep filesystem ownership and deletion safety explicit
@@ -121,7 +121,7 @@ Never log:
 ┌─────────────────────────────────────────────────────────────┐
 │                     Svelte Desktop UI                       │
 │                                                             │
-│  Library  Liked Songs  Playlists  Downloads  Issues Settings│
+│  Local          Spotify          Issues          Settings    │
 └────────────────────────────┬────────────────────────────────┘
                              │ typed Tauri commands/events
                              ▼
@@ -1040,7 +1040,12 @@ If unchanged, reuse stored metadata.
 If changed or new:
 
 - read tags and file properties
+- inspect the primary embedded picture when present
 - update the `local_files` row
+
+Embedded artwork should be cached outside SQLite under Refrain's application-data directory. The scanner should persist only the metadata needed to address that cache entry. Identical embedded images should share a cache entry when practical. Do not duplicate raw cover-art blobs into every local-file row.
+
+Artwork delivery to the webview must stay narrowly scoped. Prefer a Refrain-owned cached-art path exposed through a constrained Tauri asset/protocol boundary or another backend-owned image endpoint. Do not grant arbitrary filesystem reads to the frontend merely to display covers.
 
 Compute a full BLAKE3 hash only when needed for:
 
@@ -1079,6 +1084,8 @@ A future metadata-editing feature may allow users to change the canonical source
 ## Filesystem Normalization
 
 ### Canonical Layout
+
+Normalization considers every preferred present file inside the configured library root. When a library track has an accessible Spotify link, the selected source track supplies canonical path metadata. When no accessible source link exists, Refrain uses the canonical metadata already seeded from the local file so unmatched and local-only tracks can still be organized. Missing artist or album metadata continues to use the existing unknown-value fallbacks.
 
 Managed library files use:
 
@@ -1327,7 +1334,7 @@ This is a release requirement, not a runtime feature.
 ### Desired and Actual State
 
 ```text
-desired state = accessible Spotify collections + entries
+Spotify desired state = accessible collection entries included by tracking rules
 actual state  = library tracks + present local files
 ```
 
@@ -1335,14 +1342,27 @@ Reconciliation computes actions without allowing the acquisition provider to def
 
 ### Sync Phases
 
-A full v1 synchronization executes:
+Synchronization runs carry a durable `scope` of `local` or `spotify`. Legacy pre-scope runs remain distinguishable in persistence.
+
+Local Sync executes:
+
+```text
+1. prepare
+2. scan local library
+3. compare present local tracks with accessible Spotify source tracks
+4. persist confident links / surface review candidates
+5. normalize present local files
+6. finish and report
+```
+
+Spotify Sync executes:
 
 ```text
 1. prepare
 2. refresh Spotify source
 3. scan local library
-4. resolve existing links
-5. match unresolved source tracks
+4. resolve existing links for tracked Spotify entries
+5. match unresolved tracked source tracks
 6. create missing library tracks
 7. acquire missing audio
 8. verify staged audio
@@ -1353,6 +1373,22 @@ A full v1 synchronization executes:
 ```
 
 Each phase updates `sync_runs.phase`.
+
+`sync_runs.scope` lets the frontend request Local and Spotify histories independently.
+
+### Persistent Spotify Tracking
+
+Tracking state is backend-owned and stored independently from collection entries:
+
+```text
+source_collection_sync_rules
+  collection_id -> default_included
+
+source_track_sync_overrides
+  (collection_id, source_track_id) -> included
+```
+
+Collection refresh replaces entry rows but preserves the collection and source-track identities, so these rules survive ordinary Spotify refreshes. A source track is desired for Spotify Sync if any accessible collection includes it after applying the per-track override first and the collection default second. Acquisition queueing uses the same predicate and cancels stale queued jobs that are no longer desired.
 
 ### Idempotency
 
@@ -1367,7 +1403,7 @@ A second sync with unchanged source and filesystem state must not:
 
 ### Concurrency
 
-Only one full synchronization may mutate the canonical library at a time.
+Only one synchronization may mutate the canonical library at a time, regardless of scope.
 
 Use a backend `JobCoordinator` with a library mutation lock.
 
@@ -1620,6 +1656,8 @@ List commands support:
 - sort
 - filter where needed
 
+Local-library and Spotify track projections should support server-side filtering once a filter would otherwise require loading the entire collection into the webview. Common filters include search, artist, album, year, format, Spotify membership, and local/presence state. Technical filters such as path/location, acquisition state, match state, explicit state, and duration can use the same query boundary behind the UI's Advanced controls.
+
 Long track lists should be virtualized in the UI.
 
 ## Desktop Views
@@ -1636,24 +1674,24 @@ The shell may include placeholders only if they do not imply unavailable functio
 
 ### v1.0.0
 
-Add:
-
-- Library
-- Downloads
-- Issues
-
-Primary navigation:
+Primary navigation is organized around two source workspaces plus secondary utilities:
 
 ```text
-Library
-Liked Songs
-Playlists
-Downloads
-Issues
+Local
+Spotify
 Settings
+Issues (secondary attention flow)
 ```
 
-Use dense desktop list/table layouts rather than card-heavy mobile layouts.
+The Local workspace shows only present local-library tracks and annotates matched Spotify membership. Each row includes its local file path and local artwork when available. The Spotify workspace contains Liked Songs, Saved Albums, and Playlists sections with persistent tracking controls. Inaccessible playlists are excluded from the normal playlist list and exposed in a collapsed secondary section.
+
+Use a compact desktop-density system rather than a literal global CSS zoom. Reduce typography, spacing, controls, card dimensions, row heights, and shell chrome consistently so the application feels substantially denser while keeping normal desktop text readable. The primary sidebar should be materially narrower than the current 13rem shell.
+
+Use dense media rows and chips for track/state browsing. Avoid spreadsheet-style tables for the main Local and Spotify browsing flows.
+
+Saved Albums and Playlists use responsive artwork-first grids. Selecting a collection replaces the grid with that collection's track view rather than keeping a permanent master-detail sidebar. The detail view provides an obvious return action. Liked Songs remains a dense track view.
+
+Default-visible filters are search, Spotify/local state, artist, album, year, format, and Spotify membership where applicable. Path/location, acquisition state, match state, explicit state, and duration live behind an Advanced control.
 
 Album art should remain small and lazy-loaded.
 
@@ -1780,6 +1818,7 @@ Key practices:
 - virtualized long lists
 - lazy file hashing
 - lazy cover-art loading
+- deduplicated application-data cover-art caching rather than repeated embedded-image decoding during every render
 - bounded acquisition concurrency
 - bounded Spotify request concurrency
 

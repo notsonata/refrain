@@ -80,6 +80,9 @@ pub struct SourceCollectionSummary {
     pub is_accessible: bool,
     pub access_issue: Option<String>,
     pub entry_count: i64,
+    pub tracked_by_default: bool,
+    pub tracked_entry_count: i64,
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -102,14 +105,20 @@ pub struct SourceCollectionListPage {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceTrackView {
+    pub id: i64,
     pub provider_track_id: String,
     pub title: String,
     pub artists: Vec<String>,
     pub album: Option<String>,
+    pub release_year: Option<i64>,
     pub duration_ms: Option<i64>,
     pub explicit: Option<bool>,
     pub image_url: Option<String>,
     pub external_url: Option<String>,
+    pub local_present: bool,
+    pub local_format: Option<String>,
+    pub match_state: String,
+    pub acquisition_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -120,6 +129,8 @@ pub struct SourceCollectionEntryView {
     pub added_at: Option<i64>,
     pub unavailable_reason: Option<String>,
     pub track: Option<SourceTrackView>,
+    pub tracking_included: bool,
+    pub tracking_overridden: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
