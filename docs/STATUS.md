@@ -85,6 +85,7 @@ The approved v1 desktop-density and library-browsing refinement is implemented l
 - wired acquisition-enabled synchronization through the production Sockseek provider while preserving `staged` as the pre-verification boundary
 - added acquisition Settings controls and third-party AGPL/source notices for distributed Sockseek builds
 - fixed the Windows Rust CI Clippy failure by platform-gating the Unix-only `std::io::Write` import used for restricted Sockseek runtime configuration writes
+- fixed the Linux Rust CI Clippy failure by platform-gating the `std::process::Command` import used only by macOS Finder and Windows File Explorer reveal actions
 - fixed Sockseek compatibility checks so the pinned `3.0.5` release accepts Sockseek's equivalent `3.0.5.0` server version while still rejecting real version differences
 - corrected Sockseek health semantics for v3.0.5: an idle daemon with Soulseek state `None` is ready because the Soulseek client is created and logged in lazily on the first acquisition job; Settings now reflects this and shows configured accounts in green
 - clarified acquisition Settings with separate account/configuration and live Sockseek connection chips, plus an explanation that missing-track downloads remain staged for later verification/import

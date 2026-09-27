@@ -1,4 +1,7 @@
-use std::{path::Path, process::Command, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::process::Command;
 
 use serde::Serialize;
 use tauri::Emitter;
