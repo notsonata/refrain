@@ -168,6 +168,16 @@ A user should not need to paste a new short-lived access token for every session
 
 The user selects the local music-library root from Settings. Activating the Library root path field should open the operating system's native folder picker. Selecting a directory populates the setting with that directory so normal setup does not require manually typing an absolute filesystem path.
 
+### Manage Settings
+
+Settings is organized into five working category tabs for General, Sync, Spotify, Library, and Advanced. Appearance controls live in General, while Sockseek/Soulseek acquisition controls live in Sync. The category tabs remain on one horizontal row at supported desktop sizes; changing tabs replaces the settings panel without leaving the Settings workspace, and keyboard users can move between categories with the standard horizontal tab keys.
+
+Appearance provides Light, Dark, and System theme choices. The selected theme is stored locally on the device, applied before the main interface mounts, and System follows operating-system light/dark changes while the app is running. Dark mode uses an approximately `#181818` application canvas with distinct elevated, control, hover, and selected surfaces, bright foreground text, and clear dark-theme borders. Filled blue actions use darker action-specific fills so white labels retain strong contrast. On macOS and Windows, the native window appearance is synchronized with Refrain's selected theme and the native material is refreshed after theme changes. The base window remains transparent so the primary navigation sidebar can expose the native Sidebar/Acrylic material. The complete application content pane, including all Settings content and the Settings summary rail, is painted as an opaque themed layer above that base window so native material cannot bleed into content surfaces.
+
+The latest checked Sockseek provider-health result is stored locally so Settings can restore the previously verified version/readiness message after an app restart. The UI identifies restored health as coming from the previous session until the user runs Check Sockseek again.
+
+On wide desktop layouts, a compact summary rail keeps Spotify account state, synchronization shortcuts, and local-library status visible while the selected category remains the primary work surface. The rail collapses away when the content area becomes too narrow.
+
 ### Browse Spotify State
 
 The user can browse:

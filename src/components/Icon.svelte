@@ -19,6 +19,8 @@
   import Heart from '~icons/lucide/heart';
   import Info from '~icons/lucide/info';
   import ListMusic from '~icons/lucide/list-music';
+  import Monitor from '~icons/lucide/monitor';
+  import Moon from '~icons/lucide/moon';
   import Plus from '~icons/lucide/plus';
   import PanelRightClose from '~icons/lucide/panel-right-close';
   import PanelRightOpen from '~icons/lucide/panel-right-open';
@@ -27,6 +29,7 @@
   import Search from '~icons/lucide/search';
   import Settings from '~icons/lucide/settings';
   import SlidersHorizontal from '~icons/lucide/sliders-horizontal';
+  import Sun from '~icons/lucide/sun';
   import TriangleAlert from '~icons/lucide/triangle-alert';
   import X from '~icons/lucide/x';
   import Spotify from '~icons/simple-icons/spotify';
@@ -64,7 +67,10 @@
     | 'info'
     | 'database'
     | 'link'
-    | 'activity';
+    | 'activity'
+    | 'monitor'
+    | 'sun'
+    | 'moon';
 
   export let name: IconName;
   export let size = 18;
@@ -104,6 +110,9 @@
     database: Database,
     link: ExternalLink,
     activity: Activity,
+    monitor: Monitor,
+    sun: Sun,
+    moon: Moon,
   } as const;
 
   $: IconComponent = icons[name];

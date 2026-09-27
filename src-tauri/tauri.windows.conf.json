@@ -1,0 +1,23 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Refrain",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 973,
+        "minHeight": 697,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "devtools": false,
+        "transparent": true,
+        "backgroundColor": "#00000000",
+        "noRedirectionBitmap": true,
+        "windowEffects": {
+          "effects": ["acrylic"]
+        }
+      }
+    ]
+  }
+}

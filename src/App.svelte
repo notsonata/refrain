@@ -5,6 +5,7 @@
   import Icon from './components/Icon.svelte';
   import IssuesView from './components/IssuesView.svelte';
   import LibraryView from './components/LibraryView.svelte';
+  import SettingsView from './components/SettingsView.svelte';
   import SpotifyWorkspace from './components/SpotifyWorkspace.svelte';
   import { getAppInfo, type AppInfo } from './lib/app-info';
   import { chooseLibraryRoot } from './lib/dialog';
@@ -31,12 +32,20 @@
   } from './lib/matching';
   import { getSettings, updateSettings } from './lib/settings';
   import {
+    cacheSockseekProviderHealth,
     clearSoulseekCredentials,
+    clearCachedSockseekProviderHealth,
+    getCachedSockseekProviderHealth,
     getSockseekProviderHealth,
     getSoulseekCredentialStatus,
     setSoulseekCredentials,
     type ProviderHealth,
   } from './lib/sockseek';
+  import {
+    getThemePreference,
+    setThemePreference,
+    type ThemePreference,
+  } from './lib/theme';
   import {
     getSourceCollectionPage,
     hydrateSpotifySource,
@@ -71,7 +80,6 @@
   type AppView = 'library' | 'spotify' | 'issues' | 'settings';
   type SpotifySection = 'liked' | 'albums' | 'playlists';
 
-  const fallbackRedirectUri = 'http://127.0.0.1:43817/callback';
   const sourceProgressEvent = 'spotify-source-refresh-progress';
   const libraryProgressEvent = 'local-library-scan-progress';
   const collectionPageSize = 200;
@@ -88,7 +96,9 @@
   let soulseekUsername = '';
   let soulseekPassword = '';
   let soulseekConfigured = false;
-  let sockseekHealth: ProviderHealth | null = null;
+  let sockseekHealth: ProviderHealth | null = getCachedSockseekProviderHealth();
+  let sockseekHealthCached = sockseekHealth !== null;
+  let themePreference: ThemePreference = getThemePreference();
   let acquisitionBusy = false;
   let acquisitionError: string | null = null;
   let backendError: string | null = null;
@@ -100,7 +110,6 @@
   let sourceSummary: SpotifySourceRefreshSummary | null = null;
   let syncBusy = false;
   let syncScope: 'local' | 'spotify' | null = null;
-  let syncRun: SyncRun | null = null;
   let localSyncRun: SyncRun | null = null;
   let spotifySyncRun: SyncRun | null = null;
   let syncError: string | null = null;
@@ -341,11 +350,9 @@
 
     syncBusy = true;
     syncScope = 'local';
-    syncRun = null;
     syncError = null;
     try {
       const localRun = await startLocalSync('manual');
-      syncRun = localRun;
       localSyncRun = localRun;
       if (localRun.status === 'failed') {
         syncError = localRun.errorMessage ?? 'Local reconciliation failed.';
@@ -355,7 +362,6 @@
 
       syncScope = 'spotify';
       const spotifyRun = await startSpotifySync('manual');
-      syncRun = spotifyRun;
       spotifySyncRun = spotifyRun;
       if (spotifyRun.status === 'failed') {
         syncError =
@@ -428,6 +434,8 @@
     acquisitionBusy = true;
     acquisitionError = null;
     sockseekHealth = null;
+    sockseekHealthCached = false;
+    clearCachedSockseekProviderHealth();
     try {
       const status = await setSoulseekCredentials(
         soulseekUsername.trim(),
@@ -450,6 +458,8 @@
     acquisitionBusy = true;
     acquisitionError = null;
     sockseekHealth = null;
+    sockseekHealthCached = false;
+    clearCachedSockseekProviderHealth();
     try {
       const status = await clearSoulseekCredentials();
       soulseekConfigured = status.configured;
@@ -474,8 +484,10 @@
     acquisitionBusy = true;
     acquisitionError = null;
     sockseekHealth = null;
+    sockseekHealthCached = false;
     try {
       sockseekHealth = await getSockseekProviderHealth();
+      cacheSockseekProviderHealth(sockseekHealth);
     } catch (error) {
       acquisitionError = operationError(
         error,
@@ -484,6 +496,11 @@
     } finally {
       acquisitionBusy = false;
     }
+  }
+
+  function changeTheme(preference: ThemePreference) {
+    themePreference = preference;
+    setThemePreference(preference);
   }
 
   async function scanLibraryRoot() {
@@ -939,7 +956,7 @@
   <title>Refrain</title>
 </svelte:head>
 
-<main class="app-shell">
+<main class="app-shell" class:settings-active={activeView === 'settings'}>
   {#if isMacOS}
     <div
       class="window-drag-region"
@@ -1120,7 +1137,7 @@
         class="nav-row"
         onclick={() => openView('settings')}
       >
-        <Icon name="settings" size={17} />
+        <Icon name="settings" size={14} />
         <span>Settings</span>
       </button>
     </div>
@@ -1220,454 +1237,50 @@
           onClearRejection={clearIssueRejection}
         />
       {:else}
-        <div class="settings-page">
-          <header class="page-header">
-            <div>
-              <h1 class="page-title">Settings</h1>
-              <p class="page-description">
-                Configure Refrain, manage integrations, and control how your
-                music is synchronized.
-              </p>
-            </div>
-          </header>
-          <div class="settings-category-strip" aria-label="Settings categories">
-            <span class="settings-category active"
-              ><Icon name="settings" size={15} />General</span
-            >
-            <span class="settings-category"
-              ><Icon name="sync" size={15} />Sync</span
-            >
-            <span class="settings-category"
-              ><Icon name="spotify" size={15} />Spotify</span
-            >
-            <span class="settings-category"
-              ><Icon name="local" size={15} />Library</span
-            >
-            <span class="settings-category"
-              ><Icon name="download" size={15} />Acquisition</span
-            >
-            <span class="settings-category"
-              ><Icon name="sliders" size={15} />Advanced</span
-            >
-          </div>
-          <div class="settings-view">
-            <div class="grid gap-3">
-              <div class="rounded-lg border border-slate-800 p-4">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-slate-600">
-                      Spotify
-                    </p>
-                    <h2 class="mt-0.5 text-base font-semibold">Connection</h2>
-                    <p class="mt-1.5 max-w-xl text-xs leading-5 text-slate-500">
-                      The Client ID is saved locally. Refresh credentials are
-                      stored in your operating system credential store.
-                    </p>
-                  </div>
-                  {#if authStatus?.connected}
-                    <span
-                      class="rounded-full bg-emerald-950 px-3 py-1 text-xs text-emerald-300"
-                    >
-                      Connected
-                    </span>
-                  {:else}
-                    <span
-                      class={`rounded-full px-3 py-1 text-xs ${
-                        soulseekConfigured
-                          ? 'bg-emerald-950 text-emerald-300'
-                          : 'bg-slate-900 text-slate-400'
-                      }`}
-                    >
-                      Not connected
-                    </span>
-                  {/if}
-                </div>
-
-                <div class="mt-4 grid gap-1.5">
-                  <label for="spotify-client-id" class="text-xs font-medium">
-                    Spotify Client ID
-                  </label>
-                  <input
-                    id="spotify-client-id"
-                    bind:value={clientId}
-                    disabled={authBusy || sourceBusy || authStatus?.connected}
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder="Paste your Spotify Client ID"
-                    class="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-2 font-mono text-xs outline-none transition focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                </div>
-
-                <div
-                  class="mt-4 rounded-md border border-slate-800 bg-slate-900/60 p-3"
-                >
-                  <p
-                    class="text-xs font-medium uppercase tracking-wider text-slate-600"
-                  >
-                    Spotify redirect URI
-                  </p>
-                  <code class="mt-1.5 block break-all text-xs text-slate-200">
-                    {authStatus?.registeredRedirectUri ?? fallbackRedirectUri}
-                  </code>
-                </div>
-
-                {#if authError}
-                  <div
-                    class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
-                  >
-                    {authError}
-                  </div>
-                {/if}
-
-                <div class="mt-4 flex flex-wrap items-center gap-2">
-                  {#if authStatus?.connected}
-                    <button
-                      type="button"
-                      onclick={disconnect}
-                      disabled={authBusy || sourceBusy}
-                      class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {authBusy ? 'Disconnecting…' : 'Disconnect'}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={refreshSource}
-                      disabled={authBusy || sourceBusy}
-                      class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Refresh Spotify
-                    </button>
-                  {:else}
-                    <button
-                      type="button"
-                      onclick={connect}
-                      disabled={authBusy || !clientId.trim()}
-                      class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {authBusy ? 'Waiting for Spotify…' : 'Connect Spotify'}
-                    </button>
-                  {/if}
-                </div>
-
-                {#if sourceSummary}
-                  <div
-                    class="mt-6 rounded-lg border border-slate-800 bg-slate-900/60 p-4"
-                  >
-                    <p class="text-sm font-medium text-slate-200">
-                      Spotify source refreshed
-                    </p>
-                    <p class="mt-2 text-xs leading-5 text-slate-500">
-                      {sourceSummary.likedSongs} Liked Songs · {savedAlbumTotal} saved
-                      albums ·
-                      {sourceSummary.playlists} playlists ·
-                      {sourceSummary.refreshedPlaylists} refreshed ·
-                      {sourceSummary.unchangedPlaylists} unchanged
-                      {#if sourceSummary.inaccessiblePlaylists > 0}
-                        · {sourceSummary.inaccessiblePlaylists} inaccessible
-                      {/if}
-                    </p>
-                  </div>
-                {/if}
-              </div>
-
-              <div class="rounded-lg border border-slate-800 p-4">
-                <p class="text-xs uppercase tracking-wider text-slate-600">
-                  Local library
-                </p>
-                <h2 class="mt-0.5 text-base font-semibold">Library index</h2>
-                <p class="mt-1.5 max-w-xl text-xs leading-5 text-slate-500">
-                  Refrain scans this folder without moving, renaming, or
-                  deleting your files.
-                </p>
-
-                <div class="mt-4 grid gap-1.5">
-                  <label for="library-root" class="text-xs font-medium"
-                    >Library root</label
-                  >
-                  <input
-                    id="library-root"
-                    bind:value={libraryRoot}
-                    disabled={libraryBusy}
-                    readonly
-                    onclick={() => void pickLibraryRoot()}
-                    onkeydown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        void pickLibraryRoot();
-                      }
-                    }}
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder="Click to choose a music folder"
-                    class="cursor-pointer rounded-md border border-slate-700 bg-slate-900 px-2.5 py-2 font-mono text-xs outline-none transition focus:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                </div>
-
-                <div class="mt-4 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onclick={saveLibraryRoot}
-                    disabled={libraryBusy}
-                    class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Save path
-                  </button>
-                  <button
-                    type="button"
-                    onclick={scanLibraryRoot}
-                    disabled={libraryBusy || !libraryRoot.trim()}
-                    class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {libraryBusy ? 'Scanning…' : 'Scan Files'}
-                  </button>
-                </div>
-
-                {#if libraryProgress}
-                  <p class="mt-4 text-xs leading-5 text-slate-500">
-                    {libraryProgress.message}
-                  </p>
-                {/if}
-
-                {#if libraryOverview}
-                  <p class="mt-4 text-xs leading-5 text-slate-500">
-                    {libraryOverview.present} present · {libraryOverview.missing}
-                    missing ·
-                    {libraryOverview.invalid} invalid · {libraryOverview.total} indexed
-                  </p>
-                {/if}
-
-                {#if librarySummary}
-                  <p class="mt-2 text-xs leading-5 text-slate-600">
-                    Last scan: {librarySummary.added} added · {librarySummary.updated}
-                    updated ·
-                    {librarySummary.moved} moved · {librarySummary.unchanged} unchanged
-                  </p>
-                {/if}
-
-                {#if libraryError}
-                  <div
-                    class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
-                  >
-                    {libraryError}
-                  </div>
-                {/if}
-              </div>
-
-              <div class="rounded-lg border border-slate-800 p-4">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <p class="text-xs uppercase tracking-wider text-slate-600">
-                      Acquisition
-                    </p>
-                    <h2 class="mt-0.5 text-base font-semibold">
-                      Sockseek provider
-                    </h2>
-                    <p class="mt-1.5 max-w-xl text-xs leading-5 text-slate-500">
-                      Sockseek is bundled with Refrain and connects to the
-                      Soulseek network using your Soulseek account. There is no
-                      separate Sockseek account.
-                    </p>
-                  </div>
-                  <div class="flex flex-wrap justify-end gap-2">
-                    <span
-                      class={`rounded-full px-3 py-1 text-xs ${
-                        soulseekConfigured
-                          ? 'bg-emerald-950 text-emerald-300'
-                          : 'bg-slate-900 text-slate-400'
-                      }`}
-                    >
-                      {soulseekConfigured
-                        ? 'Account configured'
-                        : 'Account not configured'}
-                    </span>
-                    <span
-                      class={`rounded-full px-3 py-1 text-xs ${
-                        sockseekHealth?.available
-                          ? 'bg-emerald-950 text-emerald-300'
-                          : sockseekHealth
-                            ? 'bg-amber-950 text-amber-300'
-                            : 'bg-slate-900 text-slate-400'
-                      }`}
-                    >
-                      {sockseekHealth?.available
-                        ? 'Sockseek ready'
-                        : sockseekHealth
-                          ? 'Sockseek not ready'
-                          : 'Sockseek not checked'}
-                    </span>
-                  </div>
-                </div>
-
-                <div
-                  class="mt-4 rounded-md border border-slate-800 bg-slate-900/60 p-3 text-xs"
-                >
-                  <p class="font-medium text-slate-200">Setup</p>
-                  <ol
-                    class="mt-2 list-decimal space-y-1 pl-5 leading-6 text-slate-500"
-                  >
-                    <li>
-                      Enter the same Soulseek username and password you use to
-                      sign in to Soulseek, then save them.
-                    </li>
-                    <li>
-                      Check Sockseek to start the bundled daemon and verify the
-                      provider is ready.
-                    </li>
-                    <li>
-                      Enable acquisition so missing tracks can be downloaded
-                      during synchronization.
-                    </li>
-                  </ol>
-                  <p class="mt-2 text-xs leading-5 text-slate-600">
-                    Credentials are stored in your operating system credential
-                    store. Refrain starts and configures Sockseek automatically.
-                  </p>
-                </div>
-
-                <label class="mt-4 flex items-center gap-2.5 text-xs">
-                  <input
-                    type="checkbox"
-                    bind:checked={acquisitionEnabled}
-                    disabled={acquisitionBusy}
-                    class="size-4 accent-slate-100"
-                  />
-                  Acquire missing tracks during synchronization
-                </label>
-                <p class="mt-2 max-w-xl text-xs leading-5 text-slate-500">
-                  When enabled, Refrain searches Sockseek for tracks that are in
-                  your Spotify source but still missing from your local library.
-                  Downloads are staged for verification before they can become
-                  canonical library files.
-                </p>
-
-                <div class="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div class="grid gap-1.5">
-                    <label for="soulseek-username" class="text-xs font-medium">
-                      Soulseek username
-                    </label>
-                    <input
-                      id="soulseek-username"
-                      bind:value={soulseekUsername}
-                      disabled={acquisitionBusy}
-                      autocomplete="username"
-                      spellcheck="false"
-                      class="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs outline-none transition focus:border-slate-500 disabled:opacity-60"
-                    />
-                  </div>
-                  <div class="grid gap-1.5">
-                    <label for="soulseek-password" class="text-xs font-medium">
-                      Soulseek password
-                    </label>
-                    <input
-                      id="soulseek-password"
-                      type="password"
-                      bind:value={soulseekPassword}
-                      disabled={acquisitionBusy}
-                      autocomplete="current-password"
-                      placeholder={soulseekConfigured
-                        ? 'Saved in credential store'
-                        : ''}
-                      class="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs outline-none transition focus:border-slate-500 disabled:opacity-60"
-                    />
-                  </div>
-                </div>
-
-                <div class="mt-4 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onclick={saveAcquisitionSettings}
-                    disabled={acquisitionBusy}
-                    class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:opacity-60"
-                  >
-                    Save acquisition setting
-                  </button>
-                  <button
-                    type="button"
-                    onclick={saveSoulseekAccount}
-                    disabled={acquisitionBusy ||
-                      !soulseekUsername.trim() ||
-                      !soulseekPassword}
-                    class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white disabled:opacity-50"
-                  >
-                    Save Soulseek credentials
-                  </button>
-                  <button
-                    type="button"
-                    onclick={checkSockseekHealth}
-                    disabled={acquisitionBusy || !soulseekConfigured}
-                    class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium transition hover:bg-slate-900 disabled:opacity-60"
-                  >
-                    Check Sockseek
-                  </button>
-                  {#if soulseekConfigured}
-                    <button
-                      type="button"
-                      onclick={clearSoulseekAccount}
-                      disabled={acquisitionBusy}
-                      class="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-900 hover:text-slate-200 disabled:opacity-60"
-                    >
-                      Clear credentials
-                    </button>
-                  {/if}
-                </div>
-
-                {#if sockseekHealth}
-                  <p class="mt-4 text-xs leading-5 text-slate-500">
-                    Sockseek {sockseekHealth.version ?? 'unknown'} ·
-                    {sockseekHealth.message ?? 'Provider ready'}
-                  </p>
-                {/if}
-
-                {#if acquisitionError}
-                  <div
-                    class="mt-5 rounded-lg border border-amber-900 bg-amber-950/30 p-4 text-sm text-amber-200"
-                  >
-                    {acquisitionError}
-                  </div>
-                {/if}
-              </div>
-            </div>
-
-            <aside class="rounded-lg border border-slate-800 p-4 text-xs">
-              <h2 class="font-medium">Runtime</h2>
-              {#if appInfo}
-                <dl class="mt-4 grid gap-4">
-                  <div>
-                    <dt class="text-xs uppercase tracking-wider text-slate-600">
-                      Application
-                    </dt>
-                    <dd class="mt-1">{appInfo.name} {appInfo.version}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase tracking-wider text-slate-600">
-                      Data directory
-                    </dt>
-                    <dd
-                      class="mt-1 break-all font-mono text-xs leading-5 text-slate-500"
-                    >
-                      {appInfo.dataDir}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase tracking-wider text-slate-600">
-                      Persisted source
-                    </dt>
-                    <dd class="mt-1 text-slate-400">
-                      {sourceOverview?.likedSongs?.entryCount ?? 0} liked ·
-                      {savedAlbumTotal} albums · {sourceOverview?.playlistCount ??
-                        0}
-                      playlists
-                    </dd>
-                  </div>
-                </dl>
-              {:else}
-                <div
-                  class="mt-4 h-20 animate-pulse rounded-lg bg-slate-900"
-                ></div>
-              {/if}
-            </aside>
-          </div>
-        </div>
+        <SettingsView
+          {appInfo}
+          {authStatus}
+          bind:clientId
+          {authBusy}
+          {authError}
+          {sourceBusy}
+          {sourceError}
+          {sourceSummary}
+          {sourceOverview}
+          {savedAlbumTotal}
+          bind:libraryRoot
+          {libraryBusy}
+          {libraryError}
+          {libraryProgress}
+          {librarySummary}
+          {libraryOverview}
+          bind:acquisitionEnabled
+          bind:soulseekUsername
+          bind:soulseekPassword
+          {soulseekConfigured}
+          {sockseekHealth}
+          {sockseekHealthCached}
+          {acquisitionBusy}
+          {acquisitionError}
+          {syncBusy}
+          {syncScope}
+          {syncError}
+          {localSyncRun}
+          {spotifySyncRun}
+          {themePreference}
+          onConnectSpotify={connect}
+          onDisconnectSpotify={disconnect}
+          onRefreshSpotify={refreshSource}
+          onSyncLibrary={runLibrarySynchronization}
+          onPickLibraryRoot={pickLibraryRoot}
+          onSaveLibraryRoot={saveLibraryRoot}
+          onScanLibrary={scanLibraryRoot}
+          onSaveAcquisition={saveAcquisitionSettings}
+          onSaveSoulseek={saveSoulseekAccount}
+          onCheckSockseek={checkSockseekHealth}
+          onClearSoulseek={clearSoulseekAccount}
+          onChangeTheme={changeTheme}
+        />
       {/if}
     </div>
   </section>
