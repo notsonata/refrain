@@ -2,7 +2,7 @@
 
 ## Current State
 
-Milestones 1 through 12 are complete. Milestone 13, Sockseek Sidecar Provider, is implemented locally and is awaiting its provider-level mock-daemon verification plus the required real Soulseek smoke test before release packaging. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release, and the v1 development line now includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, Issues and Manual Resolution UI, the provider-neutral Acquisition Provider Boundary, and the initial Sockseek production-provider integration.
+Milestones 1 through 12 are complete. Milestone 13, Sockseek Sidecar Provider, is implemented locally and is awaiting its provider-level mock-daemon verification plus the required real Soulseek smoke test before release packaging. Refrain v0.1.0 was released on 2026-09-25 as the first Spotify-only desktop release. Refrain v0.6.0 is prepared for release on 2026-09-27 and includes the observational Local Library Index, deterministic Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, Issues and Manual Resolution UI, the provider-neutral Acquisition Provider Boundary, and the initial Sockseek production-provider integration.
 
 The application includes:
 
@@ -53,7 +53,7 @@ Milestones 7 through 9 remain non-destructive with respect to user audio. Milest
 
 ## Active Work
 
-Milestone 13 implementation is complete locally. The current frontend, Rust, and macOS Tauri CI-equivalent checks pass locally against the pinned sidecar. The remaining milestone verification is Sockseek's documented mock-daemon provider flow plus one real Soulseek acquisition smoke test before an acquisition-enabled release is packaged.
+Milestone 13 implementation is complete locally. The current frontend, Rust, and cross-platform GitHub CI checks pass. Refrain v0.6.0 is being released from this state; Sockseek's documented mock-daemon provider flow plus one real Soulseek acquisition smoke test remain outstanding provider-level verification.
 
 The approved v1 desktop-density and library-browsing refinement is implemented locally. Remaining active work is the Milestone 13 provider verification gate described above.
 
