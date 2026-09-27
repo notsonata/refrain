@@ -682,7 +682,7 @@ mod tests {
         let info = app_info_for(Path::new("/tmp/refrain"));
 
         assert_eq!(info.name, "Refrain");
-        assert_eq!(info.version, "0.1.0");
+        assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(info.data_dir, "/tmp/refrain");
     }
 }
