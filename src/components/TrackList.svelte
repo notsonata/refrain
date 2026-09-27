@@ -142,10 +142,6 @@
     );
   }
 
-  function needsAttention(entry: SourceCollectionEntryView): boolean {
-    return entryStatus(entry) === 'needs-local-copy';
-  }
-
   function entryStatus(entry: SourceCollectionEntryView): TrackStatus {
     return spotifyLibraryTrackStatus(
       entry.track?.localPresent ?? false,

@@ -27,6 +27,8 @@ use rusqlite::Connection;
 use crate::domain::{AppSettings, CollectionEntry, SourceAccount, SourceCollection, SourceTrack};
 
 pub(crate) use local_library::LocalFileWrite;
+#[cfg(test)]
+use migrations::MIGRATION_COUNT;
 use migrations::MIGRATIONS;
 pub(crate) use normalization::NormalizationCandidate;
 
@@ -276,7 +278,7 @@ mod tests {
 
         assert_eq!(foreign_keys, 1);
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
-        assert_eq!(user_version, 6);
+        assert_eq!(user_version, MIGRATION_COUNT);
 
         for table in [
             "library_tracks",

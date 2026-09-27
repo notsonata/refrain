@@ -809,8 +809,8 @@ mod tests {
     }
 
     fn run_core(database: &Database) -> ReconciliationCounts {
-        let run = database.create_sync_run("manual").unwrap();
-        let counts = run_reconciliation_core(database, run.id, || false).unwrap();
+        let run = database.create_sync_run("spotify", "manual").unwrap();
+        let counts = run_spotify_reconciliation_core(database, run.id, || false).unwrap();
         database
             .finish_sync_run(run.id, "succeeded", counts, None)
             .unwrap();
@@ -836,6 +836,9 @@ mod tests {
                 collection_id,
                 &[entry(0, first), entry(1, first), entry(2, second)],
             )
+            .unwrap();
+        database
+            .set_source_collection_tracking(collection_id, true)
             .unwrap();
 
         let first_counts = run_core(&database);
@@ -877,6 +880,12 @@ mod tests {
             .unwrap();
         database
             .replace_collection_entries(second_collection, &[entry(0, source_track_id)])
+            .unwrap();
+        database
+            .set_source_collection_tracking(first_collection, true)
+            .unwrap();
+        database
+            .set_source_collection_tracking(second_collection, true)
             .unwrap();
         database
             .insert_local_file(&LocalFileWrite {
@@ -951,10 +960,13 @@ mod tests {
         database
             .replace_collection_entries(collection_id, &[entry(0, first), entry(1, second)])
             .unwrap();
-        let run = database.create_sync_run("manual").unwrap();
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .unwrap();
+        let run = database.create_sync_run("spotify", "manual").unwrap();
         let checks = Cell::new(0usize);
 
-        let result = run_reconciliation_core(&database, run.id, || {
+        let result = run_spotify_reconciliation_core(&database, run.id, || {
             let next = checks.get() + 1;
             checks.set(next);
             next >= 5
@@ -973,16 +985,16 @@ mod tests {
         let path = TestDatabasePath::new("coordinator");
         let database = Database::open(path.0.clone()).unwrap();
         let coordinator = Arc::new(SyncCoordinator::default());
-        let first = coordinator.begin(&database, "manual").unwrap();
+        let first = coordinator.begin(&database, "spotify", "manual").unwrap();
         let SyncBegin::Started(lease) = first else {
             panic!("first sync should start");
         };
         let first_id = lease.run_id();
-        let second = coordinator.begin(&database, "manual").unwrap();
+        let second = coordinator.begin(&database, "spotify", "manual").unwrap();
         assert!(matches!(second, SyncBegin::Existing(id) if id == first_id));
         drop(lease);
         assert!(matches!(
-            coordinator.begin(&database, "manual").unwrap(),
+            coordinator.begin(&database, "spotify", "manual").unwrap(),
             SyncBegin::Started(_)
         ));
     }

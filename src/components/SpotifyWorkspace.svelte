@@ -269,7 +269,7 @@
   function safeCollectionFilename(value: string): string {
     const safe = value
       .trim()
-      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+      .replace(/[<>:"/\\|?*\p{Cc}]/gu, '_')
       .replace(/\s+/g, ' ');
     return safe || 'collection-cover';
   }

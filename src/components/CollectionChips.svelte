@@ -8,10 +8,12 @@
   let visibleCount = labels.length;
   let observer: ResizeObserver | null = null;
   let frame = 0;
+  let mounted = false;
 
   $: hiddenLabels = labels.slice(visibleCount);
 
   function scheduleMeasure() {
+    if (!mounted) return;
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => void measure());
   }
@@ -63,6 +65,7 @@
   }
 
   onMount(() => {
+    mounted = true;
     observer = new ResizeObserver(scheduleMeasure);
     observer.observe(host);
     scheduleMeasure();
@@ -70,10 +73,15 @@
 
   onDestroy(() => {
     observer?.disconnect();
-    cancelAnimationFrame(frame);
+    if (mounted) cancelAnimationFrame(frame);
+    mounted = false;
   });
 
-  $: (labels, scheduleMeasure());
+  function scheduleMeasureForLabels(currentLabels: string[]) {
+    if (currentLabels === labels) scheduleMeasure();
+  }
+
+  $: scheduleMeasureForLabels(labels);
 </script>
 
 <div class="collection-chip-group" bind:this={host}>
@@ -99,7 +107,7 @@
     {#each labels as label, index (`label:${index}:${label}`)}
       <span class="chip" data-measure-label>{label}</span>
     {/each}
-    {#each labels as _, index (`overflow:${index}`)}
+    {#each labels as label, index (`overflow:${index}:${label}`)}
       <span class="chip" data-measure-overflow>+{index + 1}</span>
     {/each}
   </div>

@@ -19,4 +19,6 @@ const MIGRATION_ARRAY: &[M] = &[
     M::up(include_str!("../../migrations/0012_local_file_year.sql")),
 ];
 
+#[cfg(test)]
+pub(super) const MIGRATION_COUNT: i64 = MIGRATION_ARRAY.len() as i64;
 pub static MIGRATIONS: Migrations = Migrations::from_slice(MIGRATION_ARRAY);

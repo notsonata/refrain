@@ -53,7 +53,7 @@ Milestones 7 through 9 remain non-destructive with respect to user audio. Milest
 
 ## Active Work
 
-Milestone 13 implementation is complete locally. Static/build validation is being completed against the pinned sidecar. The remaining milestone verification is Sockseek's documented mock-daemon provider flow plus one real Soulseek acquisition smoke test before an acquisition-enabled release is packaged.
+Milestone 13 implementation is complete locally. The current frontend, Rust, and macOS Tauri CI-equivalent checks pass locally against the pinned sidecar. The remaining milestone verification is Sockseek's documented mock-daemon provider flow plus one real Soulseek acquisition smoke test before an acquisition-enabled release is packaged.
 
 The approved v1 desktop-density and library-browsing refinement is implemented locally. Remaining active work is the Milestone 13 provider verification gate described above.
 
@@ -152,6 +152,7 @@ The approved v1 desktop-density and library-browsing refinement is implemented l
 - refined dark mode toward a lighter `#181818` application canvas; dark primary and selected blue controls now use darker high-contrast fills, macOS and Windows keep the base window transparent only for the primary navigation sidebar material while the entire content pane is an opaque themed layer, and Refrain grants the required Tauri theme/effect permissions and refreshes the native material after Light/Dark/System changes
 - normalized every `Local Only` indicator onto the shared semantic orange token so the header issue action, summary metric, and track-row status dot use the same color in both light and dark themes
 - persisted the latest checked Sockseek provider-health result locally so the version/readiness message survives app restarts, marks restored health as previous-session state, and clears the cached result whenever Soulseek credentials change or are removed
+- repaired the CI baseline after the desktop/UI work: ESLint now uses the full browser-global set, stale tracking/migration test fixtures follow the current opt-in source-tracking model, incremental scans correctly reuse unchanged files without embedded artwork, Tauri's `macos-private-api` feature/configuration is aligned for direct Cargo checks, and the unsupported Windows `noRedirectionBitmap` field was removed
 
 ## Known Issues
 

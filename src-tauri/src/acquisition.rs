@@ -483,6 +483,9 @@ mod tests {
         database
             .replace_collection_entries(collection_id, &entries)
             .unwrap();
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .unwrap();
         library_track_id
     }
 

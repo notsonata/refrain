@@ -26,10 +26,13 @@
     "security": {
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/artwork/**"]
+        "scope": [
+          "$APPDATA/artwork/**"
+        ]
       },
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; img-src 'self' data: asset: http://asset.localhost https://asset.localhost https://i.scdn.co; style-src 'self' 'unsafe-inline'; script-src 'self'"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
@@ -38,12 +41,17 @@
     "homepage": "https://github.com/notsonata/refrain",
     "shortDescription": "Mirror Spotify source state into a desktop music-library workspace.",
     "longDescription": "Refrain imports and browses Spotify Liked Songs, saved albums, and playlists as the desired state for a normalized local music library.",
-    "externalBin": ["binaries/sockseek"],
+    "externalBin": [
+      "binaries/sockseek"
+    ],
     "resources": [
       "../THIRD_PARTY_NOTICES.md",
       "../third-party/sockseek/LICENSE"
     ],
-    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
     "macOS": {
       "signingIdentity": "-"
     }

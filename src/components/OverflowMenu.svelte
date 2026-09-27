@@ -109,7 +109,7 @@
         role="menu"
         style={`top:${top}px; left:${left}px;`}
       >
-        {#each items as item}
+        {#each items as item (item.label)}
           {#if item.separatorBefore}
             <div class="overflow-menu-separator" role="separator"></div>
           {/if}

@@ -179,7 +179,6 @@ pub fn scan_library(
             if existing_file.file_size == file_size
                 && existing_file.modified_at == modified_at
                 && existing_file.state != "missing"
-                && existing_file.artwork_path.is_some()
             {
                 summary.unchanged += 1;
                 if existing_file.state == "invalid" {
@@ -605,7 +604,6 @@ mod tests {
             tag_title: Some("Song".into()),
             tag_artists: vec!["Artist".into()],
             tag_album: Some("Album".into()),
-            tag_year: Some(2026),
             tag_isrc: Some("USABC1234567".into()),
             artwork_path: None,
             artwork_mime: None,
@@ -628,6 +626,7 @@ mod tests {
             tag_title: Some("Song".into()),
             tag_artists: vec!["Artist".into()],
             tag_album: Some("Album".into()),
+            tag_year: Some(2026),
             tag_isrc: Some("USABC1234567".into()),
             artwork_path: None,
             artwork_mime: None,

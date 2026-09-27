@@ -67,7 +67,7 @@ describe('LibraryView', () => {
 
     expect(body).toContain('Available Song');
     expect(body).toContain('Local Song');
-    expect(body).toContain('On Spotify');
+    expect(body).toContain('Local + Spotify');
     expect(body).toContain('Local Only');
     expect(body).toContain('01 - Available Song.flac');
     expect(body).toContain('02 - Local Song.mp3');

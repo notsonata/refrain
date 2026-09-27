@@ -36,7 +36,7 @@ describe('TrackList', () => {
       props: { entries: duplicateEntries, total: 2 },
     });
 
-    expect(body.match(/Repeated Track/g)).toHaveLength(2);
+    expect(body.match(/class="track-title">Repeated Track/g)).toHaveLength(2);
     expect(body).toContain('1');
     expect(body).toContain('2');
   });

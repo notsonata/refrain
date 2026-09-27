@@ -403,6 +403,10 @@ mod tests {
                 .unwrap();
             library_ids.push(connection.last_insert_rowid());
         }
+        drop(connection);
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .unwrap();
         (source_track_id, library_ids[0], library_ids[1])
     }
 
@@ -463,12 +467,75 @@ mod tests {
         let collection_id = connection.last_insert_rowid();
         connection
             .execute(
-                "INSERT INTO local_files (
-                    path, ownership, state, file_size, modified_at, scan_error, created_at, updated_at
-                 ) VALUES
-                    ('/music/missing.flac', 'external', 'missing', 100, 1, NULL, ?1, ?1),
-                    ('/music/invalid.flac', 'external', 'invalid', 100, 1, 'Unreadable tags', ?1, ?1)",
+                "INSERT INTO source_collections (
+                    source_account_id, provider_collection_id, kind, name,
+                    is_accessible, created_at, updated_at
+                 ) VALUES (?1, 'tracked', 'playlist', 'Tracked Playlist', 1, ?2, ?2)",
+                params![account_id, now],
+            )
+            .unwrap();
+        let tracked_collection_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO source_tracks (
+                    provider, provider_track_id, title, normalized_title, artists_json,
+                    normalized_artists, album, normalized_album, duration_ms,
+                    created_at, updated_at
+                 ) VALUES (
+                    'spotify', 'tracked-source', 'Tracked Song', 'tracked song',
+                    '[\"Artist\"]', 'artist', 'Album', 'album', 180000, ?1, ?1
+                 )",
                 [now],
+            )
+            .unwrap();
+        let source_track_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO collection_entries (
+                    collection_id, position, source_track_id, item_type
+                 ) VALUES (?1, 0, ?2, 'track')",
+                params![tracked_collection_id, source_track_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO source_collection_sync_rules (
+                    collection_id, default_included, updated_at
+                 ) VALUES (?1, 1, ?2)",
+                params![tracked_collection_id, now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO library_tracks (
+                    canonical_source_track_id, title, normalized_title, artists_json,
+                    normalized_artists, album, normalized_album, duration_ms,
+                    created_at, updated_at
+                 ) VALUES (
+                    ?1, 'Tracked Song', 'tracked song', '[\"Artist\"]', 'artist',
+                    'Album', 'album', 180000, ?2, ?2
+                 )",
+                params![source_track_id, now],
+            )
+            .unwrap();
+        let library_track_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO track_links (
+                    source_track_id, library_track_id, method, confidence, created_at, updated_at
+                 ) VALUES (?1, ?2, 'existing', 10000, ?3, ?3)",
+                params![source_track_id, library_track_id, now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO local_files (
+                    library_track_id, path, ownership, state, file_size, modified_at,
+                    scan_error, created_at, updated_at
+                 ) VALUES
+                    (?1, '/music/missing.flac', 'external', 'missing', 100, 1, NULL, ?2, ?2),
+                    (NULL, '/music/invalid.flac', 'external', 'invalid', 100, 1, 'Unreadable tags', ?2, ?2)",
+                params![library_track_id, now],
             )
             .unwrap();
         drop(connection);
