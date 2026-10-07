@@ -4,6 +4,8 @@ Refrain is a desktop application that treats Spotify as the desired state for a 
 
 It is being built to import Spotify playlists, Liked Songs, and saved albums, reconcile them against local audio, acquire missing tracks through modular providers, normalize the resulting library, export playlists, and mirror the library to another filesystem location.
 
+[![Refrain introduction](docs/media/refrain-intro/refrain-intro.gif)](docs/media/refrain-intro/refrain-intro.mp4)
+
 ## Project Status
 
 Refrain v0.1.0 was released on 2026-09-25, completing Milestones 1 through 6. The project remains under active development toward v1.0.0.

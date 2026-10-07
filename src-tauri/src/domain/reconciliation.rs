@@ -2,9 +2,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ReconciliationCounts {
+    pub source_added: i64,
+    pub source_removed: i64,
     pub matched: i64,
     pub missing: i64,
     pub needs_review: i64,
+    pub acquisition_failed: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

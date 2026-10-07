@@ -142,24 +142,30 @@ impl Database {
         error_message: Option<&str>,
     ) -> Result<(), DatabaseError> {
         self.with_connection(|connection| {
-            let final_phase = (status == "succeeded").then_some("complete");
+            let final_phase = matches!(status, "succeeded" | "partial").then_some("complete");
             connection.execute(
                 "UPDATE sync_runs
-                 SET status = ?1,
-                     phase = COALESCE(?2, phase),
-                     finished_at = ?3,
-                     matched = ?4,
-                     missing = ?5,
-                     needs_review = ?6,
-                     error_message = ?7
-                 WHERE id = ?8",
+             SET status = ?1,
+                 phase = COALESCE(?2, phase),
+                 finished_at = ?3,
+                     source_added = ?4,
+                     source_removed = ?5,
+                     matched = ?6,
+                     missing = ?7,
+                     needs_review = ?8,
+                     acquisition_failed = ?9,
+                     error_message = ?10
+                 WHERE id = ?11",
                 params![
                     status,
                     final_phase,
                     now_ms(),
+                    counts.source_added,
+                    counts.source_removed,
                     counts.matched,
                     counts.missing,
                     counts.needs_review,
+                    counts.acquisition_failed,
                     error_message,
                     id,
                 ],
@@ -238,6 +244,62 @@ impl Database {
         normalize_preferred_present_files(&transaction)?;
         transaction.commit()?;
         Ok(created)
+    }
+
+    pub(crate) fn ensure_library_track_for_present_local_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<i64>, DatabaseError> {
+        let mut connection = self.lock_connection()?;
+        let transaction = connection.transaction()?;
+        let row = transaction
+            .query_row(
+                "SELECT
+                    id, path, content_hash, tag_title, tag_artists_json,
+                    tag_album, tag_isrc, duration_ms, library_track_id
+                 FROM local_files
+                 WHERE path = ?1 AND state = 'present'
+                 ORDER BY id
+                 LIMIT 1",
+                [path],
+                |row| {
+                    Ok((
+                        LocalTrackSeed {
+                            id: row.get(0)?,
+                            path: row.get(1)?,
+                            content_hash: row.get(2)?,
+                            tag_title: row.get(3)?,
+                            tag_artists_json: row.get(4)?,
+                            tag_album: row.get(5)?,
+                            tag_isrc: row.get(6)?,
+                            duration_ms: row.get(7)?,
+                        },
+                        row.get::<_, Option<i64>>(8)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((seed, existing_id)) = row else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        if let Some(library_track_id) = existing_id {
+            transaction.commit()?;
+            return Ok(Some(library_track_id));
+        }
+
+        let library_track_id = match existing_library_track_for_local_seed(&transaction, &seed)? {
+            Some(id) => id,
+            None => insert_library_track_from_local_seed(&transaction, &seed)?,
+        };
+        transaction.execute(
+            "UPDATE local_files
+             SET library_track_id = ?1, updated_at = ?2
+             WHERE id = ?3",
+            params![library_track_id, now_ms(), seed.id],
+        )?;
+        transaction.commit()?;
+        Ok(Some(library_track_id))
     }
 
     pub(crate) fn create_library_track_from_source(

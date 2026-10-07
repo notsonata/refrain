@@ -19,18 +19,18 @@ export const sharedTrackColumnIds = [
 ] as const;
 
 const sharedTrackColumns: TableColumn[] = [
-  { id: 'title', label: 'Title', width: 300, minWidth: 220, sortable: true },
-  { id: 'artist', label: 'Artist', width: 150, minWidth: 100, sortable: true },
-  { id: 'album', label: 'Album', width: 170, minWidth: 110, sortable: true },
-  { id: 'year', label: 'Year', width: 58, minWidth: 48, sortable: true },
+  { id: 'title', label: 'Title', width: 286, minWidth: 210, sortable: true },
+  { id: 'artist', label: 'Artist', width: 146, minWidth: 100, sortable: true },
+  { id: 'album', label: 'Album', width: 156, minWidth: 106, sortable: true },
+  { id: 'year', label: 'Year', width: 68, minWidth: 64, sortable: true },
   {
     id: 'duration',
     label: 'Duration',
-    width: 72,
-    minWidth: 60,
+    width: 84,
+    minWidth: 78,
     sortable: true,
   },
-  { id: 'format', label: 'Format', width: 62, minWidth: 54, sortable: true },
+  { id: 'format', label: 'Format', width: 72, minWidth: 68, sortable: true },
   { id: 'status', label: 'Status', width: 126, minWidth: 108, sortable: true },
 ];
 

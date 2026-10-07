@@ -3,9 +3,11 @@
 mod acquisition;
 mod issues;
 mod local_library;
+mod local_playlists;
 mod matching;
 mod migrations;
 mod normalization;
+mod playlist_exports;
 mod reconciliation;
 mod saved_albums;
 mod settings;
@@ -26,6 +28,7 @@ use rusqlite::Connection;
 
 use crate::domain::{AppSettings, CollectionEntry, SourceAccount, SourceCollection, SourceTrack};
 
+pub(crate) use acquisition::AcquisitionImportMetadata;
 pub(crate) use local_library::LocalFileWrite;
 #[cfg(test)]
 use migrations::MIGRATION_COUNT;
@@ -49,10 +52,12 @@ impl Database {
         MIGRATIONS.to_latest(&mut connection)?;
         settings::ensure_default(&connection)?;
 
-        Ok(Self {
+        let database = Self {
             path,
             connection: Mutex::new(connection),
-        })
+        };
+        database.sync_tracked_spotify_playlist_mirrors()?;
+        Ok(database)
     }
 
     pub fn path(&self) -> &Path {
@@ -283,6 +288,8 @@ mod tests {
         for table in [
             "library_tracks",
             "local_files",
+            "local_playlists",
+            "local_playlist_entries",
             "track_links",
             "track_rejections",
             "sync_runs",
@@ -309,6 +316,7 @@ mod tests {
             let updated = AppSettings {
                 sync_on_startup: true,
                 sync_interval_minutes: Some(30),
+                acquisition_providers: vec!["sockseek".into(), "monochrome".into()],
                 spotify_client_id: Some("spotify-client".into()),
                 ..AppSettings::default()
             };
@@ -323,8 +331,510 @@ mod tests {
         assert!(settings.sync_on_startup);
         assert_eq!(settings.sync_interval_minutes, Some(30));
         assert_eq!(
+            settings.acquisition_providers,
+            vec!["sockseek", "monochrome"]
+        );
+        assert_eq!(
             settings.spotify_client_id.as_deref(),
             Some("spotify-client")
+        );
+    }
+
+    #[test]
+    fn local_playlists_preserve_entry_order_and_duplicates() {
+        let test_path = TestDatabasePath::new("local-playlists");
+        let database = Database::open(test_path.path.clone()).expect("database should open");
+        let connection = database.lock_connection().expect("database should lock");
+        let now = now_ms();
+
+        let mut track_ids = Vec::new();
+        for (index, title) in ["First", "Second"].into_iter().enumerate() {
+            connection
+                .execute(
+                    "INSERT INTO library_tracks (
+                        title, normalized_title, artists_json, normalized_artists,
+                        duration_ms, created_at, updated_at
+                     ) VALUES (?1, ?2, '[\"Artist\"]', 'artist', 180000, ?3, ?3)",
+                    params![title, title.to_ascii_lowercase(), now],
+                )
+                .expect("library track should insert");
+            let track_id = connection.last_insert_rowid();
+            connection
+                .execute(
+                    "INSERT INTO local_files (
+                        library_track_id, path, ownership, is_preferred, state,
+                        file_size, modified_at, created_at, updated_at
+                     ) VALUES (?1, ?2, 'external', 1, 'present', 100, 1, ?3, ?3)",
+                    params![track_id, format!("/music/{index}.flac"), now],
+                )
+                .expect("local file should insert");
+            track_ids.push(track_id);
+        }
+        drop(connection);
+
+        let playlist = database
+            .create_local_playlist("Road Trip")
+            .expect("playlist should be created");
+        let updated = database
+            .add_tracks_to_local_playlist(playlist.id, &[track_ids[0], track_ids[1], track_ids[0]])
+            .expect("tracks should be added");
+
+        assert_eq!(updated.name, "Road Trip");
+        assert_eq!(updated.entries.len(), 3);
+        assert_eq!(
+            updated
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![track_ids[0], track_ids[1], track_ids[0]]
+        );
+        assert_eq!(
+            updated
+                .entries
+                .iter()
+                .map(|entry| entry.position)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn local_playlist_entries_can_be_moved_and_removed() {
+        let test_path = TestDatabasePath::new("local-playlist-editing");
+        let database = Database::open(test_path.path.clone()).expect("database should open");
+        let connection = database.lock_connection().expect("database should lock");
+        let now = now_ms();
+        let mut track_ids = Vec::new();
+
+        for title in ["One", "Two", "Three"] {
+            connection
+                .execute(
+                    "INSERT INTO library_tracks (
+                        title, normalized_title, artists_json, normalized_artists,
+                        created_at, updated_at
+                     ) VALUES (?1, ?2, '[\"Artist\"]', 'artist', ?3, ?3)",
+                    params![title, title.to_ascii_lowercase(), now],
+                )
+                .expect("library track should insert");
+            let track_id = connection.last_insert_rowid();
+            connection
+                .execute(
+                    "INSERT INTO local_files (
+                        library_track_id, path, ownership, is_preferred, state,
+                        file_size, modified_at, created_at, updated_at
+                     ) VALUES (?1, ?2, 'external', 1, 'present', 100, 1, ?3, ?3)",
+                    params![track_id, format!("/music/{title}.flac"), now],
+                )
+                .expect("local file should insert");
+            track_ids.push(track_id);
+        }
+        drop(connection);
+
+        let playlist = database
+            .create_local_playlist("Order")
+            .expect("playlist should be created");
+        let playlist = database
+            .add_tracks_to_local_playlist(playlist.id, &track_ids)
+            .expect("tracks should be added");
+        let third_entry_id = playlist.entries[2].id;
+        let second_entry_id = playlist.entries[1].id;
+
+        let reordered = database
+            .move_local_playlist_entry(playlist.id, third_entry_id, 0)
+            .expect("entry should move");
+        assert_eq!(
+            reordered
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![track_ids[2], track_ids[0], track_ids[1]]
+        );
+
+        let removed = database
+            .remove_local_playlist_entry(playlist.id, second_entry_id)
+            .expect("entry should be removed");
+        assert_eq!(
+            removed
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![track_ids[2], track_ids[0]]
+        );
+        assert_eq!(
+            removed
+                .entries
+                .iter()
+                .map(|entry| entry.position)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn local_playlist_metadata_can_be_updated_listed_and_deleted() {
+        let test_path = TestDatabasePath::new("local-playlist-metadata");
+        let database = Database::open(test_path.path.clone()).expect("database should open");
+
+        let playlist = database
+            .create_local_playlist("Draft")
+            .expect("playlist should be created");
+        let renamed = database
+            .rename_local_playlist(playlist.id, "Final")
+            .expect("playlist should be renamed");
+        let targeted = database
+            .set_local_playlist_m3u_path(playlist.id, Some("/music/playlists/final.m3u8"))
+            .expect("playlist target should update");
+
+        assert_eq!(renamed.name, "Final");
+        assert_eq!(
+            targeted.m3u_path.as_deref(),
+            Some("/music/playlists/final.m3u8")
+        );
+        let summaries = database
+            .list_local_playlists()
+            .expect("playlists should list");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].name, "Final");
+        assert_eq!(summaries[0].entry_count, 0);
+
+        database
+            .delete_local_playlist(playlist.id)
+            .expect("playlist should delete");
+        assert!(
+            database
+                .list_local_playlists()
+                .expect("playlists should list")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn tracked_spotify_playlist_creates_and_updates_a_local_mirror() {
+        let test_path = TestDatabasePath::new("spotify-playlist-mirror");
+        let database = Database::open(test_path.path.clone()).expect("database should open");
+        let account_id = database
+            .upsert_source_account(&sample_account())
+            .expect("source account should persist");
+        let mut source_playlist = sample_collection(account_id);
+        source_playlist.image_url = Some("https://i.scdn.co/image/playlist-cover".into());
+        let collection_id = database
+            .upsert_source_collection(&source_playlist)
+            .expect("source collection should persist");
+        let first = database
+            .upsert_source_track(&sample_track("track-1"))
+            .expect("first source track should persist");
+        let second = database
+            .upsert_source_track(&sample_track("track-2"))
+            .expect("second source track should persist");
+        database
+            .replace_collection_entries(
+                collection_id,
+                &[
+                    CollectionEntry {
+                        position: 0,
+                        source_track_id: Some(first),
+                        provider_item_uri: None,
+                        item_type: "track".into(),
+                        added_at: None,
+                        unavailable_reason: None,
+                    },
+                    CollectionEntry {
+                        position: 1,
+                        source_track_id: Some(first),
+                        provider_item_uri: None,
+                        item_type: "track".into(),
+                        added_at: None,
+                        unavailable_reason: None,
+                    },
+                    CollectionEntry {
+                        position: 2,
+                        source_track_id: Some(second),
+                        provider_item_uri: None,
+                        item_type: "track".into(),
+                        added_at: None,
+                        unavailable_reason: None,
+                    },
+                ],
+            )
+            .expect("source entries should persist");
+        let first_library = database
+            .create_library_track_from_source(first)
+            .expect("first library identity should persist");
+        let second_library = database
+            .create_library_track_from_source(second)
+            .expect("second library identity should persist");
+        database
+            .persist_track_link(first, first_library, "existing", 10_000)
+            .expect("first link should persist");
+        database
+            .persist_track_link(second, second_library, "existing", 10_000)
+            .expect("second link should persist");
+
+        let manual = database
+            .create_local_playlist("Manual")
+            .expect("manual playlist should persist");
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .expect("playlist tracking should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("tracked playlist mirror should synchronize");
+
+        let summaries = database
+            .list_local_playlists()
+            .expect("local playlists should list");
+        let mirrored = summaries
+            .iter()
+            .find(|playlist| playlist.source_collection_id == Some(collection_id))
+            .expect("tracked Spotify playlist should create a local mirror");
+        assert_eq!(
+            mirrored.image_url.as_deref(),
+            Some("https://i.scdn.co/image/playlist-cover")
+        );
+        let detail = database
+            .get_local_playlist(mirrored.id)
+            .expect("mirrored playlist should load");
+        assert_eq!(detail.name, "Playlist");
+        assert_eq!(
+            detail.image_url.as_deref(),
+            Some("https://i.scdn.co/image/playlist-cover")
+        );
+        assert_eq!(
+            detail
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![first_library, first_library, second_library]
+        );
+
+        database
+            .replace_collection_entries(
+                collection_id,
+                &[
+                    CollectionEntry {
+                        position: 0,
+                        source_track_id: Some(second),
+                        provider_item_uri: None,
+                        item_type: "track".into(),
+                        added_at: None,
+                        unavailable_reason: None,
+                    },
+                    CollectionEntry {
+                        position: 1,
+                        source_track_id: Some(first),
+                        provider_item_uri: None,
+                        item_type: "track".into(),
+                        added_at: None,
+                        unavailable_reason: None,
+                    },
+                ],
+            )
+            .expect("updated source entries should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("changed Spotify membership should update the mirror");
+        let updated = database
+            .get_local_playlist(mirrored.id)
+            .expect("updated mirror should load");
+        assert_eq!(
+            updated
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![second_library, first_library]
+        );
+
+        database
+            .set_source_track_tracking(collection_id, first, Some(false))
+            .expect("track exclusion should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("track exclusion should update the mirror");
+        let excluded = database
+            .get_local_playlist(mirrored.id)
+            .expect("excluded mirror should load");
+        assert_eq!(
+            excluded
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![second_library]
+        );
+
+        database
+            .set_source_collection_tracking(collection_id, false)
+            .expect("playlist untracking should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("untracking should remove the derived mirror");
+        let remaining = database
+            .list_local_playlists()
+            .expect("remaining playlists should list");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, manual.id);
+        assert_eq!(remaining[0].source_collection_id, None);
+    }
+
+    #[test]
+    fn tracked_liked_songs_creates_and_removes_a_local_mirror() {
+        let test_path = TestDatabasePath::new("liked-songs-mirror");
+        let database = Database::open(test_path.path.clone()).expect("database should open");
+        let account_id = database
+            .upsert_source_account(&sample_account())
+            .expect("source account should persist");
+        let mut liked_songs = sample_collection(account_id);
+        liked_songs.provider_collection_id = "spotify:liked-songs".into();
+        liked_songs.kind = "liked_songs".into();
+        liked_songs.name = "Liked Songs".into();
+        liked_songs.image_url = None;
+        let collection_id = database
+            .upsert_source_collection(&liked_songs)
+            .expect("Liked Songs should persist");
+        let first = database
+            .upsert_source_track(&sample_track("liked-1"))
+            .expect("first source track should persist");
+        let second = database
+            .upsert_source_track(&sample_track("liked-2"))
+            .expect("second source track should persist");
+        database
+            .replace_collection_entries(
+                collection_id,
+                &[
+                    CollectionEntry {
+                        position: 0,
+                        source_track_id: Some(first),
+                        provider_item_uri: None,
+                        item_type: "track".into(),
+                        added_at: None,
+                        unavailable_reason: None,
+                    },
+                    CollectionEntry {
+                        position: 1,
+                        source_track_id: Some(second),
+                        provider_item_uri: None,
+                        item_type: "track".into(),
+                        added_at: None,
+                        unavailable_reason: None,
+                    },
+                ],
+            )
+            .expect("Liked Songs entries should persist");
+        let first_library = database
+            .create_library_track_from_source(first)
+            .expect("first library identity should persist");
+        let second_library = database
+            .create_library_track_from_source(second)
+            .expect("second library identity should persist");
+        database
+            .persist_track_link(first, first_library, "existing", 10_000)
+            .expect("first link should persist");
+        database
+            .persist_track_link(second, second_library, "existing", 10_000)
+            .expect("second link should persist");
+
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .expect("Liked Songs tracking should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("tracked Liked Songs mirror should synchronize");
+
+        let mirrored = database
+            .list_local_playlists()
+            .expect("local playlists should list")
+            .into_iter()
+            .find(|playlist| playlist.source_collection_id == Some(collection_id))
+            .expect("tracked Liked Songs should create a local mirror");
+        assert_eq!(mirrored.name, "Liked Songs");
+        let detail = database
+            .get_local_playlist(mirrored.id)
+            .expect("Liked Songs mirror should load");
+        assert_eq!(
+            detail
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![first_library, second_library]
+        );
+
+        database
+            .set_source_track_tracking(collection_id, first, Some(false))
+            .expect("Liked Songs exclusion should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("Liked Songs exclusion should update the mirror");
+        let excluded = database
+            .get_local_playlist(mirrored.id)
+            .expect("updated Liked Songs mirror should load");
+        assert_eq!(
+            excluded
+                .entries
+                .iter()
+                .map(|entry| entry.library_track_id)
+                .collect::<Vec<_>>(),
+            vec![second_library]
+        );
+
+        database
+            .set_source_collection_tracking(collection_id, false)
+            .expect("Liked Songs untracking should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("untracking Liked Songs should remove the mirror");
+        assert!(
+            database
+                .list_local_playlists()
+                .expect("local playlists should list")
+                .into_iter()
+                .all(|playlist| playlist.source_collection_id != Some(collection_id))
+        );
+    }
+
+    #[test]
+    fn spotify_playlist_mirrors_reject_direct_content_edits() {
+        let test_path = TestDatabasePath::new("spotify-playlist-mirror-readonly");
+        let database = Database::open(test_path.path.clone()).expect("database should open");
+        let account_id = database
+            .upsert_source_account(&sample_account())
+            .expect("source account should persist");
+        let collection_id = database
+            .upsert_source_collection(&sample_collection(account_id))
+            .expect("source collection should persist");
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .expect("playlist tracking should persist");
+        database
+            .sync_tracked_spotify_playlist_mirrors()
+            .expect("tracked playlist mirror should synchronize");
+        let mirrored = database
+            .list_local_playlists()
+            .expect("local playlists should list")
+            .into_iter()
+            .find(|playlist| playlist.source_collection_id == Some(collection_id))
+            .expect("mirror should exist");
+
+        let rename_error = database
+            .rename_local_playlist(mirrored.id, "Edited")
+            .expect_err("Spotify mirror rename should be rejected");
+        assert!(
+            rename_error
+                .to_string()
+                .contains("cannot be edited directly")
+        );
+        let delete_error = database
+            .delete_local_playlist(mirrored.id)
+            .expect_err("Spotify mirror deletion should be rejected");
+        assert!(
+            delete_error
+                .to_string()
+                .contains("cannot be edited directly")
         );
     }
 

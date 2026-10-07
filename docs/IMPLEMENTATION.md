@@ -14,17 +14,17 @@ This plan records the implementation sequence from the initial project foundatio
 
 ## Current State
 
-Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 12 are complete. Milestone 13 is implemented locally and awaiting its documented mock-daemon provider verification plus one real Soulseek download smoke test before release packaging.
+Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 12 are complete. Milestone 13 originally delivered the Sockseek sidecar provider. Acquisition now supports an ordered provider chain with Monochrome as the default first provider, Antra as an authenticated optional provider, and Sockseek as another optional fallback; the current Soulseek login path remains unreliable.
 
 The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, scoped Local/Spotify synchronization, persistent Spotify tracking rules, automated validation, native bundle configuration, and tag-triggered release packaging.
 
-Milestones 7 through 12, Local Library Index, Matching Engine, Reconciliation Core, Filesystem Normalization and Ownership Safety, Issues and Manual Resolution UI, and Acquisition Provider Boundary, are complete. Milestone 13, Sockseek Sidecar Provider, has its pinned sidecar integration, provider adapter, credential handling, acquisition settings, release packaging support, and staging flow implemented locally. Its remaining exit gate is the documented mock-daemon provider verification plus one real Soulseek download smoke test. Acquisition verification/import, exports, mirroring, scheduling, and v1 hardening remain future work.
+Milestones 7 through 16 are complete. The acquisition layer contains Monochrome, Antra, and Sockseek production adapters. Settings persists their enabled priority order, the coordinator falls through providers when a higher-priority provider cannot auto-match, and manual resolution groups all returned candidates by provider with provider/token identity. Refrain follows Monochrome's current `tracks.monochrome.st` search/direct-FLAC path and retains the older compatible API pool as Monochrome's internal fallback. Antra uses its device-login protocol, OS credential storage, authenticated endpoint discovery, and current Tidal/Qobuz lossless mirrors. Milestone 14 verification/import is complete and its live Monochrome/Antra one-click lossless acquisition/import smoke gate has passed. Milestone 15 completes the approved two-scope Local Sync then Spotify Sync pipeline with durable progress, partial outcomes, final post-import counts, cancellation, library mutation locking, and tracked Spotify playlist/Liked Songs projection into read-only Local Playlist mirrors. Local Playlists automatically maintain managed M3U8 files under the configured library, Spotify mirrors capture source cover artwork when available, and imported external M3U targets remain in place. Milestone 16 adds immutable Spotify playlist export snapshots/history, atomic UTF-8 M3U8 output, and portable ZIP bundles with deduplicated audio copies plus source playlist artwork when available. Milestone 17 Library Mirroring is next; scheduling and v1 hardening remain future work.
 
 The approved v1 direction remains:
 
 - Rust application core with SQLite persistence
 - direct Spotify integration using Authorization Code with PKCE
-- provider-neutral acquisition layer with Sockseek as the initial provider
+- provider-neutral ordered acquisition chain with Monochrome default-first and authenticated Antra plus Sockseek available as configurable providers
 - normalized local library owned and reconciled by Refrain
 - Local and Spotify workspaces with independent sync actions
 - selective Spotify desired state using persistent collection defaults and per-track overrides
@@ -595,7 +595,7 @@ Implement issue projections for:
 
 - ambiguous matches
 - missing local files
-- inaccessible Spotify collections
+- inaccessible Spotify source collections other than playlists
 - invalid local files
 
 Implement match review:
@@ -663,7 +663,7 @@ With the fake provider, prove:
 - retries use distinct candidates or retryable failures
 - cancellation works
 - a successful provider job does not bypass Refrain verification
-- failed jobs become visible issues
+- failed acquisition jobs remain visible in the Staging workspace rather than entering Issues
 - Issues content remains visible and usable at supported desktop window sizes, with scrolling where needed
 - activating the Library root path field opens the native folder picker and applies the selected directory without requiring manual path entry
 
@@ -692,6 +692,7 @@ Implementation pin: Sockseek `3.0.5`, using official release archives verified a
 - implement SignalR progress subscription
 - use durable HTTP state as authoritative after event disconnects
 - configure Refrain-controlled staging output
+- expose a tracked-only Staging workspace with queue/detail state, live provider progress, manual candidate resolution, and start/retry/cancel controls
 - add secure Soulseek credential storage
 - materialize restricted runtime configuration only if required by the pinned Sockseek version
 - redact sidecar logs
@@ -745,7 +746,9 @@ Implement the post-download pipeline:
 7. normalize accepted files into the canonical library
 8. create/update the managed `LocalFile`
 9. clean or retain staging data according to result
-10. surface failed verification as an issue
+10. retain failed verification as per-track Staging diagnostic state for recovery
+11. automatically hand provider-complete jobs into verification/import during normal sync and targeted acquisition flows
+12. allow downloaded recovery rows to be continued selectively, with partial success when another selected track fails verification/import
 
 ### Dependencies
 
@@ -761,6 +764,8 @@ Tests prove:
 - rejected candidates never become preferred library files
 - retry does not reacquire the same rejected candidate indefinitely
 - imported files are marked `managed`
+- automatic acquisition completion imports accepted tracks without a second user action
+- a mixed selected recovery batch imports valid tracks even when another selected track fails verification
 
 ### Exit Criteria
 
@@ -769,6 +774,8 @@ Provider success can safely produce a verified, normalized local file without we
 ---
 
 ## Milestone 15: Full Synchronization Pipeline
+
+**Status:** Complete (2026-10-06)
 
 ### Objective
 
@@ -790,6 +797,7 @@ Add:
 - library mutation locking
 - final unresolved counts
 - recent sync summaries in the UI
+- tracked Spotify playlist reconciliation into source-linked Local Playlist mirrors
 
 ### Dependencies
 
@@ -817,9 +825,13 @@ A manual sync can execute the complete v1 reconciliation pipeline safely and ide
 
 ## Milestone 16: Playlist Export
 
+**Status:** Complete (2026-10-06)
+
 ### Objective
 
 Export fully resolved local playlists.
+
+The persisted Local Playlists editor and automatic managed M3U8 synchronization path are already implemented outside this milestone. Milestone 16 still owns source-collection export snapshots/history and portable bundle export; do not conflate those immutable exports with editable `local_playlists`.
 
 ### Work
 

@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 use super::{Database, DatabaseError, now_ms};
 
@@ -18,6 +18,57 @@ pub(crate) struct NormalizationCandidate {
 }
 
 impl Database {
+    pub(crate) fn normalization_candidate_for_track(
+        &self,
+        library_track_id: i64,
+    ) -> Result<Option<NormalizationCandidate>, DatabaseError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT
+                        track.id,
+                        track.title,
+                        track.artists_json,
+                        track.album,
+                        track.release_year,
+                        track.disc_number,
+                        track.track_number,
+                        CASE
+                            WHEN COALESCE(track.disc_number, 1) > 1 THEN 1
+                            WHEN EXISTS (
+                                SELECT 1
+                                FROM library_tracks AS sibling
+                                WHERE sibling.id != track.id
+                                  AND sibling.normalized_artists = track.normalized_artists
+                                  AND sibling.normalized_album IS track.normalized_album
+                                  AND COALESCE(sibling.disc_number, 1) > 1
+                            ) THEN 1
+                            ELSE 0
+                        END
+                     FROM library_tracks AS track
+                     WHERE track.id = ?1",
+                    [library_track_id],
+                    |row| {
+                        let artists_json = row.get::<_, String>(2)?;
+                        Ok(NormalizationCandidate {
+                            library_track_id: row.get(0)?,
+                            title: row.get(1)?,
+                            artists: serde_json::from_str(&artists_json).unwrap_or_default(),
+                            album: row.get(3)?,
+                            release_year: row.get(4)?,
+                            disc_number: row.get(5)?,
+                            track_number: row.get(6)?,
+                            is_multi_disc: row.get::<_, i64>(7)? != 0,
+                            local_file_id: 0,
+                            path: String::new(),
+                            format: None,
+                        })
+                    },
+                )
+                .optional()
+        })
+    }
+
     pub(crate) fn normalization_candidates(
         &self,
     ) -> Result<Vec<NormalizationCandidate>, DatabaseError> {

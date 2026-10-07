@@ -1,3 +1,28 @@
+<script module lang="ts">
+  const resizeCallbacks = new Map<Element, () => void>();
+  let sharedResizeObserver: ResizeObserver | null = null;
+
+  function observeResize(element: Element, callback: () => void): () => void {
+    if (typeof ResizeObserver === 'undefined') return () => {};
+    if (!sharedResizeObserver) {
+      sharedResizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) resizeCallbacks.get(entry.target)?.();
+      });
+    }
+    resizeCallbacks.set(element, callback);
+    sharedResizeObserver.observe(element);
+
+    return () => {
+      resizeCallbacks.delete(element);
+      sharedResizeObserver?.unobserve(element);
+      if (resizeCallbacks.size === 0) {
+        sharedResizeObserver?.disconnect();
+        sharedResizeObserver = null;
+      }
+    };
+  }
+</script>
+
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
 
@@ -6,7 +31,7 @@
   let host: HTMLDivElement;
   let measureHost: HTMLDivElement;
   let visibleCount = labels.length;
-  let observer: ResizeObserver | null = null;
+  let stopObservingResize: (() => void) | null = null;
   let frame = 0;
   let mounted = false;
 
@@ -14,8 +39,25 @@
 
   function scheduleMeasure() {
     if (!mounted) return;
+    if (labels.length <= 1) {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      visibleCount = labels.length;
+      return;
+    }
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => void measure());
+  }
+
+  function syncObserver() {
+    if (!mounted || !host) return;
+    const shouldObserve = labels.length > 1;
+    if (shouldObserve && !stopObservingResize) {
+      stopObservingResize = observeResize(host, scheduleMeasure);
+    } else if (!shouldObserve && stopObservingResize) {
+      stopObservingResize();
+      stopObservingResize = null;
+    }
   }
 
   async function measure() {
@@ -66,19 +108,20 @@
 
   onMount(() => {
     mounted = true;
-    observer = new ResizeObserver(scheduleMeasure);
-    observer.observe(host);
+    syncObserver();
     scheduleMeasure();
   });
 
   onDestroy(() => {
-    observer?.disconnect();
+    stopObservingResize?.();
     if (mounted) cancelAnimationFrame(frame);
     mounted = false;
   });
 
   function scheduleMeasureForLabels(currentLabels: string[]) {
-    if (currentLabels === labels) scheduleMeasure();
+    if (currentLabels !== labels || !mounted) return;
+    syncObserver();
+    scheduleMeasure();
   }
 
   $: scheduleMeasureForLabels(labels);
@@ -99,16 +142,18 @@
     </button>
   {/if}
 
-  <div
-    class="collection-chip-measure"
-    bind:this={measureHost}
-    aria-hidden="true"
-  >
-    {#each labels as label, index (`label:${index}:${label}`)}
-      <span class="chip" data-measure-label>{label}</span>
-    {/each}
-    {#each labels as label, index (`overflow:${index}:${label}`)}
-      <span class="chip" data-measure-overflow>+{index + 1}</span>
-    {/each}
-  </div>
+  {#if labels.length > 1}
+    <div
+      class="collection-chip-measure"
+      bind:this={measureHost}
+      aria-hidden="true"
+    >
+      {#each labels as label, index (`label:${index}:${label}`)}
+        <span class="chip" data-measure-label>{label}</span>
+      {/each}
+      {#each labels as label, index (`overflow:${index}:${label}`)}
+        <span class="chip" data-measure-overflow>+{index + 1}</span>
+      {/each}
+    </div>
+  {/if}
 </div>

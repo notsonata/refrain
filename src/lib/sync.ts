@@ -23,6 +23,17 @@ export interface SyncRun {
   errorMessage: string | null;
 }
 
+export interface SyncProgress {
+  runId: number;
+  scope: 'local' | 'spotify';
+  phase: string;
+  completed: number;
+  total: number | null;
+  message: string;
+}
+
+export const syncProgressEvent = 'library-sync-progress';
+
 export interface SyncRunPage {
   items: SyncRun[];
   total: number;

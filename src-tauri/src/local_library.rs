@@ -143,8 +143,8 @@ pub fn scan_library(
         .cloned()
         .collect::<Vec<_>>();
 
-    let paths = discover_audio_files(&root)?;
-    let canonical_paths = paths
+    let (audio_paths, playlist_paths) = discover_library_files(&root)?;
+    let canonical_paths = audio_paths
         .iter()
         .map(fs::canonicalize)
         .collect::<Result<Vec<_>, _>>()?;
@@ -231,6 +231,7 @@ pub fn scan_library(
         .map(|file| file.id)
         .collect::<Vec<_>>();
     summary.missing = database.mark_local_files_missing(&missing_ids)?;
+    import_local_playlists(database, &playlist_paths)?;
 
     progress(LocalLibraryScanProgress::new(
         "complete",
@@ -264,20 +265,27 @@ pub fn ensure_local_file_hash(
     Ok(hash)
 }
 
-fn discover_audio_files(root: &Path) -> Result<Vec<PathBuf>, LocalLibraryError> {
-    let mut paths = Vec::new();
+fn discover_library_files(root: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), LocalLibraryError> {
+    let mut audio_paths = Vec::new();
+    let mut playlist_paths = Vec::new();
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| !should_skip_entry(entry, root))
     {
         let entry = entry?;
-        if entry.file_type().is_file() && is_supported_audio_path(entry.path()) {
-            paths.push(entry.path().to_path_buf());
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if is_supported_audio_path(entry.path()) {
+            audio_paths.push(entry.path().to_path_buf());
+        } else if is_playlist_path(entry.path()) {
+            playlist_paths.push(entry.path().to_path_buf());
         }
     }
-    paths.sort();
-    Ok(paths)
+    audio_paths.sort();
+    playlist_paths.sort();
+    Ok((audio_paths, playlist_paths))
 }
 
 fn should_skip_entry(entry: &DirEntry, root: &Path) -> bool {
@@ -300,7 +308,93 @@ fn is_supported_audio_path(path: &Path) -> bool {
     )
 }
 
-fn inspect_audio_file(
+fn is_playlist_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("m3u" | "m3u8")
+    )
+}
+
+fn import_local_playlists(
+    database: &Database,
+    playlist_paths: &[PathBuf],
+) -> Result<(), LocalLibraryError> {
+    if playlist_paths.is_empty() {
+        return Ok(());
+    }
+
+    let mut local_track_ids = database
+        .local_files_snapshot()?
+        .into_iter()
+        .filter(|file| file.state == "present")
+        .map(|file| (PathBuf::from(file.path), file.library_track_id))
+        .collect::<HashMap<_, _>>();
+
+    for playlist_path in playlist_paths {
+        let canonical_playlist = fs::canonicalize(playlist_path)?;
+        let mut track_ids = Vec::new();
+        for path in parse_m3u_paths(&canonical_playlist)? {
+            let library_track_id = match local_track_ids.get(&path).copied() {
+                Some(Some(id)) => Some(id),
+                Some(None) => {
+                    let resolved = database
+                        .ensure_library_track_for_present_local_path(&path.to_string_lossy())?;
+                    if let Some(id) = resolved {
+                        local_track_ids.insert(path.clone(), Some(id));
+                    }
+                    resolved
+                }
+                None => None,
+            };
+            if let Some(id) = library_track_id {
+                track_ids.push(id);
+            }
+        }
+        let name = canonical_playlist
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Local Playlist");
+        database.import_local_playlist_from_m3u(
+            name,
+            &canonical_playlist.to_string_lossy(),
+            &track_ids,
+        )?;
+    }
+    Ok(())
+}
+
+fn parse_m3u_paths(path: &Path) -> Result<Vec<PathBuf>, LocalLibraryError> {
+    let bytes = fs::read(path)?;
+    let contents = String::from_utf8_lossy(&bytes);
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut paths = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let candidate = PathBuf::from(line);
+        let resolved = if candidate.is_absolute() {
+            candidate
+        } else {
+            parent.join(candidate)
+        };
+        if !is_supported_audio_path(&resolved) {
+            continue;
+        }
+        if let Ok(canonical) = fs::canonicalize(resolved) {
+            paths.push(canonical);
+        }
+    }
+    Ok(paths)
+}
+
+pub(crate) fn inspect_audio_file(
     path: &Path,
     file_size: i64,
     modified_at: i64,
@@ -496,7 +590,7 @@ fn hash_file(path: &Path) -> Result<String, LocalLibraryError> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn system_time_ms(time: std::time::SystemTime) -> i64 {
+pub(crate) fn system_time_ms(time: std::time::SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default()
@@ -675,6 +769,64 @@ mod tests {
         assert_eq!(phases.first().map(String::as_str), Some("starting"));
         assert!(phases.iter().any(|phase| phase == "scanning"));
         assert_eq!(phases.last().map(String::as_str), Some("complete"));
+    }
+
+    #[test]
+    fn scan_imports_m3u_playlists_from_the_library_root() {
+        let test = TestLibrary::new("m3u-import");
+        let database = test.open_database();
+        let first = test.root.join("one.wav");
+        let second = test.root.join("nested/two.wav");
+        write_test_wav(&first, 800);
+        write_test_wav(&second, 1_600);
+        let playlist_path = test.root.join("Road Trip.m3u8");
+        fs::write(
+            &playlist_path,
+            "#EXTM3U\none.wav\nnested/two.wav\none.wav\n",
+        )
+        .unwrap();
+
+        scan_library(&database, &test.root, |_| {}).expect("scan should import playlists");
+
+        let playlists = database
+            .list_local_playlists()
+            .expect("playlists should load");
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(playlists[0].name, "Road Trip");
+        assert_eq!(playlists[0].entry_count, 3);
+        assert_eq!(
+            playlists[0].m3u_path.as_deref(),
+            Some(
+                fs::canonicalize(&playlist_path)
+                    .unwrap()
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+
+        let detail = database
+            .get_local_playlist(playlists[0].id)
+            .expect("playlist detail should load");
+        assert_eq!(detail.entries.len(), 3);
+        assert_eq!(
+            detail.entries[0].library_track_id, detail.entries[2].library_track_id,
+            "M3U duplicates should be preserved"
+        );
+        assert_ne!(
+            detail.entries[0].library_track_id,
+            detail.entries[1].library_track_id
+        );
+
+        fs::write(&playlist_path, "#EXTM3U\none.wav\n").unwrap();
+        scan_library(&database, &test.root, |_| {}).expect("rescan should succeed");
+        let rescanned = database
+            .get_local_playlist(playlists[0].id)
+            .expect("playlist should remain managed by Refrain");
+        assert_eq!(
+            rescanned.entries.len(),
+            3,
+            "rescanning must not overwrite an already imported Refrain playlist"
+        );
     }
 
     #[test]

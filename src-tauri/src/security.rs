@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 const KEYRING_SERVICE: &str = "io.github.notsonata.refrain";
 const SPOTIFY_REFRESH_TOKEN_ACCOUNT: &str = "spotify-refresh-token";
 const SOULSEEK_CREDENTIALS_ACCOUNT: &str = "soulseek-credentials";
+const ANTRA_DEVICE_TOKEN_ACCOUNT: &str = "antra-device-token";
 
 pub trait RefreshTokenStore: Send + Sync {
     fn get_refresh_token(&self) -> Result<Option<String>, CredentialStoreError>;
@@ -96,6 +97,44 @@ impl SoulseekCredentialStore for KeyringSoulseekCredentialStore {
     }
 
     fn clear_credentials(&self) -> Result<(), CredentialStoreError> {
+        match self.entry()?.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(error) => Err(CredentialStoreError::from(error)),
+        }
+    }
+}
+
+pub trait AntraTokenStore: Send + Sync {
+    fn get_token(&self) -> Result<Option<String>, CredentialStoreError>;
+    fn set_token(&self, token: &str) -> Result<(), CredentialStoreError>;
+    fn clear_token(&self) -> Result<(), CredentialStoreError>;
+}
+
+#[derive(Debug, Default)]
+pub struct KeyringAntraTokenStore;
+
+impl KeyringAntraTokenStore {
+    fn entry(&self) -> Result<Entry, CredentialStoreError> {
+        Entry::new(KEYRING_SERVICE, ANTRA_DEVICE_TOKEN_ACCOUNT).map_err(CredentialStoreError::from)
+    }
+}
+
+impl AntraTokenStore for KeyringAntraTokenStore {
+    fn get_token(&self) -> Result<Option<String>, CredentialStoreError> {
+        match self.entry()?.get_password() {
+            Ok(token) => Ok(Some(token)),
+            Err(KeyringError::NoEntry) => Ok(None),
+            Err(error) => Err(CredentialStoreError::from(error)),
+        }
+    }
+
+    fn set_token(&self, token: &str) -> Result<(), CredentialStoreError> {
+        self.entry()?
+            .set_password(token)
+            .map_err(CredentialStoreError::from)
+    }
+
+    fn clear_token(&self) -> Result<(), CredentialStoreError> {
         match self.entry()?.delete_credential() {
             Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
             Err(error) => Err(CredentialStoreError::from(error)),

@@ -64,6 +64,7 @@ pub struct LocalLibraryOverview {
     pub present: usize,
     pub missing: usize,
     pub invalid: usize,
+    pub local_only: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

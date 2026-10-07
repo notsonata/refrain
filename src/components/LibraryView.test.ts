@@ -72,4 +72,27 @@ describe('LibraryView', () => {
     expect(body).toContain('01 - Available Song.flac');
     expect(body).toContain('02 - Local Song.mp3');
   });
+
+  it('virtualizes long desktop library lists instead of rendering every row', () => {
+    const manyTracks = Array.from({ length: 200 }, (_, index) => ({
+      ...tracks[1],
+      id: index + 100,
+      title: `Song ${String(index).padStart(3, '0')}`,
+      preferredFile: tracks[1].preferredFile
+        ? {
+            ...tracks[1].preferredFile,
+            id: index + 1000,
+            path: `/music/Song ${String(index).padStart(3, '0')}.mp3`,
+          }
+        : null,
+    }));
+
+    const { body } = render(LibraryView, {
+      props: { tracks: manyTracks, total: manyTracks.length },
+    });
+
+    expect(body).toContain('Song 000');
+    expect(body).not.toContain('Song 199');
+    expect(body).toContain(`height:${manyTracks.length * 50}px`);
+  });
 });

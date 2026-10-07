@@ -17,6 +17,8 @@ const issues: IssueRow[] = [
     candidateCount: 1,
     confidence: 9_100,
     path: null,
+    imageUrl: 'https://example.test/ambiguous.jpg',
+    artworkPath: null,
   },
   {
     id: 'missing-library:8',
@@ -31,20 +33,8 @@ const issues: IssueRow[] = [
     candidateCount: null,
     confidence: null,
     path: null,
-  },
-  {
-    id: 'local-only:12',
-    kind: 'localOnlyTrack',
-    title: 'Local Song',
-    subtitle: 'Artist',
-    detail: 'Present locally but absent from Spotify source state.',
-    sourceTrackId: null,
-    libraryTrackId: 12,
-    localFileId: null,
-    collectionId: null,
-    candidateCount: null,
-    confidence: null,
-    path: '/music/Local Song.flac',
+    imageUrl: 'https://example.test/missing.jpg',
+    artworkPath: null,
   },
   {
     id: 'invalid-file:9',
@@ -59,6 +49,8 @@ const issues: IssueRow[] = [
     candidateCount: null,
     confidence: null,
     path: '/music/Broken.flac',
+    imageUrl: null,
+    artworkPath: null,
   },
   {
     id: 'collection:10',
@@ -73,6 +65,8 @@ const issues: IssueRow[] = [
     candidateCount: null,
     confidence: null,
     path: null,
+    imageUrl: 'https://example.test/collection.jpg',
+    artworkPath: null,
   },
 ];
 
@@ -89,6 +83,7 @@ const review: MatchReview = {
     explicit: false,
     versionKind: null,
     versionDetail: null,
+    imageUrl: 'https://example.test/ambiguous.jpg',
   },
   outcome: 'review',
   selectedLibraryTrackId: null,
@@ -109,6 +104,7 @@ const review: MatchReview = {
         explicit: false,
         versionKind: null,
         versionDetail: null,
+        imageUrl: 'https://example.test/candidate.jpg',
       },
       evidence: {
         libraryTrackId: 11,
@@ -132,7 +128,7 @@ const review: MatchReview = {
 };
 
 describe('IssuesView', () => {
-  it('renders all Milestone 11 issue states', () => {
+  it('renders genuine non-acquisition issue states', () => {
     const { body } = render(IssuesView, {
       props: {
         issues,
@@ -140,7 +136,7 @@ describe('IssuesView', () => {
         counts: {
           matchReview: 1,
           missingLocalFile: 1,
-          localOnlyTrack: 1,
+          localOnlyTrack: 0,
           invalidLocalFile: 1,
           inaccessibleCollection: 1,
           acquisitionFailed: 0,
@@ -148,8 +144,12 @@ describe('IssuesView', () => {
       },
     });
 
-    expect(body).toContain('Needs Local Copy');
-    expect(body).toContain('Local Only');
+    expect(body).toContain('4 unresolved');
+    expect(body).toContain('1 review');
+    expect(body).toContain('1 missing');
+    expect(body).toContain('1 inaccessible');
+    expect(body).toContain('1 invalid');
+    expect(body).not.toContain('Local Only');
   });
 
   it('renders candidate evidence and clearable rejection decisions', () => {
@@ -175,5 +175,72 @@ describe('IssuesView', () => {
     expect(body).toContain('runner-up is close');
     expect(body).toContain('Clear Rejection');
     expect(body).not.toContain('Confirm Match');
+  });
+
+  it('uses the compact attention summary and warning styling', () => {
+    const { body } = render(IssuesView, {
+      props: {
+        issues: [issues[1]],
+        total: 1,
+        counts: {
+          matchReview: 0,
+          missingLocalFile: 1,
+          localOnlyTrack: 0,
+          invalidLocalFile: 0,
+          inaccessibleCollection: 0,
+          acquisitionFailed: 0,
+        },
+      },
+    });
+
+    expect(body).toContain('class="issues-summary"');
+    expect(body).not.toContain('metrics-strip');
+    expect(body).toContain('aria-label="Filter and sort issues"');
+    expect(body).toContain('class="chip warning">Missing</span>');
+  });
+
+  it('renders issue artwork and a Trash action for invalid files', () => {
+    const { body } = render(IssuesView, {
+      props: {
+        issues: [issues[2]],
+        total: 1,
+        counts: {
+          matchReview: 0,
+          missingLocalFile: 0,
+          localOnlyTrack: 0,
+          invalidLocalFile: 1,
+          inaccessibleCollection: 0,
+          acquisitionFailed: 0,
+        },
+        selectedIssueId: 'invalid-file:9',
+      },
+    });
+
+    expect(body).toContain('Move to Trash');
+    expect(body).toContain('system Trash or Recycle Bin');
+  });
+
+  it('uses source artwork in the issue queue and match review source', () => {
+    const { body } = render(IssuesView, {
+      props: {
+        issues: [issues[0]],
+        total: 1,
+        counts: {
+          matchReview: 1,
+          missingLocalFile: 0,
+          localOnlyTrack: 0,
+          invalidLocalFile: 0,
+          inaccessibleCollection: 0,
+          acquisitionFailed: 0,
+        },
+        selectedIssueId: 'match:7',
+        review,
+      },
+    });
+
+    expect(body).toContain('issue-row-artwork');
+    expect(body).toContain('issue-source-artwork');
+    expect(body).toContain('https://example.test/ambiguous.jpg');
+    expect(body).toContain('https://example.test/candidate.jpg');
   });
 });

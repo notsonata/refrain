@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::domain::{IssueKind, IssueRow};
 
@@ -11,11 +11,62 @@ impl Database {
         self.with_connection(|connection| {
             let mut issues = Vec::new();
             issues.extend(tracked_missing_local_issues(connection)?);
-            issues.extend(local_only_track_issues(connection)?);
             issues.extend(inaccessible_collection_issues(connection)?);
             issues.extend(invalid_local_file_issues(connection)?);
-            issues.extend(acquisition_failure_issues(connection)?);
             Ok(issues)
+        })
+    }
+
+    pub(crate) fn source_track_image_url(
+        &self,
+        source_track_id: i64,
+    ) -> Result<Option<String>, DatabaseError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT image_url FROM source_tracks WHERE id = ?1",
+                    [source_track_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map(Option::flatten)
+        })
+    }
+
+    pub(crate) fn library_track_image_url(
+        &self,
+        library_track_id: i64,
+    ) -> Result<Option<String>, DatabaseError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT COALESCE(
+                        (
+                            SELECT source.image_url
+                            FROM source_tracks AS source
+                            WHERE source.id = track.canonical_source_track_id
+                              AND source.image_url IS NOT NULL
+                        ),
+                        (
+                            SELECT source.image_url
+                            FROM track_links AS link
+                            INNER JOIN source_tracks AS source
+                              ON source.id = link.source_track_id
+                            WHERE link.library_track_id = track.id
+                              AND source.image_url IS NOT NULL
+                            ORDER BY
+                              CASE WHEN source.provider = 'spotify' THEN 0 ELSE 1 END,
+                              source.id
+                            LIMIT 1
+                        )
+                    )
+                     FROM library_tracks AS track
+                     WHERE track.id = ?1",
+                    [library_track_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map(Option::flatten)
         })
     }
 }
@@ -26,6 +77,7 @@ fn tracked_missing_local_issues(connection: &Connection) -> Result<Vec<IssueRow>
             source.id,
             source.title,
             source.artists_json,
+            source.image_url,
             (
                 SELECT link.library_track_id
                 FROM track_links AS link
@@ -68,6 +120,14 @@ fn tracked_missing_local_issues(connection: &Connection) -> Result<Vec<IssueRow>
              WHERE link.source_track_id = source.id
                AND file.state = 'present'
            )
+           AND EXISTS (
+             SELECT 1
+             FROM track_links AS link
+             INNER JOIN local_files AS file
+               ON file.library_track_id = link.library_track_id
+             WHERE link.source_track_id = source.id
+               AND file.state = 'missing'
+           )
          ORDER BY source.normalized_artists, source.normalized_title, source.id",
     )?;
     statement
@@ -81,84 +141,17 @@ fn tracked_missing_local_issues(connection: &Connection) -> Result<Vec<IssueRow>
                 title: row.get(1)?,
                 subtitle: artists_subtitle(&artists),
                 detail: Some(
-                    "This Spotify track is selected for tracking but has no present local file."
-                        .into(),
+                    "A previously known local file for this tracked track is missing.".into(),
                 ),
                 source_track_id: Some(source_track_id),
-                library_track_id: row.get(3)?,
+                library_track_id: row.get(4)?,
                 local_file_id: None,
                 collection_id: None,
                 candidate_count: None,
                 confidence: None,
-                path: row.get(4)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()
-}
-
-fn local_only_track_issues(connection: &Connection) -> Result<Vec<IssueRow>, rusqlite::Error> {
-    let mut statement = connection.prepare(
-        "SELECT
-            track.id,
-            track.title,
-            track.artists_json,
-            (
-                SELECT file.path
-                FROM local_files AS file
-                WHERE file.library_track_id = track.id
-                  AND file.state = 'present'
-                ORDER BY file.is_preferred DESC, file.id
-                LIMIT 1
-            )
-         FROM library_tracks AS track
-         WHERE EXISTS (
-             SELECT 1
-             FROM local_files AS file
-             WHERE file.library_track_id = track.id
-               AND file.state = 'present'
-           )
-           AND NOT EXISTS (
-             SELECT 1
-             FROM track_links AS link
-             INNER JOIN collection_entries AS entry
-               ON entry.source_track_id = link.source_track_id
-             INNER JOIN source_collections AS collection
-               ON collection.id = entry.collection_id
-             INNER JOIN source_accounts AS account
-               ON account.id = collection.source_account_id
-             WHERE link.library_track_id = track.id
-               AND account.provider = 'spotify'
-               AND collection.is_accessible = 1
-               AND entry.item_type = 'track'
-           )
-           AND EXISTS (
-             SELECT 1
-             FROM source_accounts AS account
-             WHERE account.provider = 'spotify'
-           )
-         ORDER BY track.normalized_artists, track.normalized_title, track.id",
-    )?;
-    statement
-        .query_map([], |row| {
-            let library_track_id = row.get::<_, i64>(0)?;
-            let artists_json = row.get::<_, String>(2)?;
-            let artists = serde_json::from_str::<Vec<String>>(&artists_json).unwrap_or_default();
-            Ok(IssueRow {
-                id: format!("local-only:{library_track_id}"),
-                kind: IssueKind::LocalOnlyTrack,
-                title: row.get(1)?,
-                subtitle: artists_subtitle(&artists),
-                detail: Some(
-                    "This track exists locally but is not present in the imported Spotify source state."
-                        .into(),
-                ),
-                source_track_id: None,
-                library_track_id: Some(library_track_id),
-                local_file_id: None,
-                collection_id: None,
-                candidate_count: None,
-                confidence: None,
-                path: row.get(3)?,
+                path: row.get(5)?,
+                image_url: row.get(3)?,
+                artwork_path: None,
             })
         })?
         .collect::<Result<Vec<_>, _>>()
@@ -168,9 +161,10 @@ fn inaccessible_collection_issues(
     connection: &Connection,
 ) -> Result<Vec<IssueRow>, rusqlite::Error> {
     let mut statement = connection.prepare(
-        "SELECT id, kind, name, access_issue
+        "SELECT id, kind, name, access_issue, image_url
          FROM source_collections
          WHERE is_accessible = 0
+           AND kind != 'playlist'
          ORDER BY lower(name), id",
     )?;
     statement
@@ -190,6 +184,8 @@ fn inaccessible_collection_issues(
                 candidate_count: None,
                 confidence: None,
                 path: None,
+                image_url: row.get(4)?,
+                artwork_path: None,
             })
         })?
         .collect::<Result<Vec<_>, _>>()
@@ -203,7 +199,8 @@ fn invalid_local_file_issues(connection: &Connection) -> Result<Vec<IssueRow>, r
             file.path,
             file.scan_error,
             track.title,
-            track.artists_json
+            track.artists_json,
+            file.artwork_path
          FROM local_files AS file
          LEFT JOIN library_tracks AS track
            ON track.id = file.library_track_id
@@ -234,57 +231,8 @@ fn invalid_local_file_issues(connection: &Connection) -> Result<Vec<IssueRow>, r
                 candidate_count: None,
                 confidence: None,
                 path: Some(path),
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()
-}
-
-fn acquisition_failure_issues(connection: &Connection) -> Result<Vec<IssueRow>, rusqlite::Error> {
-    let mut statement = connection.prepare(
-        "SELECT
-            job.id,
-            job.library_track_id,
-            track.title,
-            track.artists_json,
-            job.provider,
-            job.error_code,
-            job.error_message,
-            job.staging_path
-         FROM acquisition_jobs AS job
-         JOIN library_tracks AS track ON track.id = job.library_track_id
-         WHERE job.status = 'failed'
-         ORDER BY job.updated_at DESC, job.id DESC",
-    )?;
-    statement
-        .query_map([], |row| {
-            let job_id = row.get::<_, i64>(0)?;
-            let artists_json = row.get::<_, String>(3)?;
-            let artists = serde_json::from_str::<Vec<String>>(&artists_json).unwrap_or_default();
-            let provider = row.get::<_, String>(4)?;
-            let error_code = row.get::<_, Option<String>>(5)?;
-            let error_message = row.get::<_, Option<String>>(6)?;
-            let detail = match (error_code, error_message) {
-                (Some(code), Some(message)) => Some(format!("{message} ({code})")),
-                (None, Some(message)) => Some(message),
-                (Some(code), None) => Some(format!("Acquisition failed with {code}.")),
-                (None, None) => {
-                    Some("The acquisition provider could not obtain this track.".into())
-                }
-            };
-            Ok(IssueRow {
-                id: format!("acquisition:{job_id}"),
-                kind: IssueKind::AcquisitionFailed,
-                title: row.get(2)?,
-                subtitle: artists_subtitle(&artists)
-                    .or_else(|| Some(format!("{provider} acquisition failed"))),
-                detail,
-                source_track_id: None,
-                library_track_id: Some(row.get(1)?),
-                local_file_id: None,
-                collection_id: None,
-                candidate_count: None,
-                confidence: None,
-                path: row.get(7)?,
+                image_url: None,
+                artwork_path: row.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()
@@ -371,11 +319,11 @@ mod tests {
             .execute(
                 "INSERT INTO source_tracks (
                     provider, provider_track_id, title, normalized_title, artists_json,
-                    normalized_artists, album, normalized_album, duration_ms,
+                    normalized_artists, album, normalized_album, duration_ms, image_url,
                     created_at, updated_at
                  ) VALUES (
                     'spotify', 'source', 'Song', 'song', '[\"Artist\"]', 'artist',
-                    'Album', 'album', 180000, ?1, ?1
+                    'Album', 'album', 180000, 'https://example.test/source.jpg', ?1, ?1
                  )",
                 [now],
             )
@@ -403,6 +351,14 @@ mod tests {
                 .unwrap();
             library_ids.push(connection.last_insert_rowid());
         }
+        connection
+            .execute(
+                "UPDATE library_tracks
+                 SET canonical_source_track_id = ?1
+                 WHERE id = ?2",
+                params![source_track_id, library_ids[0]],
+            )
+            .unwrap();
         drop(connection);
         database
             .set_source_collection_tracking(collection_id, true)
@@ -419,18 +375,30 @@ mod tests {
 
         let initial = crate::issues::list_issues(&database, 0, 100).unwrap();
         assert_eq!(initial.counts.match_review, 1);
+        assert_eq!(
+            initial.items[0].image_url.as_deref(),
+            Some("https://example.test/source.jpg")
+        );
         let review = crate::issues::get_match_review(&database, source_track_id)
             .unwrap()
             .unwrap();
         assert_eq!(review.candidates.len(), 2);
         assert_eq!(review.outcome, crate::domain::MatchOutcome::Review);
+        assert_eq!(
+            review.source.image_url.as_deref(),
+            Some("https://example.test/source.jpg")
+        );
+        assert_eq!(
+            review.candidates[0].track.image_url.as_deref(),
+            Some("https://example.test/source.jpg")
+        );
 
         database
             .confirm_match(source_track_id, first_library_track_id)
             .unwrap();
         let confirmed = crate::issues::list_issues(&database, 0, 100).unwrap();
         assert_eq!(confirmed.counts.match_review, 0);
-        assert_eq!(confirmed.counts.missing_local_file, 1);
+        assert_eq!(confirmed.counts.missing_local_file, 0);
 
         database
             .clear_match_decision(source_track_id, None)
@@ -459,12 +427,22 @@ mod tests {
             .execute(
                 "INSERT INTO source_collections (
                     source_account_id, provider_collection_id, kind, name,
-                    is_accessible, access_issue, created_at, updated_at
-                 ) VALUES (?1, 'blocked', 'playlist', 'Blocked Playlist', 0, 'Spotify denied access', ?2, ?2)",
+                    is_accessible, access_issue, image_url, created_at, updated_at
+                 ) VALUES (?1, 'blocked', 'playlist', 'Blocked Playlist', 0, 'Spotify denied access', 'https://example.test/blocked-playlist.jpg', ?2, ?2)",
                 params![account_id, now],
             )
             .unwrap();
-        let collection_id = connection.last_insert_rowid();
+        let blocked_playlist_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO source_collections (
+                    source_account_id, provider_collection_id, kind, name,
+                    is_accessible, access_issue, image_url, created_at, updated_at
+                 ) VALUES (?1, 'blocked-album', 'saved_album', 'Blocked Album', 0, 'Spotify denied access', 'https://example.test/blocked-album.jpg', ?2, ?2)",
+                params![account_id, now],
+            )
+            .unwrap();
+        let blocked_album_id = connection.last_insert_rowid();
         connection
             .execute(
                 "INSERT INTO source_collections (
@@ -479,11 +457,12 @@ mod tests {
             .execute(
                 "INSERT INTO source_tracks (
                     provider, provider_track_id, title, normalized_title, artists_json,
-                    normalized_artists, album, normalized_album, duration_ms,
+                    normalized_artists, album, normalized_album, duration_ms, image_url,
                     created_at, updated_at
                  ) VALUES (
                     'spotify', 'tracked-source', 'Tracked Song', 'tracked song',
-                    '[\"Artist\"]', 'artist', 'Album', 'album', 180000, ?1, ?1
+                    '[\"Artist\"]', 'artist', 'Album', 'album', 180000,
+                    'https://example.test/tracked.jpg', ?1, ?1
                  )",
                 [now],
             )
@@ -531,10 +510,10 @@ mod tests {
             .execute(
                 "INSERT INTO local_files (
                     library_track_id, path, ownership, state, file_size, modified_at,
-                    scan_error, created_at, updated_at
+                    artwork_path, scan_error, created_at, updated_at
                  ) VALUES
-                    (?1, '/music/missing.flac', 'external', 'missing', 100, 1, NULL, ?2, ?2),
-                    (NULL, '/music/invalid.flac', 'external', 'invalid', 100, 1, 'Unreadable tags', ?2, ?2)",
+                    (?1, '/music/missing.flac', 'external', 'missing', 100, 1, NULL, NULL, ?2, ?2),
+                    (NULL, '/music/invalid.flac', 'external', 'invalid', 100, 1, '/cache/invalid.jpg', 'Unreadable tags', ?2, ?2)",
                 params![library_track_id, now],
             )
             .unwrap();
@@ -544,6 +523,37 @@ mod tests {
         assert_eq!(initial.counts.missing_local_file, 1);
         assert_eq!(initial.counts.invalid_local_file, 1);
         assert_eq!(initial.counts.inaccessible_collection, 1);
+        assert!(
+            initial
+                .items
+                .iter()
+                .all(|issue| issue.id != format!("collection:{blocked_playlist_id}"))
+        );
+        let inaccessible = initial
+            .items
+            .iter()
+            .find(|issue| issue.id == format!("collection:{blocked_album_id}"))
+            .unwrap();
+        assert_eq!(inaccessible.title, "Blocked Album");
+        assert_eq!(
+            inaccessible.image_url.as_deref(),
+            Some("https://example.test/blocked-album.jpg")
+        );
+        let missing = initial
+            .items
+            .iter()
+            .find(|issue| issue.kind == IssueKind::MissingLocalFile)
+            .unwrap();
+        assert_eq!(
+            missing.image_url.as_deref(),
+            Some("https://example.test/tracked.jpg")
+        );
+        let invalid = initial
+            .items
+            .iter()
+            .find(|issue| issue.kind == IssueKind::InvalidLocalFile)
+            .unwrap();
+        assert_eq!(invalid.artwork_path.as_deref(), Some("/cache/invalid.jpg"));
 
         let connection = database.lock_connection().unwrap();
         connection
@@ -557,7 +567,7 @@ mod tests {
                 "UPDATE source_collections
                  SET is_accessible = 1, access_issue = NULL
                  WHERE id = ?1",
-                [collection_id],
+                [blocked_album_id],
             )
             .unwrap();
         drop(connection);

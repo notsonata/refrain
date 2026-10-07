@@ -7,14 +7,23 @@ use std::{
     },
 };
 
+use serde::Serialize;
+use tauri::Emitter;
+
 use crate::{
-    acquisition::AcquisitionCoordinator,
+    acquisition::{AcquisitionCoordinator, AcquisitionProvider},
+    antra::AntraProvider,
     app::AppState,
     db::{Database, DatabaseError},
-    domain::{MatchOutcome, MatchTrackDescriptor, ReconciliationCounts, SyncRun, SyncRunPage},
+    domain::{
+        AcquisitionJob, MatchOutcome, MatchTrackDescriptor, ReconciliationCounts, SyncRun,
+        SyncRunPage,
+    },
     local_library::scan_library,
     matching::MatcherIndex,
+    monochrome::MonochromeProvider,
     normalization::{NormalizationError, normalize_resolved_files},
+    playlist_sync::sync_managed_local_playlists,
     saved_albums::{
         cancel_spotify_saved_album_refresh, prepare_spotify_saved_album_refresh,
         refresh_spotify_saved_albums,
@@ -22,7 +31,32 @@ use crate::{
     sockseek::SockseekManager,
     source_sync::{SourceRefreshControl, refresh_spotify_source as refresh_source},
     spotify::SpotifyClient,
+    verification::{continue_downloaded_jobs, downloaded_staging_artifact_exists},
 };
+
+pub const SYNC_PROGRESS_EVENT: &str = "library-sync-progress";
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProgress {
+    pub run_id: i64,
+    pub scope: String,
+    pub phase: String,
+    pub completed: usize,
+    pub total: Option<usize>,
+    pub message: String,
+}
+
+#[derive(Debug, Default)]
+struct SyncExecutionSuccess {
+    counts: ReconciliationCounts,
+    warnings: Vec<String>,
+}
+
+struct AvailableAcquisitionProviders {
+    providers: Vec<Arc<dyn AcquisitionProvider>>,
+    warnings: Vec<String>,
+}
 
 #[derive(Debug, Default)]
 pub struct SyncCoordinator {
@@ -117,11 +151,13 @@ enum ReconciliationFailure {
 }
 
 struct SyncExecutionContext<'a> {
+    app: &'a tauri::AppHandle,
     database: &'a Database,
     source_refresh: &'a Arc<SourceRefreshControl>,
     sync: &'a SyncCoordinator,
+    monochrome: &'a Arc<MonochromeProvider>,
+    antra: &'a Arc<AntraProvider>,
     sockseek: &'a Arc<SockseekManager>,
-    app: &'a tauri::AppHandle,
     app_data_dir: &'a Path,
 }
 
@@ -190,17 +226,38 @@ async fn start_scoped_sync(
     let spotify = Arc::clone(&state.spotify);
     let source_refresh = Arc::clone(&state.source_refresh);
     let sync = Arc::clone(&state.sync);
+    let library_lock = Arc::clone(&state.library_lock);
+    let monochrome = Arc::clone(&state.monochrome);
+    let antra = Arc::clone(&state.antra);
     let sockseek = Arc::clone(&state.sockseek);
     let app_data_dir = state.app_data_dir.clone();
 
     match tauri::async_runtime::spawn_blocking(move || {
         let _lease = lease;
+        let _library_guard = match library_lock.write() {
+            Ok(guard) => guard,
+            Err(_) => {
+                let message = "Library mutation lock is poisoned.";
+                let _ = database.finish_sync_run(
+                    run_id,
+                    "failed",
+                    ReconciliationCounts::default(),
+                    Some(message),
+                );
+                return database
+                    .sync_run(run_id)
+                    .map_err(|error| sync_database_error("load failed sync", error))?
+                    .ok_or_else(|| message.to_owned());
+            }
+        };
         let context = SyncExecutionContext {
+            app: &app,
             database: &database,
             source_refresh: &source_refresh,
             sync: &sync,
+            monochrome: &monochrome,
+            antra: &antra,
             sockseek: &sockseek,
-            app: &app,
             app_data_dir: &app_data_dir,
         };
         execute_sync(&context, spotify, run_id, scope)
@@ -272,9 +329,16 @@ fn execute_sync(
     };
     let finish_result =
         match outcome {
-            Ok(counts) => context
-                .database
-                .finish_sync_run(run_id, "succeeded", counts, None),
+            Ok(success) => {
+                let status = completion_status(success.counts);
+                let warning_message = aggregate_warning_messages(&success.warnings);
+                context.database.finish_sync_run(
+                    run_id,
+                    status,
+                    success.counts,
+                    warning_message.as_deref(),
+                )
+            }
             Err(SyncExecutionFailure::Cancelled(counts)) => {
                 context
                     .database
@@ -285,6 +349,15 @@ fn execute_sync(
                 .finish_sync_run(run_id, "failed", counts, Some(&message)),
         };
     finish_result.map_err(|error| sync_database_error("finish sync run", error))?;
+    emit_sync_progress(
+        context,
+        run_id,
+        scope,
+        "complete",
+        1,
+        Some(1),
+        "Synchronization finished",
+    );
     context
         .database
         .sync_run(run_id)
@@ -292,11 +365,103 @@ fn execute_sync(
         .ok_or_else(|| "Completed sync run could not be loaded.".to_owned())
 }
 
+fn source_membership_delta(before: &[i64], after: &[i64]) -> (i64, i64) {
+    let before = before.iter().copied().collect::<HashSet<_>>();
+    let after = after.iter().copied().collect::<HashSet<_>>();
+    let added = after.difference(&before).count() as i64;
+    let removed = before.difference(&after).count() as i64;
+    (added, removed)
+}
+
+fn emit_sync_progress(
+    context: &SyncExecutionContext<'_>,
+    run_id: i64,
+    scope: &str,
+    phase: &str,
+    completed: usize,
+    total: Option<usize>,
+    message: impl Into<String>,
+) {
+    let progress = SyncProgress {
+        run_id,
+        scope: scope.into(),
+        phase: phase.into(),
+        completed,
+        total,
+        message: message.into(),
+    };
+    if let Err(error) = context.app.emit(SYNC_PROGRESS_EVENT, progress) {
+        tracing::warn!(%error, run_id, phase, "sync progress event failed");
+    }
+}
+
+fn update_sync_phase(
+    context: &SyncExecutionContext<'_>,
+    run_id: i64,
+    scope: &str,
+    phase: &str,
+    message: impl Into<String>,
+) -> Result<(), DatabaseError> {
+    context.database.update_sync_run_phase(run_id, phase)?;
+    emit_sync_progress(context, run_id, scope, phase, 0, None, message);
+    Ok(())
+}
+
+fn sync_phase_message(scope: &str, phase: &str) -> &'static str {
+    match (scope, phase) {
+        ("local", "scanLocalLibrary") | ("spotify", "scanLocalLibrary") => "Scanning local library",
+        ("local", "compareWithSpotify") => "Comparing local tracks with Spotify",
+        ("spotify", "refreshSource") => "Refreshing Spotify source state",
+        ("spotify", "resolveExistingLinks") => "Resolving existing track links",
+        ("spotify", "matchUnresolved") => "Matching unresolved tracked music",
+        ("spotify", "createMissing") => "Identifying missing tracked music",
+        ("spotify", "resolvePlaylists") => "Updating tracked playlist mirrors",
+        ("spotify", "acquireMissing") => "Acquiring missing tracked audio",
+        ("spotify", "verifyImports") => "Verifying and importing downloaded audio",
+        ("spotify", "postAcquisitionReconcile") => "Reconciling imported audio",
+        (_, "normalizeFiles") => "Normalizing library files",
+        _ => "Synchronizing library",
+    }
+}
+
+fn completion_status(counts: ReconciliationCounts) -> &'static str {
+    if counts.acquisition_failed > 0 {
+        "partial"
+    } else {
+        "succeeded"
+    }
+}
+
+fn acquisition_outcome_counts(jobs: &[AcquisitionJob]) -> (i64, i64) {
+    let needs_resolution = jobs
+        .iter()
+        .filter(|job| job.stage.as_deref() == Some("needsResolution"))
+        .count() as i64;
+    let failed = jobs
+        .iter()
+        .filter(|job| job.status == "failed" && job.stage.as_deref() != Some("needsResolution"))
+        .count() as i64;
+    (needs_resolution, failed)
+}
+
+fn aggregate_warning_messages(messages: &[String]) -> Option<String> {
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+    for message in messages {
+        let message = message.trim();
+        if message.is_empty() || !seen.insert(message.to_owned()) {
+            continue;
+        }
+        unique.push(message.to_owned());
+    }
+    (!unique.is_empty()).then(|| unique.join("; "))
+}
+
 fn run_spotify_sync(
     context: &SyncExecutionContext<'_>,
     spotify: Arc<SpotifyClient>,
     run_id: i64,
-) -> Result<ReconciliationCounts, SyncExecutionFailure> {
+) -> Result<SyncExecutionSuccess, SyncExecutionFailure> {
     let database = context.database;
     let source_refresh = context.source_refresh;
     let sync = context.sync;
@@ -305,9 +470,14 @@ fn run_spotify_sync(
         return Err(SyncExecutionFailure::Cancelled(empty_counts));
     }
 
-    database
-        .update_sync_run_phase(run_id, "refreshSource")
-        .map_err(|error| failed(empty_counts, "update sync phase", error))?;
+    update_sync_phase(
+        context,
+        run_id,
+        "spotify",
+        "refreshSource",
+        "Refreshing Spotify source state",
+    )
+    .map_err(|error| failed(empty_counts, "update sync phase", error))?;
     let settings = database
         .get_settings()
         .map_err(|error| failed(empty_counts, "load sync settings", error))?;
@@ -317,6 +487,9 @@ fn run_spotify_sync(
             counts: empty_counts,
             message: "Connect Spotify before starting synchronization.".into(),
         })?;
+    let source_track_ids_before = database
+        .accessible_source_track_ids()
+        .map_err(|error| failed(empty_counts, "load source state", error))?;
     let source_guard = source_refresh.begin().map_err(|error| {
         if sync.is_cancelled() {
             SyncExecutionFailure::Cancelled(empty_counts)
@@ -333,7 +506,17 @@ fn run_spotify_sync(
         Arc::clone(&spotify),
         &client_id,
         source_refresh,
-        |_| {},
+        |progress| {
+            emit_sync_progress(
+                context,
+                run_id,
+                "spotify",
+                "refreshSource",
+                progress.completed,
+                progress.total,
+                progress.message,
+            );
+        },
     );
     if let Err(error) = source_result {
         return if sync.is_cancelled() || error.code == "refreshCancelled" {
@@ -355,13 +538,23 @@ fn run_spotify_sync(
             })
         };
     }
+    let source_track_ids_after = database
+        .accessible_source_track_ids()
+        .map_err(|error| failed(empty_counts, "load refreshed source state", error))?;
+    let (source_added, source_removed) =
+        source_membership_delta(&source_track_ids_before, &source_track_ids_after);
 
     if sync.is_cancelled() {
         return Err(SyncExecutionFailure::Cancelled(empty_counts));
     }
-    database
-        .update_sync_run_phase(run_id, "scanLocalLibrary")
-        .map_err(|error| failed(empty_counts, "update sync phase", error))?;
+    update_sync_phase(
+        context,
+        run_id,
+        "spotify",
+        "scanLocalLibrary",
+        "Scanning local library",
+    )
+    .map_err(|error| failed(empty_counts, "update sync phase", error))?;
     let library_root = settings
         .library_root
         .filter(|root| !root.trim().is_empty())
@@ -369,19 +562,40 @@ fn run_spotify_sync(
             counts: empty_counts,
             message: "Choose a local library folder before starting synchronization.".into(),
         })?;
-    scan_library(database, Path::new(&library_root), |_| {}).map_err(|error| {
-        SyncExecutionFailure::Failed {
-            counts: empty_counts,
-            message: error.to_string(),
-        }
+    scan_library(database, Path::new(&library_root), |progress| {
+        emit_sync_progress(
+            context,
+            run_id,
+            "spotify",
+            "scanLocalLibrary",
+            progress.completed,
+            progress.total,
+            progress.message,
+        );
+    })
+    .map_err(|error| SyncExecutionFailure::Failed {
+        counts: empty_counts,
+        message: error.to_string(),
     })?;
 
     if sync.is_cancelled() {
         return Err(SyncExecutionFailure::Cancelled(empty_counts));
     }
-    let reconciliation = run_spotify_reconciliation_core(database, run_id, || sync.is_cancelled());
+    let reconciliation = reconcile_spotify_source_state(
+        database,
+        || sync.is_cancelled(),
+        |phase| {
+            update_sync_phase(
+                context,
+                run_id,
+                "spotify",
+                phase,
+                sync_phase_message("spotify", phase),
+            )
+        },
+    );
     drop(source_guard);
-    let counts = match reconciliation {
+    let mut counts = match reconciliation {
         Ok(counts) => counts,
         Err(ReconciliationFailure::Cancelled(counts)) => {
             return Err(SyncExecutionFailure::Cancelled(counts));
@@ -399,38 +613,150 @@ fn run_spotify_sync(
             });
         }
     };
+    counts.source_added = source_added;
+    counts.source_removed = source_removed;
 
     if sync.is_cancelled() {
         return Err(SyncExecutionFailure::Cancelled(counts));
     }
 
+    let mut warnings = Vec::new();
     if settings.acquisition_enabled {
-        database
-            .update_sync_run_phase(run_id, "acquireMissing")
-            .map_err(|error| failed(counts, "update sync phase", error))?;
-        let provider = context
-            .sockseek
-            .provider(context.app, context.app_data_dir)
-            .map_err(|error| SyncExecutionFailure::Failed {
-                counts,
-                message: error.to_string(),
-            })?;
-        AcquisitionCoordinator
-            .run_missing(database, context.app_data_dir, provider.as_ref(), || {
+        update_sync_phase(
+            context,
+            run_id,
+            "spotify",
+            "acquireMissing",
+            "Acquiring missing tracked audio",
+        )
+        .map_err(|error| failed(counts, "update sync phase", error))?;
+
+        for job in database
+            .downloaded_acquisition_jobs_missing_local()
+            .map_err(|error| failed(counts, "load downloaded acquisitions", error))?
+        {
+            if downloaded_staging_artifact_exists(&job) {
+                continue;
+            }
+            database
+                .finish_acquisition_job(
+                    job.id,
+                    "failed",
+                    Some("stagingMissing"),
+                    Some(
+                        "The downloaded staging audio is no longer available. Refrain will acquire it again.",
+                    ),
+                )
+                .map_err(|error| failed(counts, "prepare acquisition recovery", error))?;
+        }
+
+        let available = acquisition_providers(context, &settings.acquisition_providers)
+            .map_err(|message| SyncExecutionFailure::Failed { counts, message })?;
+        warnings.extend(available.warnings);
+        let acquisition_jobs = AcquisitionCoordinator
+            .run_missing_chain(database, context.app_data_dir, &available.providers, || {
                 sync.is_cancelled()
             })
             .map_err(|error| SyncExecutionFailure::Failed {
                 counts,
                 message: error.to_string(),
             })?;
+        let (acquisition_reviews, provider_failures) =
+            acquisition_outcome_counts(&acquisition_jobs);
+        warnings.extend(
+            acquisition_jobs
+                .iter()
+                .filter(|job| job.status == "failed")
+                .filter_map(|job| job.error_message.as_deref())
+                .map(str::to_owned),
+        );
+        let staged_job_ids = database
+            .downloaded_acquisition_jobs_missing_local()
+            .map_err(|error| failed(counts, "load downloaded acquisitions", error))?
+            .into_iter()
+            .map(|job| job.id)
+            .collect::<Vec<_>>();
+        let mut imported = 0_usize;
+        let mut import_failures = 0_i64;
+        if !staged_job_ids.is_empty() {
+            update_sync_phase(
+                context,
+                run_id,
+                "spotify",
+                "verifyImports",
+                "Verifying and importing downloaded audio",
+            )
+            .map_err(|error| failed(counts, "update sync phase", error))?;
+            for job_id in staged_job_ids {
+                if sync.is_cancelled() {
+                    return Err(SyncExecutionFailure::Cancelled(counts));
+                }
+                let summary =
+                    continue_downloaded_jobs(database, Path::new(&library_root), &[job_id]);
+                imported = imported.saturating_add(summary.imported);
+                import_failures += i64::try_from(summary.failed).unwrap_or(i64::MAX);
+                warnings.extend(
+                    summary
+                        .results
+                        .into_iter()
+                        .filter_map(|result| result.error_message),
+                );
+            }
+        }
+        update_sync_phase(
+            context,
+            run_id,
+            "spotify",
+            "postAcquisitionReconcile",
+            "Reconciling imported audio",
+        )
+        .map_err(|error| failed(counts, "update sync phase", error))?;
+        let mut final_counts = reconcile_spotify_source_state(
+            database,
+            || sync.is_cancelled(),
+            |_| Ok(()),
+        )
+        .map_err(|error| match error {
+            ReconciliationFailure::Cancelled(current) => SyncExecutionFailure::Cancelled(current),
+            ReconciliationFailure::Database(error) => {
+                failed(counts, "reconcile imported audio", error)
+            }
+            ReconciliationFailure::InvalidState(message) => {
+                SyncExecutionFailure::Failed { counts, message }
+            }
+        })?;
+        final_counts.source_added = source_added;
+        final_counts.source_removed = source_removed;
+        final_counts.needs_review = final_counts
+            .needs_review
+            .saturating_add(acquisition_reviews);
+        final_counts.acquisition_failed = provider_failures.saturating_add(import_failures);
+        counts = final_counts;
+        tracing::info!(
+            run_id,
+            imported,
+            import_failed = import_failures,
+            needs_resolution = acquisition_reviews,
+            failed = counts.acquisition_failed,
+            cancelled = acquisition_jobs
+                .iter()
+                .filter(|job| job.status == "cancelled")
+                .count(),
+            "acquisition and import phases completed"
+        );
         if sync.is_cancelled() {
             return Err(SyncExecutionFailure::Cancelled(counts));
         }
     }
 
-    database
-        .update_sync_run_phase(run_id, "normalizeFiles")
-        .map_err(|error| failed(counts, "update sync phase", error))?;
+    update_sync_phase(
+        context,
+        run_id,
+        "spotify",
+        "normalizeFiles",
+        "Normalizing library files",
+    )
+    .map_err(|error| failed(counts, "update sync phase", error))?;
     match normalize_resolved_files(database, Path::new(&library_root), || sync.is_cancelled()) {
         Ok(summary) => {
             tracing::info!(
@@ -439,7 +765,7 @@ fn run_spotify_sync(
                 unchanged = summary.unchanged,
                 "filesystem normalization completed"
             );
-            Ok(counts)
+            Ok(SyncExecutionSuccess { counts, warnings })
         }
         Err(NormalizationError::Cancelled) => Err(SyncExecutionFailure::Cancelled(counts)),
         Err(error) => Err(SyncExecutionFailure::Failed {
@@ -449,10 +775,63 @@ fn run_spotify_sync(
     }
 }
 
+fn acquisition_provider(
+    context: &SyncExecutionContext<'_>,
+    provider_id: &str,
+) -> Result<Arc<dyn AcquisitionProvider>, String> {
+    match provider_id {
+        "monochrome" => {
+            let provider: Arc<dyn AcquisitionProvider> = context.monochrome.clone();
+            Ok(provider)
+        }
+        "antra" => {
+            let provider: Arc<dyn AcquisitionProvider> = context.antra.clone();
+            Ok(provider)
+        }
+        "sockseek" => context
+            .sockseek
+            .provider(context.app, context.app_data_dir)
+            .map(|provider| provider as Arc<dyn AcquisitionProvider>)
+            .map_err(|error| error.to_string()),
+        _ => Err(format!("Unsupported acquisition provider: {provider_id}")),
+    }
+}
+
+fn acquisition_providers(
+    context: &SyncExecutionContext<'_>,
+    provider_ids: &[String],
+) -> Result<AvailableAcquisitionProviders, String> {
+    let mut providers = Vec::new();
+    let mut failures = Vec::new();
+    for provider_id in provider_ids {
+        match acquisition_provider(context, provider_id) {
+            Ok(provider) => providers.push(provider),
+            Err(error) => failures.push(format!("{provider_id}: {error}")),
+        }
+    }
+    if providers.is_empty() {
+        return Err(if failures.is_empty() {
+            "No acquisition providers are configured.".into()
+        } else {
+            format!(
+                "No configured acquisition provider could start: {}",
+                failures.join("; ")
+            )
+        });
+    }
+    if !failures.is_empty() {
+        tracing::warn!(failures = %failures.join("; "), "some acquisition providers are unavailable");
+    }
+    Ok(AvailableAcquisitionProviders {
+        providers,
+        warnings: failures,
+    })
+}
+
 fn run_local_sync(
     context: &SyncExecutionContext<'_>,
     run_id: i64,
-) -> Result<ReconciliationCounts, SyncExecutionFailure> {
+) -> Result<SyncExecutionSuccess, SyncExecutionFailure> {
     let database = context.database;
     let sync = context.sync;
     let empty_counts = ReconciliationCounts::default();
@@ -467,36 +846,66 @@ fn run_local_sync(
             message: "Choose a local library folder before starting synchronization.".into(),
         })?;
 
-    database
-        .update_sync_run_phase(run_id, "scanLocalLibrary")
-        .map_err(|error| failed(empty_counts, "update sync phase", error))?;
-    scan_library(database, Path::new(&library_root), |_| {}).map_err(|error| {
-        SyncExecutionFailure::Failed {
-            counts: empty_counts,
-            message: error.to_string(),
-        }
+    update_sync_phase(
+        context,
+        run_id,
+        "local",
+        "scanLocalLibrary",
+        "Scanning local library",
+    )
+    .map_err(|error| failed(empty_counts, "update sync phase", error))?;
+    scan_library(database, Path::new(&library_root), |progress| {
+        emit_sync_progress(
+            context,
+            run_id,
+            "local",
+            "scanLocalLibrary",
+            progress.completed,
+            progress.total,
+            progress.message,
+        );
+    })
+    .map_err(|error| SyncExecutionFailure::Failed {
+        counts: empty_counts,
+        message: error.to_string(),
     })?;
     if sync.is_cancelled() {
         return Err(SyncExecutionFailure::Cancelled(empty_counts));
     }
 
-    let counts = run_local_reconciliation_core(database, run_id, || sync.is_cancelled()).map_err(
-        |error| match error {
-            ReconciliationFailure::Cancelled(counts) => SyncExecutionFailure::Cancelled(counts),
-            ReconciliationFailure::Database(error) => SyncExecutionFailure::Failed {
-                counts: empty_counts,
-                message: error.to_string(),
-            },
-            ReconciliationFailure::InvalidState(message) => SyncExecutionFailure::Failed {
-                counts: empty_counts,
-                message,
-            },
+    let counts = reconcile_local_source_state(
+        database,
+        || sync.is_cancelled(),
+        |phase| {
+            update_sync_phase(
+                context,
+                run_id,
+                "local",
+                phase,
+                sync_phase_message("local", phase),
+            )
         },
-    )?;
+    )
+    .map_err(|error| match error {
+        ReconciliationFailure::Cancelled(counts) => SyncExecutionFailure::Cancelled(counts),
+        ReconciliationFailure::Database(error) => SyncExecutionFailure::Failed {
+            counts: empty_counts,
+            message: error.to_string(),
+        },
+        ReconciliationFailure::InvalidState(message) => SyncExecutionFailure::Failed {
+            counts: empty_counts,
+            message,
+        },
+    })?;
 
-    database
-        .update_sync_run_phase(run_id, "normalizeFiles")
-        .map_err(|error| failed(counts, "update sync phase", error))?;
+    update_sync_phase(
+        context,
+        run_id,
+        "local",
+        "normalizeFiles",
+        "Normalizing library files",
+    )
+    .map_err(|error| failed(counts, "update sync phase", error))?;
     match normalize_resolved_files(database, Path::new(&library_root), || sync.is_cancelled()) {
         Ok(summary) => {
             tracing::info!(
@@ -505,7 +914,10 @@ fn run_local_sync(
                 unchanged = summary.unchanged,
                 "local filesystem normalization completed"
             );
-            Ok(counts)
+            Ok(SyncExecutionSuccess {
+                counts,
+                warnings: Vec::new(),
+            })
         }
         Err(NormalizationError::Cancelled) => Err(SyncExecutionFailure::Cancelled(counts)),
         Err(error) => Err(SyncExecutionFailure::Failed {
@@ -515,13 +927,13 @@ fn run_local_sync(
     }
 }
 
-fn run_local_reconciliation_core(
+fn reconcile_local_source_state(
     database: &Database,
-    run_id: i64,
     mut is_cancelled: impl FnMut() -> bool,
+    mut update_phase: impl FnMut(&str) -> Result<(), DatabaseError>,
 ) -> Result<ReconciliationCounts, ReconciliationFailure> {
     let mut counts = ReconciliationCounts::default();
-    database.update_sync_run_phase(run_id, "compareWithSpotify")?;
+    update_phase("compareWithSpotify")?;
     database.ensure_library_tracks_for_present_local_files()?;
     let source_track_ids = database.accessible_source_track_ids()?;
     let library_tracks = database.present_library_match_tracks()?;
@@ -571,13 +983,39 @@ fn run_local_reconciliation_core(
     Ok(counts)
 }
 
+#[cfg(test)]
 fn run_spotify_reconciliation_core(
     database: &Database,
     run_id: i64,
+    is_cancelled: impl FnMut() -> bool,
+) -> Result<ReconciliationCounts, ReconciliationFailure> {
+    reconcile_spotify_source_state(database, is_cancelled, |phase| {
+        database.update_sync_run_phase(run_id, phase)
+    })
+}
+
+pub(crate) fn reconcile_refreshed_spotify_source(
+    database: &Database,
+) -> Result<ReconciliationCounts, DatabaseError> {
+    match reconcile_spotify_source_state(database, || false, |_| Ok(())) {
+        Ok(counts) => Ok(counts),
+        Err(ReconciliationFailure::Database(error)) => Err(error),
+        Err(ReconciliationFailure::InvalidState(message)) => {
+            Err(DatabaseError::InvalidState(message))
+        }
+        Err(ReconciliationFailure::Cancelled(_)) => Err(DatabaseError::InvalidState(
+            "Spotify source reconciliation was unexpectedly cancelled.".into(),
+        )),
+    }
+}
+
+fn reconcile_spotify_source_state(
+    database: &Database,
     mut is_cancelled: impl FnMut() -> bool,
+    mut update_phase: impl FnMut(&str) -> Result<(), DatabaseError>,
 ) -> Result<ReconciliationCounts, ReconciliationFailure> {
     let mut counts = ReconciliationCounts::default();
-    database.update_sync_run_phase(run_id, "resolveExistingLinks")?;
+    update_phase("resolveExistingLinks")?;
     if is_cancelled() {
         return Err(ReconciliationFailure::Cancelled(counts));
     }
@@ -588,7 +1026,7 @@ fn run_spotify_reconciliation_core(
     let matcher = MatcherIndex::new(library_tracks);
     let mut unresolved = Vec::new();
 
-    database.update_sync_run_phase(run_id, "matchUnresolved")?;
+    update_phase("matchUnresolved")?;
     for source_track_id in source_track_ids {
         if is_cancelled() {
             return Err(ReconciliationFailure::Cancelled(counts));
@@ -626,7 +1064,7 @@ fn run_spotify_reconciliation_core(
         }
     }
 
-    database.update_sync_run_phase(run_id, "createMissing")?;
+    update_phase("createMissing")?;
     let mut created_by_isrc: HashMap<String, Vec<MatchTrackDescriptor>> = HashMap::new();
     for source in unresolved {
         if is_cancelled() {
@@ -664,6 +1102,13 @@ fn run_spotify_reconciliation_core(
         }
         counts.missing += 1;
     }
+
+    update_phase("resolvePlaylists")?;
+    if is_cancelled() {
+        return Err(ReconciliationFailure::Cancelled(counts));
+    }
+    database.sync_tracked_spotify_playlist_mirrors()?;
+    sync_managed_local_playlists(database)?;
 
     Ok(counts)
 }
@@ -817,6 +1262,153 @@ mod tests {
         counts
     }
 
+    fn acquisition_job_with_outcome(status: &str, stage: &str) -> AcquisitionJob {
+        AcquisitionJob {
+            id: 1,
+            library_track_id: 1,
+            track_title: "Song".into(),
+            track_artists: vec!["Artist".into()],
+            provider: "test".into(),
+            provider_job_id: None,
+            status: status.into(),
+            stage: Some(stage.into()),
+            attempt: 1,
+            candidate: None,
+            candidates: Vec::new(),
+            staging_path: None,
+            error_code: None,
+            error_message: None,
+            created_at: 0,
+            started_at: None,
+            finished_at: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn acquisition_resolution_rows_are_review_not_provider_failures() {
+        let jobs = vec![
+            acquisition_job_with_outcome("failed", "needsResolution"),
+            acquisition_job_with_outcome("failed", "failed"),
+            acquisition_job_with_outcome("staged", "downloaded"),
+        ];
+
+        assert_eq!(acquisition_outcome_counts(&jobs), (1, 1));
+    }
+
+    #[test]
+    fn acquisition_failures_make_sync_partial_and_persist_the_count() {
+        let path = TestDatabasePath::new("acquisition-failures");
+        let database = Database::open(path.0.clone()).unwrap();
+        let run = database.create_sync_run("spotify", "manual").unwrap();
+        let counts = ReconciliationCounts {
+            acquisition_failed: 5,
+            ..ReconciliationCounts::default()
+        };
+
+        assert_eq!(completion_status(counts), "partial");
+        database
+            .finish_sync_run(run.id, completion_status(counts), counts, None)
+            .unwrap();
+
+        let completed = database.sync_run(run.id).unwrap().unwrap();
+        assert_eq!(completed.status, "partial");
+        assert_eq!(completed.acquisition_failed, 5);
+    }
+
+    #[test]
+    fn sync_run_persists_source_change_counts() {
+        let path = TestDatabasePath::new("source-change-counts");
+        let database = Database::open(path.0.clone()).unwrap();
+        let run = database.create_sync_run("spotify", "manual").unwrap();
+        let counts = ReconciliationCounts {
+            source_added: 3,
+            source_removed: 2,
+            ..ReconciliationCounts::default()
+        };
+
+        database
+            .finish_sync_run(run.id, "succeeded", counts, None)
+            .unwrap();
+
+        let completed = database.sync_run(run.id).unwrap().unwrap();
+        assert_eq!(completed.source_added, 3);
+        assert_eq!(completed.source_removed, 2);
+    }
+
+    #[test]
+    fn source_membership_delta_counts_added_and_removed_tracks() {
+        let before = vec![1, 2, 3, 5];
+        let after = vec![2, 3, 4, 6];
+
+        assert_eq!(source_membership_delta(&before, &after), (2, 2));
+    }
+
+    #[test]
+    fn warning_aggregation_deduplicates_and_ignores_blank_messages() {
+        let warnings = vec![
+            "provider unavailable".to_owned(),
+            " provider unavailable ".to_owned(),
+            "".to_owned(),
+            "verification failed".to_owned(),
+        ];
+
+        assert_eq!(
+            aggregate_warning_messages(&warnings).as_deref(),
+            Some("provider unavailable; verification failed")
+        );
+    }
+
+    #[test]
+    fn reconciliation_counts_reflect_newly_present_local_file() {
+        let path = TestDatabasePath::new("post-import-counts");
+        let database = Database::open(path.0.clone()).unwrap();
+        let account_id = database.upsert_source_account(&source_account()).unwrap();
+        let collection_id = database
+            .upsert_source_collection(&collection(account_id, "playlist"))
+            .unwrap();
+        let source_track_id = database
+            .upsert_source_track(&source_track("track-imported", "USAAA0000200"))
+            .unwrap();
+        database
+            .replace_collection_entries(collection_id, &[entry(0, source_track_id)])
+            .unwrap();
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .unwrap();
+
+        let before = run_core(&database);
+        assert_eq!(before.missing, 1);
+        assert_eq!(before.matched, 0);
+
+        database
+            .insert_local_file(&LocalFileWrite {
+                path: "/music/imported.flac".into(),
+                state: "present".into(),
+                format: Some("flac".into()),
+                file_size: 100,
+                modified_at: 1,
+                duration_ms: Some(180_000),
+                bitrate: None,
+                sample_rate: None,
+                channels: None,
+                content_hash: None,
+                tag_title: Some("Song".into()),
+                tag_artists: vec!["Artist".into()],
+                tag_album: Some("Album".into()),
+                tag_year: Some(2026),
+                tag_isrc: Some("USAAA0000200".into()),
+                artwork_path: None,
+                artwork_mime: None,
+                scan_error: None,
+            })
+            .unwrap();
+
+        let after = run_core(&database);
+        assert_eq!(after.missing, 0);
+        assert_eq!(after.matched, 1);
+    }
+
     #[test]
     fn repeated_reconciliation_is_idempotent_and_preserves_duplicate_entries() {
         let path = TestDatabasePath::new("idempotent");
@@ -859,6 +1451,53 @@ mod tests {
         assert_eq!(page.entries[0].position, 0);
         assert_eq!(page.entries[1].position, 1);
         assert_eq!(page.entries[2].position, 2);
+    }
+
+    #[test]
+    fn refreshed_spotify_source_materializes_tracked_missing_tracks_for_staging() {
+        let path = TestDatabasePath::new("refresh-staging");
+        let database = Database::open(path.0.clone()).unwrap();
+        let account_id = database.upsert_source_account(&source_account()).unwrap();
+        let collection_id = database
+            .upsert_source_collection(&collection(account_id, "playlist"))
+            .unwrap();
+        let source_track_id = database
+            .upsert_source_track(&source_track("track-refresh", "USAAA0000099"))
+            .unwrap();
+        database
+            .replace_collection_entries(collection_id, &[entry(0, source_track_id)])
+            .unwrap();
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .unwrap();
+
+        assert_eq!(database.staging_items_page(0, 10).unwrap().total, 0);
+
+        reconcile_refreshed_spotify_source(&database).unwrap();
+
+        let staging = database.staging_items_page(0, 10).unwrap();
+        assert_eq!(staging.total, 1);
+        assert_eq!(staging.items[0].title, "Song");
+        assert_eq!(
+            database
+                .persisted_track_link(source_track_id)
+                .unwrap()
+                .unwrap()
+                .library_track_id,
+            staging.items[0].library_track_id
+        );
+        let mirrored = database
+            .list_local_playlists()
+            .unwrap()
+            .into_iter()
+            .find(|playlist| playlist.source_collection_id == Some(collection_id))
+            .expect("tracked Spotify playlist should create a local mirror");
+        let detail = database.get_local_playlist(mirrored.id).unwrap();
+        assert_eq!(detail.entries.len(), 1);
+        assert_eq!(
+            detail.entries[0].library_track_id,
+            staging.items[0].library_track_id
+        );
     }
 
     #[test]

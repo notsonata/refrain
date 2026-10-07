@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { onDestroy } from 'svelte';
   import DataTableHeader from './DataTableHeader.svelte';
   import Icon from './Icon.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
@@ -74,7 +75,10 @@
   const rowHeight = 50;
   const overscan = 8;
   const skeletonRows = Array.from({ length: 9 }, (_, index) => index);
+  const numberFormatter = new Intl.NumberFormat();
   let scrollTop = 0;
+  let pendingScrollTop = 0;
+  let scrollFrame = 0;
   let viewportHeight = 520;
   let tableViewportWidth = 0;
   $: compactRows = tableViewportWidth > 0 && tableViewportWidth <= 780;
@@ -85,7 +89,17 @@
       track.acquisitionStatus ? [track.acquisitionStatus] : [],
     ),
   );
-  $: filteredEntries = entries.filter(matchesFilters);
+  $: filteredEntries = entries.filter((entry) =>
+    matchesFilters(
+      entry,
+      search,
+      trackingFilter,
+      statusFilter,
+      acquisitionFilter,
+      matchFilter,
+      explicitFilter,
+    ),
+  );
   $: sortedEntries = [...filteredEntries].sort((a, b) =>
     compareEntries(a, b, sortId, sortDirection),
   );
@@ -135,6 +149,19 @@
     lastAutoLoadOffset = -1;
   }
   $: if (!hasMore) loadAllRequested = false;
+
+  function updateScrollTop(event: Event) {
+    pendingScrollTop = (event.currentTarget as HTMLDivElement).scrollTop;
+    if (scrollFrame) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollTop = pendingScrollTop;
+      scrollFrame = 0;
+    });
+  }
+
+  onDestroy(() => {
+    if (scrollFrame) cancelAnimationFrame(scrollFrame);
+  });
 
   function uniqueSorted(values: string[]): string[] {
     return [...new Set(values.filter(Boolean))].sort((a, b) =>
@@ -272,19 +299,32 @@
     return items;
   }
 
-  function matchesFilters(entry: SourceCollectionEntryView): boolean {
+  function matchesFilters(
+    entry: SourceCollectionEntryView,
+    currentSearch: string,
+    currentTrackingFilter: string,
+    currentStatusFilter: 'all' | TrackStatus,
+    currentAcquisitionFilter: string,
+    currentMatchFilter: string,
+    currentExplicitFilter: string,
+  ): boolean {
     const track = entry.track;
-    const query = search.trim().toLocaleLowerCase();
+    const query = currentSearch.trim().toLocaleLowerCase();
     if (!track) {
       if (query) return false;
-      if (trackingFilter === 'tracked' && !entry.trackingIncluded) return false;
-      if (trackingFilter === 'excluded' && entry.trackingIncluded) return false;
-      if (statusFilter !== 'all' && entryStatus(entry) !== statusFilter)
+      if (currentTrackingFilter === 'tracked' && !entry.trackingIncluded)
+        return false;
+      if (currentTrackingFilter === 'excluded' && entry.trackingIncluded)
         return false;
       if (
-        acquisitionFilter !== 'all' ||
-        matchFilter !== 'all' ||
-        explicitFilter !== 'all'
+        currentStatusFilter !== 'all' &&
+        entryStatus(entry) !== currentStatusFilter
+      )
+        return false;
+      if (
+        currentAcquisitionFilter !== 'all' ||
+        currentMatchFilter !== 'all' ||
+        currentExplicitFilter !== 'all'
       )
         return false;
       return true;
@@ -300,18 +340,26 @@
     )
       return false;
 
-    if (trackingFilter === 'tracked' && !entry.trackingIncluded) return false;
-    if (trackingFilter === 'excluded' && entry.trackingIncluded) return false;
-    if (statusFilter !== 'all' && entryStatus(entry) !== statusFilter)
+    if (currentTrackingFilter === 'tracked' && !entry.trackingIncluded)
+      return false;
+    if (currentTrackingFilter === 'excluded' && entry.trackingIncluded)
       return false;
     if (
-      acquisitionFilter !== 'all' &&
-      track.acquisitionStatus !== acquisitionFilter
+      currentStatusFilter !== 'all' &&
+      entryStatus(entry) !== currentStatusFilter
     )
       return false;
-    if (matchFilter !== 'all' && track.matchState !== matchFilter) return false;
-    if (explicitFilter === 'explicit' && track.explicit !== true) return false;
-    if (explicitFilter === 'clean' && track.explicit === true) return false;
+    if (
+      currentAcquisitionFilter !== 'all' &&
+      track.acquisitionStatus !== currentAcquisitionFilter
+    )
+      return false;
+    if (currentMatchFilter !== 'all' && track.matchState !== currentMatchFilter)
+      return false;
+    if (currentExplicitFilter === 'explicit' && track.explicit !== true)
+      return false;
+    if (currentExplicitFilter === 'clean' && track.explicit === true)
+      return false;
     return true;
   }
 
@@ -379,7 +427,7 @@
   }
 
   function formatNumber(value: number): string {
-    return new Intl.NumberFormat().format(value);
+    return numberFormatter.format(value);
   }
 </script>
 
@@ -407,7 +455,9 @@
         {#if activeFilterCount > 0}
           <span class="filter-count">{activeFilterCount}</span>
         {/if}
-        <Icon name="chevron-down" size={13} />
+        <span class="disclosure-chevron" class:expanded={advancedOpen}>
+          <Icon name="chevron-right" size={13} />
+        </span>
       </button>
     </div>
 
@@ -513,8 +563,8 @@
         bind:sortId
         bind:sortDirection
         compact={compactRows}
-        storageKey="refrain.table.spotify.columns.v4"
-        sharedStorageKey="refrain.table.track-columns.v1"
+        storageKey="refrain.table.spotify.columns.v5"
+        sharedStorageKey="refrain.table.track-columns.v2"
         sharedColumnIds={sharedTrackColumnIds}
         defaultSortId="order"
       />
@@ -522,7 +572,7 @@
         class="table-scroll spotify-track-scroll"
         style="position:relative;"
         bind:clientHeight={viewportHeight}
-        onscroll={(event) => (scrollTop = event.currentTarget.scrollTop)}
+        onscroll={updateScrollTop}
         aria-label="Track list"
       >
         {#if compactRows}

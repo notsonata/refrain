@@ -6,7 +6,8 @@
     LocalLibraryScanProgress,
     LocalLibraryScanSummary,
   } from '../lib/library';
-  import type { ProviderHealth } from '../lib/sockseek';
+  import type { ProviderHealth } from '../lib/monochrome';
+  import type { AcquisitionProviderId } from '../lib/settings';
   import type { SpotifySourceOverview } from '../lib/source';
   import type {
     SpotifyAuthStatus,
@@ -18,6 +19,10 @@
   type SettingsTab = 'general' | 'sync' | 'spotify' | 'library' | 'advanced';
 
   type VoidAction = () => void | Promise<void>;
+  type AcquisitionSettingsAction = (
+    enabled: boolean,
+    providers: AcquisitionProviderId[],
+  ) => void | Promise<void>;
   type ThemeAction = (preference: ThemePreference) => void;
 
   export let appInfo: AppInfo | null;
@@ -39,9 +44,18 @@
   export let libraryOverview: LocalLibraryOverview | null;
 
   export let acquisitionEnabled: boolean;
+  export let acquisitionProviders: AcquisitionProviderId[];
   export let soulseekUsername: string;
   export let soulseekPassword: string;
   export let soulseekConfigured: boolean;
+  export let monochromeHealth: ProviderHealth | null;
+  export let monochromeHealthCached: boolean;
+  export let antraConfigured: boolean;
+  export let antraLoginPending: boolean;
+  export let antraUserCode: string | null;
+  export let antraVerificationUrl: string | null;
+  export let antraHealth: ProviderHealth | null;
+  export let antraHealthCached: boolean;
   export let sockseekHealth: ProviderHealth | null;
   export let sockseekHealthCached: boolean;
   export let acquisitionBusy: boolean;
@@ -52,6 +66,7 @@
   export let syncError: string | null;
   export let localSyncRun: SyncRun | null;
   export let spotifySyncRun: SyncRun | null;
+  export let recentSyncRuns: SyncRun[];
   export let themePreference: ThemePreference;
 
   export let onConnectSpotify: VoidAction;
@@ -61,7 +76,13 @@
   export let onPickLibraryRoot: VoidAction;
   export let onSaveLibraryRoot: VoidAction;
   export let onScanLibrary: VoidAction;
-  export let onSaveAcquisition: VoidAction;
+  export let onSaveAcquisition: AcquisitionSettingsAction;
+  export let onCheckMonochrome: VoidAction;
+  export let onCheckAntra: VoidAction;
+  export let onStartAntra: VoidAction;
+  export let onOpenAntraLogin: VoidAction;
+  export let onCancelAntra: VoidAction;
+  export let onClearAntra: VoidAction;
   export let onSaveSoulseek: VoidAction;
   export let onCheckSockseek: VoidAction;
   export let onClearSoulseek: VoidAction;
@@ -103,12 +124,77 @@
 
   let activeTab: SettingsTab = 'general';
 
+  const acquisitionProviderOptions: Array<{
+    id: AcquisitionProviderId;
+    label: string;
+  }> = [
+    { id: 'monochrome', label: 'Monochrome' },
+    { id: 'antra', label: 'Antra' },
+    { id: 'sockseek', label: 'Sockseek / Soulseek' },
+  ];
+
   $: indexedFiles = libraryOverview?.total ?? 0;
   $: presentFiles = libraryOverview?.present ?? 0;
   $: spotifyItems =
     (sourceOverview?.likedSongs?.entryCount ?? 0) +
     savedAlbumTotal +
     (sourceOverview?.playlistCount ?? 0);
+  $: availableAcquisitionProviders = acquisitionProviderOptions.filter(
+    (option) => !acquisitionProviders.includes(option.id),
+  );
+  $: hasSockseekProvider = acquisitionProviders.includes('sockseek');
+  $: hasAntraProvider = acquisitionProviders.includes('antra');
+
+  function acquisitionProviderLabel(provider: AcquisitionProviderId): string {
+    return (
+      acquisitionProviderOptions.find((option) => option.id === provider)
+        ?.label ?? provider
+    );
+  }
+
+  function addAcquisitionProvider(provider: AcquisitionProviderId) {
+    if (acquisitionProviders.includes(provider)) return;
+    const providers = [...acquisitionProviders, provider];
+    acquisitionProviders = providers;
+    void onSaveAcquisition(acquisitionEnabled, providers);
+  }
+
+  function removeAcquisitionProvider(provider: AcquisitionProviderId) {
+    if (acquisitionProviders.length <= 1) return;
+    const providers = acquisitionProviders.filter(
+      (candidate) => candidate !== provider,
+    );
+    acquisitionProviders = providers;
+    void onSaveAcquisition(acquisitionEnabled, providers);
+  }
+
+  function moveAcquisitionProvider(
+    provider: AcquisitionProviderId,
+    direction: -1 | 1,
+  ) {
+    const currentIndex = acquisitionProviders.indexOf(provider);
+    const nextIndex = currentIndex + direction;
+    if (
+      currentIndex < 0 ||
+      nextIndex < 0 ||
+      nextIndex >= acquisitionProviders.length
+    )
+      return;
+    const next = [...acquisitionProviders];
+    [next[currentIndex], next[nextIndex]] = [
+      next[nextIndex],
+      next[currentIndex],
+    ];
+    acquisitionProviders = next;
+    void onSaveAcquisition(acquisitionEnabled, next);
+  }
+
+  function setAcquisitionEnabled(event: Event) {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement)) return;
+    acquisitionEnabled = target.checked;
+    void onSaveAcquisition(target.checked, acquisitionProviders);
+  }
 
   function selectTab(tab: SettingsTab) {
     activeTab = tab;
@@ -506,6 +592,53 @@
             </article>
           </div>
 
+          <article class="settings-card compact-card">
+            <div class="card-heading inline-heading">
+              <span class="card-icon"><Icon name="activity" size={17} /></span>
+              <div>
+                <h3>Recent synchronization</h3>
+                <p>The latest Local and Spotify runs.</p>
+              </div>
+            </div>
+            {#if recentSyncRuns.length > 0}
+              <div
+                class="sync-history"
+                aria-label="Recent synchronization runs"
+              >
+                {#each recentSyncRuns as run (run.id)}
+                  <div class="sync-history-row">
+                    <div class="sync-history-main">
+                      <strong
+                        >{run.scope === 'spotify' ? 'Spotify' : 'Local'}</strong
+                      >
+                      <small
+                        >{formatDateTime(
+                          run.finishedAt ?? run.startedAt,
+                        )}</small
+                      >
+                    </div>
+                    <div class="sync-history-counts">
+                      {#if run.scope === 'spotify'}
+                        <span>+{run.sourceAdded} / −{run.sourceRemoved}</span>
+                      {/if}
+                      <span>{run.matched} matched</span>
+                      <span>{run.missing} missing</span>
+                      <span>{run.needsReview} review</span>
+                      {#if run.acquisitionFailed > 0}
+                        <span>{run.acquisitionFailed} failed</span>
+                      {/if}
+                    </div>
+                    <span class={`status-pill ${syncTone(run)}`}
+                      >{syncLabel(run)}</span
+                    >
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="empty-inline">No synchronization runs yet.</p>
+            {/if}
+          </article>
+
           <article class="settings-card compact-card action-card">
             <div class="card-heading">
               <span class="card-icon"><Icon name="spotify" size={17} /></span>
@@ -534,28 +667,75 @@
               <div>
                 <h3>Missing track acquisition</h3>
                 <p>
-                  Use Sockseek to find tracked Spotify songs that do not have a
-                  local copy yet.
+                  Search enabled providers in priority order until Refrain finds
+                  a strong enough match.
                 </p>
               </div>
               <div class="pill-row">
-                <span
-                  class={`status-pill ${soulseekConfigured ? 'success' : 'neutral'}`}
-                  >{soulseekConfigured
-                    ? 'Account saved'
-                    : 'Account required'}</span
+                <span class="status-pill neutral"
+                  >{acquisitionProviders.length} provider{acquisitionProviders.length ===
+                  1
+                    ? ''
+                    : 's'}</span
                 >
-                <span
-                  class={`status-pill ${sockseekHealth?.available ? 'success' : sockseekHealth ? 'warning' : 'neutral'}`}
-                >
-                  {sockseekHealth?.available
-                    ? 'Provider ready'
-                    : sockseekHealth
-                      ? 'Provider unavailable'
-                      : 'Not checked'}
-                </span>
               </div>
             </div>
+
+            <div class="provider-priority-list" aria-label="Provider priority">
+              {#each acquisitionProviders as provider, index (provider)}
+                <div class="provider-priority-row">
+                  <div class="provider-priority-copy">
+                    <span class="provider-priority-index">{index + 1}</span>
+                    <div>
+                      <strong>{acquisitionProviderLabel(provider)}</strong>
+                      <small
+                        >{index === 0
+                          ? 'Highest priority'
+                          : `Fallback ${index}`}</small
+                      >
+                    </div>
+                  </div>
+                  <div class="provider-priority-actions">
+                    <button
+                      class="text-button"
+                      type="button"
+                      aria-label={`Move ${acquisitionProviderLabel(provider)} up`}
+                      onclick={() => moveAcquisitionProvider(provider, -1)}
+                      disabled={acquisitionBusy || index === 0}>Up</button
+                    >
+                    <button
+                      class="text-button"
+                      type="button"
+                      aria-label={`Move ${acquisitionProviderLabel(provider)} down`}
+                      onclick={() => moveAcquisitionProvider(provider, 1)}
+                      disabled={acquisitionBusy ||
+                        index === acquisitionProviders.length - 1}>Down</button
+                    >
+                    <button
+                      class="text-button danger"
+                      type="button"
+                      onclick={() => removeAcquisitionProvider(provider)}
+                      disabled={acquisitionBusy ||
+                        acquisitionProviders.length === 1}>Remove</button
+                    >
+                  </div>
+                </div>
+              {/each}
+            </div>
+
+            {#if availableAcquisitionProviders.length > 0}
+              <div class="provider-add-row">
+                <span>Add provider</span>
+                {#each availableAcquisitionProviders as option (option.id)}
+                  <button
+                    class="secondary-button"
+                    type="button"
+                    onclick={() => addAcquisitionProvider(option.id)}
+                    disabled={acquisitionBusy}>+ {option.label}</button
+                  >
+                {/each}
+              </div>
+            {/if}
 
             <label class="switch-row acquisition-switch">
               <span class="switch-copy"
@@ -566,85 +746,76 @@
               >
               <input
                 type="checkbox"
-                bind:checked={acquisitionEnabled}
+                checked={acquisitionEnabled}
+                onchange={setAcquisitionEnabled}
                 disabled={acquisitionBusy}
               />
             </label>
-            <div class="button-row right-aligned">
-              <button
-                class="secondary-button"
-                type="button"
-                onclick={onSaveAcquisition}
-                disabled={acquisitionBusy}>Save acquisition setting</button
-              >
-            </div>
-          </article>
-
-          <article class="settings-card">
-            <div class="card-heading">
-              <span class="card-icon"><Icon name="download" size={18} /></span>
-              <div>
-                <h3>Soulseek account</h3>
-                <p>
-                  Use the same credentials as Soulseek. Refrain stores them in
-                  the operating system credential store.
-                </p>
-              </div>
-            </div>
-            <div class="two-fields">
-              <div class="field-stack">
-                <label for="soulseek-username">Username</label>
-                <input
-                  id="soulseek-username"
-                  bind:value={soulseekUsername}
-                  disabled={acquisitionBusy}
-                  autocomplete="username"
-                  spellcheck="false"
-                />
-              </div>
-              <div class="field-stack">
-                <label for="soulseek-password">Password</label>
-                <input
-                  id="soulseek-password"
-                  type="password"
-                  bind:value={soulseekPassword}
-                  disabled={acquisitionBusy}
-                  autocomplete="current-password"
-                  placeholder={soulseekConfigured
-                    ? 'Saved in credential store'
-                    : ''}
-                />
-              </div>
-            </div>
             <div class="button-row">
-              <button
-                class="primary-button"
-                type="button"
-                onclick={onSaveSoulseek}
-                disabled={acquisitionBusy ||
-                  !soulseekUsername.trim() ||
-                  !soulseekPassword}
-              >
-                Save credentials
-              </button>
-              <button
-                class="secondary-button"
-                type="button"
-                onclick={onCheckSockseek}
-                disabled={acquisitionBusy || !soulseekConfigured}
-              >
-                <Icon name="activity" size={14} />Check Sockseek
-              </button>
-              {#if soulseekConfigured}
+              {#if acquisitionProviders.includes('monochrome')}
                 <button
-                  class="text-button danger"
+                  class="secondary-button"
                   type="button"
-                  onclick={onClearSoulseek}
-                  disabled={acquisitionBusy}>Clear credentials</button
+                  onclick={onCheckMonochrome}
+                  disabled={acquisitionBusy}
                 >
+                  <Icon name="activity" size={14} />Check Monochrome
+                </button>
+              {/if}
+              {#if hasAntraProvider}
+                <button
+                  class="secondary-button"
+                  type="button"
+                  onclick={onCheckAntra}
+                  disabled={acquisitionBusy || !antraConfigured}
+                >
+                  <Icon name="activity" size={14} />Check Antra
+                </button>
+              {/if}
+              {#if hasSockseekProvider}
+                <button
+                  class="secondary-button"
+                  type="button"
+                  onclick={onCheckSockseek}
+                  disabled={acquisitionBusy || !soulseekConfigured}
+                >
+                  <Icon name="activity" size={14} />Check Sockseek
+                </button>
               {/if}
             </div>
-            {#if sockseekHealth}
+            {#if acquisitionProviders.includes('monochrome') && monochromeHealth}
+              <div
+                class={`message ${monochromeHealth.available ? 'success' : 'warning'}`}
+              >
+                <Icon
+                  name={monochromeHealth.available ? 'check' : 'warning'}
+                  size={15}
+                />
+                Monochrome · {monochromeHealth.message ?? 'Provider ready'}
+                {#if monochromeHealthCached}
+                  <span class="cached-status"
+                    >Saved from the previous session</span
+                  >
+                {/if}
+              </div>
+            {/if}
+            {#if hasAntraProvider && antraHealth}
+              <div
+                class={`message ${antraHealth.available ? 'success' : 'warning'}`}
+              >
+                <Icon
+                  name={antraHealth.available ? 'check' : 'warning'}
+                  size={15}
+                />
+                Antra · {antraHealth.message ?? 'Provider ready'}
+                {#if antraHealthCached}
+                  <span class="cached-status"
+                    >Saved from the previous session</span
+                  >
+                {/if}
+              </div>
+            {/if}
+            {#if hasSockseekProvider && sockseekHealth}
               <div
                 class={`message ${sockseekHealth.available ? 'success' : 'warning'}`}
               >
@@ -667,6 +838,141 @@
               </div>
             {/if}
           </article>
+
+          {#if hasAntraProvider}
+            <article class="settings-card">
+              <div class="card-heading">
+                <span class="card-icon"><Icon name="download" size={18} /></span
+                >
+                <div>
+                  <h3>Antra account</h3>
+                  <p>
+                    Refrain uses Antra's device sign-in and stores the device
+                    token in the operating system credential store.
+                  </p>
+                </div>
+                <div class="pill-row">
+                  <span
+                    class={`status-pill ${antraConfigured ? 'success' : 'neutral'}`}
+                    >{antraConfigured
+                      ? 'Signed in'
+                      : antraLoginPending
+                        ? 'Waiting for approval'
+                        : 'Sign-in required'}</span
+                  >
+                </div>
+              </div>
+
+              {#if antraLoginPending}
+                <div class="technical-field">
+                  <span>Device code</span>
+                  <code>{antraUserCode ?? 'Waiting for code'}</code>
+                </div>
+                <div class="button-row">
+                  <button
+                    class="primary-button"
+                    type="button"
+                    onclick={onOpenAntraLogin}
+                    disabled={acquisitionBusy || !antraVerificationUrl}
+                    >Open sign-in</button
+                  >
+                  <button
+                    class="text-button"
+                    type="button"
+                    onclick={onCancelAntra}
+                    disabled={acquisitionBusy}>Cancel</button
+                  >
+                </div>
+              {:else if antraConfigured}
+                <div class="button-row">
+                  <button
+                    class="text-button danger"
+                    type="button"
+                    onclick={onClearAntra}
+                    disabled={acquisitionBusy}>Sign out</button
+                  >
+                </div>
+              {:else}
+                <div class="button-row">
+                  <button
+                    class="primary-button"
+                    type="button"
+                    onclick={onStartAntra}
+                    disabled={acquisitionBusy}>Sign in with Antra</button
+                  >
+                </div>
+              {/if}
+            </article>
+          {/if}
+
+          {#if hasSockseekProvider}
+            <article class="settings-card">
+              <div class="card-heading">
+                <span class="card-icon"><Icon name="download" size={18} /></span
+                >
+                <div>
+                  <h3>Soulseek account</h3>
+                  <p>
+                    Sockseek uses your Soulseek account. Refrain stores these
+                    credentials in the operating system credential store.
+                  </p>
+                </div>
+                <div class="pill-row">
+                  <span
+                    class={`status-pill ${soulseekConfigured ? 'success' : 'neutral'}`}
+                    >{soulseekConfigured
+                      ? 'Account saved'
+                      : 'Account required'}</span
+                  >
+                </div>
+              </div>
+              <div class="two-fields">
+                <div class="field-stack">
+                  <label for="soulseek-username">Username</label>
+                  <input
+                    id="soulseek-username"
+                    bind:value={soulseekUsername}
+                    disabled={acquisitionBusy}
+                    autocomplete="username"
+                    spellcheck="false"
+                  />
+                </div>
+                <div class="field-stack">
+                  <label for="soulseek-password">Password</label>
+                  <input
+                    id="soulseek-password"
+                    type="password"
+                    bind:value={soulseekPassword}
+                    disabled={acquisitionBusy}
+                    autocomplete="current-password"
+                    placeholder={soulseekConfigured
+                      ? 'Saved in credential store'
+                      : ''}
+                  />
+                </div>
+              </div>
+              <div class="button-row">
+                <button
+                  class="primary-button"
+                  type="button"
+                  onclick={onSaveSoulseek}
+                  disabled={acquisitionBusy ||
+                    !soulseekUsername.trim() ||
+                    !soulseekPassword}
+                >
+                  Save credentials
+                </button>
+                {#if soulseekConfigured}
+                  <button
+                    class="text-button danger"
+                    type="button"
+                    onclick={onClearSoulseek}
+                    disabled={acquisitionBusy}>Clear credentials</button
+                  >
+                {/if}
+              </div>
+            </article>
+          {/if}
 
           <div class="setup-note">
             <span class="card-icon"><Icon name="info" size={16} /></span>
@@ -896,9 +1202,9 @@
                 onclick={onScanLibrary}
                 disabled={libraryBusy || !libraryRoot.trim()}
               >
-                <Icon name="refresh" size={14} />{libraryBusy
-                  ? 'Scanning…'
-                  : 'Scan Files'}
+                <span class="scan-button-icon" class:is-spinning={libraryBusy}>
+                  <Icon name="refresh" size={14} />
+                </span>{libraryBusy ? 'Scanning…' : 'Scan Files'}
               </button>
             </div>
             {#if libraryProgress}
@@ -1799,6 +2105,57 @@
     overflow-wrap: anywhere;
   }
 
+  .sync-history {
+    display: grid;
+    margin-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .sync-history-row {
+    display: grid;
+    grid-template-columns: minmax(110px, 0.55fr) minmax(0, 1.45fr) auto;
+    gap: 14px;
+    align-items: center;
+    min-width: 0;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .sync-history-row:last-child {
+    border-bottom: 0;
+  }
+
+  .sync-history-main {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .sync-history-main strong {
+    font-size: 10px;
+    font-weight: 680;
+  }
+
+  .sync-history-main small,
+  .sync-history-counts {
+    color: var(--text-secondary);
+    font-size: 9px;
+  }
+
+  .sync-history-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .empty-inline {
+    margin: 12px 0 0;
+    color: var(--text-secondary);
+    font-size: 10px;
+  }
+
   .mono,
   code {
     font-family:
@@ -1861,6 +2218,73 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .provider-priority-list {
+    display: grid;
+    gap: 7px;
+  }
+
+  .provider-priority-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-control);
+    background: var(--bg-subtle);
+    padding: 9px 10px;
+  }
+
+  .provider-priority-copy,
+  .provider-priority-actions,
+  .provider-add-row {
+    display: flex;
+    align-items: center;
+  }
+
+  .provider-priority-copy {
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .provider-priority-copy > div {
+    display: grid;
+    gap: 2px;
+  }
+
+  .provider-priority-copy strong {
+    color: var(--text-primary);
+    font-size: 10.5px;
+  }
+
+  .provider-priority-copy small,
+  .provider-add-row > span {
+    color: var(--text-secondary);
+    font-size: 9px;
+  }
+
+  .provider-priority-index {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--bg-control);
+    color: var(--text-secondary);
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  .provider-priority-actions {
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  .provider-add-row {
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 8px;
   }
 
   .technical-field {
@@ -2353,6 +2777,15 @@
 
     .two-fields {
       grid-template-columns: 1fr;
+    }
+
+    .sync-history-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .sync-history-counts {
+      grid-column: 1 / -1;
+      grid-row: 2;
     }
 
     .stat-row {

@@ -87,4 +87,79 @@ describe('SpotifyWorkspace liked songs', () => {
     expect(body).toContain('Example Album selection actions');
     expect(body).toContain('Example Album details actions');
   });
+
+  it('marks pinned collection cards and renders them first in their page', () => {
+    const playlist: SourceCollectionSummary = {
+      id: 3,
+      providerCollectionId: 'playlist-3',
+      kind: 'playlist',
+      name: 'Pinned Mix',
+      isAccessible: true,
+      accessIssue: null,
+      entryCount: 12,
+      trackedByDefault: false,
+      trackedEntryCount: 0,
+      localEntryCount: 0,
+      attentionEntryCount: 0,
+      imageUrl: null,
+    };
+    const otherPlaylist: SourceCollectionSummary = {
+      ...playlist,
+      id: 4,
+      providerCollectionId: 'playlist-4',
+      name: 'Earlier Mix',
+    };
+
+    const { body } = render(SpotifyWorkspace, {
+      props: {
+        section: 'playlists',
+        overview,
+        playlists: [otherPlaylist, playlist],
+        playlistTotal: 2,
+        pinnedCollectionKeys: ['playlist:playlist-3'],
+      },
+    });
+
+    expect(body).toContain('Pinned Mix');
+    expect(body).toContain('aria-label="Pinned"');
+    expect(body.indexOf('Pinned Mix')).toBeLessThan(
+      body.indexOf('Earlier Mix'),
+    );
+  });
+
+  it('shows immutable export actions for a Spotify playlist detail', () => {
+    const playlist: SourceCollectionSummary = {
+      id: 5,
+      providerCollectionId: 'playlist-5',
+      kind: 'playlist',
+      name: 'Road Trip',
+      isAccessible: true,
+      accessIssue: null,
+      entryCount: 3,
+      trackedByDefault: true,
+      trackedEntryCount: 3,
+      localEntryCount: 3,
+      attentionEntryCount: 0,
+      imageUrl: null,
+      externalUrl: 'https://open.spotify.com/playlist/road-trip',
+    };
+
+    const { body } = render(SpotifyWorkspace, {
+      props: {
+        section: 'playlists',
+        overview,
+        currentCollection: playlist,
+        playlists: [playlist],
+        playlistTotal: 1,
+        entries: [],
+        collectionTotal: 3,
+      },
+    });
+
+    expect(body).toContain('Exports');
+    expect(body).toContain('Immutable playlist snapshots');
+    expect(body).toContain('M3U8');
+    expect(body).toContain('Bundle');
+    expect(body).toContain('No exports yet.');
+  });
 });

@@ -39,6 +39,12 @@ url = "=2.5.8"
 walkdir = "=2.5.0"
 tungstenite = "=0.28.0"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSError", "NSFileManager", "NSURL"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

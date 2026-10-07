@@ -29,6 +29,7 @@ pub(super) fn get(conn: &Connection) -> Result<AppSettings, rusqlite::Error> {
             sync_on_startup,
             sync_interval_minutes,
             acquisition_enabled,
+            acquisition_providers_json,
             spotify_client_id
          FROM app_settings
          WHERE id = 1",
@@ -40,7 +41,9 @@ pub(super) fn get(conn: &Connection) -> Result<AppSettings, rusqlite::Error> {
                 sync_on_startup: row.get::<_, i64>(2)? != 0,
                 sync_interval_minutes: row.get(3)?,
                 acquisition_enabled: row.get::<_, i64>(4)? != 0,
-                spotify_client_id: row.get(5)?,
+                acquisition_providers: serde_json::from_str(&row.get::<_, String>(5)?)
+                    .unwrap_or_else(|_| vec!["monochrome".into()]),
+                spotify_client_id: row.get(6)?,
             })
         },
     )
@@ -57,8 +60,9 @@ pub(super) fn update(
              sync_on_startup = ?3,
              sync_interval_minutes = ?4,
              acquisition_enabled = ?5,
-             spotify_client_id = ?6,
-             updated_at = ?7
+             acquisition_providers_json = ?6,
+             spotify_client_id = ?7,
+             updated_at = ?8
          WHERE id = 1",
         params![
             settings.library_root,
@@ -66,6 +70,8 @@ pub(super) fn update(
             bool_to_sql(settings.sync_on_startup),
             settings.sync_interval_minutes,
             bool_to_sql(settings.acquisition_enabled),
+            serde_json::to_string(&settings.acquisition_providers)
+                .unwrap_or_else(|_| "[\"monochrome\"]".into()),
             settings.spotify_client_id,
             now_ms(),
         ],

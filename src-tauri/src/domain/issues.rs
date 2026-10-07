@@ -28,6 +28,8 @@ pub struct IssueRow {
     pub candidate_count: Option<usize>,
     pub confidence: Option<i64>,
     pub path: Option<String>,
+    pub image_url: Option<String>,
+    pub artwork_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +67,7 @@ pub struct MatchReviewTrack {
     pub explicit: Option<bool>,
     pub version_kind: Option<String>,
     pub version_detail: Option<String>,
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

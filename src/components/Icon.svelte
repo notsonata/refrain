@@ -24,6 +24,8 @@
   import Plus from '~icons/lucide/plus';
   import PanelRightClose from '~icons/lucide/panel-right-close';
   import PanelRightOpen from '~icons/lucide/panel-right-open';
+  import Pin from '~icons/lucide/pin';
+  import PinOff from '~icons/lucide/pin-off';
   import RefreshCw from '~icons/lucide/refresh-cw';
   import Repeat2 from '~icons/lucide/repeat-2';
   import Search from '~icons/lucide/search';
@@ -31,6 +33,7 @@
   import SlidersHorizontal from '~icons/lucide/sliders-horizontal';
   import Sun from '~icons/lucide/sun';
   import TriangleAlert from '~icons/lucide/triangle-alert';
+  import Trash2 from '~icons/lucide/trash-2';
   import X from '~icons/lucide/x';
   import Spotify from '~icons/simple-icons/spotify';
 
@@ -52,9 +55,12 @@
     | 'plus'
     | 'panel-right-close'
     | 'panel-right-open'
+    | 'pin'
+    | 'pin-off'
     | 'cloud'
     | 'copy'
     | 'warning'
+    | 'trash'
     | 'close'
     | 'more'
     | 'folder'
@@ -94,9 +100,12 @@
     plus: Plus,
     'panel-right-close': PanelRightClose,
     'panel-right-open': PanelRightOpen,
+    pin: Pin,
+    'pin-off': PinOff,
     cloud: CloudDownload,
     copy: Copy,
     warning: TriangleAlert,
+    trash: Trash2,
     close: X,
     more: Ellipsis,
     folder: FolderOpen,

@@ -8,6 +8,7 @@ const settings: AppSettings = {
   syncOnStartup: false,
   syncIntervalMinutes: null,
   acquisitionEnabled: false,
+  acquisitionProviders: ['monochrome'],
   spotifyClientId: null,
 };
 

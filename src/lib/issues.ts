@@ -24,6 +24,8 @@ export interface IssueRow {
   candidateCount: number | null;
   confidence: number | null;
   path: string | null;
+  imageUrl: string | null;
+  artworkPath: string | null;
 }
 
 export interface IssueCounts {
@@ -55,6 +57,7 @@ export interface MatchReviewTrack {
   explicit: boolean | null;
   versionKind: string | null;
   versionDetail: string | null;
+  imageUrl: string | null;
 }
 
 export interface MatchReviewCandidate {
@@ -86,4 +89,11 @@ export function getMatchReview(
   invokeFn: InvokeFn = invoke,
 ): Promise<MatchReview> {
   return invokeFn<MatchReview>('get_match_review', { sourceTrackId });
+}
+
+export function trashInvalidLocalFile(
+  localFileId: number,
+  invokeFn: InvokeFn = invoke,
+): Promise<void> {
+  return invokeFn<void>('trash_invalid_local_file', { localFileId });
 }

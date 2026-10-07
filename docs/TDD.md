@@ -83,7 +83,7 @@ SQLite configuration:
 
 ### Audio Metadata
 
-Use `lofty` for reading common audio metadata and file properties.
+Use `lofty` for reading common audio metadata and file properties. During verified acquisition import, Refrain also writes canonical title, artists, album, ISRC, disc/track numbers, release year, and front-cover artwork into the audio file before canonical placement. Existing embedded artwork is preserved; when it is absent, Refrain downloads the linked Spotify/source image over HTTPS, embeds it, then re-reads the file so the normal artwork cache is populated from the final audio metadata.
 
 Initial supported local audio formats should follow formats Refrain can inspect reliably and that Sockseek commonly returns, including:
 
@@ -149,14 +149,15 @@ Never log:
                 │ acquisition provider boundary
                 ▼
         ┌─────────────────────┐
-        │ Sockseek Adapter    │
+        │ Provider Adapter    │
         └──────────┬──────────┘
-                   │ HTTP + SignalR
-                   ▼
-        ┌─────────────────────┐
-        │ Bundled Sockseek    │
-        │ daemon sidecar      │
-        └─────────────────────┘
+                   │
+          ┌────────┴─────────┐
+          ▼                  ▼
+   ┌──────────────┐   ┌───────────────┐
+   │ Monochrome   │   │ Sockseek      │
+   │ HTTP API     │   │ sidecar       │
+   └──────────────┘   └───────────────┘
 ```
 
 ## Architectural Boundaries
@@ -206,6 +207,8 @@ The Rust backend owns:
 ### Provider Boundary
 
 Acquisition providers may search for and acquire candidate audio.
+
+`app_settings.acquisition_providers_json` stores the enabled provider IDs as an ordered JSON array. The Settings UI writes acquisition enablement and provider-list changes immediately through the normal settings update command instead of keeping a separate unsaved acquisition draft. If persistence fails, the UI reloads the last persisted acquisition settings. The coordinator resolves available adapters in configured order, searches one provider at a time, and stops after a successful automatic acquisition. A provider that cannot be constructed or reports unavailable may be skipped when at least one lower-priority provider remains usable. When all searched providers fail automatic selection but returned candidates, the persisted manual-candidate set retains provider provenance and provider-group ordering. Resolve/reject identity is the pair `(provider, provider_token)`.
 
 They do not decide:
 
@@ -327,6 +330,7 @@ keep_removed_managed_files  INTEGER NOT NULL DEFAULT 1
 sync_on_startup             INTEGER NOT NULL DEFAULT 0
 sync_interval_minutes       INTEGER NULL
 acquisition_enabled         INTEGER NOT NULL DEFAULT 0
+acquisition_providers_json  TEXT NOT NULL DEFAULT '["monochrome"]'
 created_at                  INTEGER NOT NULL
 updated_at                  INTEGER NOT NULL
 ```
@@ -588,8 +592,10 @@ library_track_id      INTEGER NOT NULL REFERENCES library_tracks(id)
 provider              TEXT NOT NULL
 provider_job_id       TEXT NULL
 status                TEXT NOT NULL
+stage                 TEXT NULL
 attempt               INTEGER NOT NULL DEFAULT 1
 candidate_json        TEXT NULL
+candidates_json       TEXT NULL
 staging_path          TEXT NULL
 error_code            TEXT NULL
 error_message         TEXT NULL
@@ -600,6 +606,7 @@ updated_at            INTEGER NOT NULL
 ```
 
 Provider-specific payloads remain opaque JSON at the persistence boundary.
+The job-level `provider` field records the provider currently being searched or used for acquisition. Each persisted candidate also carries its own provider ID so a manual candidate can be resolved through a different provider than the job previously referenced.
 
 Milestone 12 uses the following durable acquisition job lifecycle:
 
@@ -609,7 +616,46 @@ Milestone 12 uses the following durable acquisition job lifecycle:
 - `failed` — bounded acquisition attempts ended without acceptable provider completion
 - `cancelled` — acquisition was cooperatively cancelled
 
-`staged` is deliberately not equivalent to synced or imported audio. Verification and canonical-library import remain Refrain responsibilities in the later acquisition verification milestone.
+`staged` is deliberately not equivalent to synced or imported audio. A downloaded job remains provider-complete but outside canonical storage until Refrain's verification/import path accepts the staged file and creates a managed present local file.
+
+The durable `status` remains the provider-neutral execution state. `stage` is the user-facing Staging lifecycle projection and may be more specific: `queued`, `searching`, `downloading`, `needsResolution`, `failed`, `downloaded`, or `cancelled`. Tracks that are tracked and missing but do not yet have an acquisition job are projected as `needsLocalCopy` without creating a placeholder job. `candidates_json` persists the provider-neutral candidate set when manual resolution is required.
+
+Provider byte progress is live process state merged into Staging reads by provider job ID and is intentionally not durable truth. Monochrome and Antra track streamed bytes in-process; Sockseek retains its SignalR progress path when that fallback provider is used. Provider job handles are also process-local, so application startup recovers any persisted `running`, `searching`, or `downloading` acquisition as a retryable `acquisitionInterrupted` failure and clears its stale provider job ID. Targeted Retry can requeue that recovered row instead of presenting an orphaned active transfer; the composite manual Sync Library action intentionally discards it as part of the fresh-session reset described below.
+
+The composite desktop **Sync Library** action deliberately starts a fresh acquisition session before its Local sync phase. The frontend invokes `reset_acquisition_session`, which best-effort cancels any provider job still referenced by an active row, deletes all persisted `acquisition_jobs`, clears Monochrome's in-process playback cooldown, and removes the Refrain-owned `runtime/acquisition` staging tree. Staging actions and Sync Library are mutually excluded in the desktop UI so a user-started Staging worker cannot race the reset. The later Spotify phase rebuilds acquisition state only from the current tracked-and-missing projection. This reset applies to the composite manual Sync Library action; targeted Staging Retry/Search Again flows continue to reuse their current job semantics.
+
+### `local_playlists`
+
+Local Playlists are stored separately from immutable source-export history. User-authored rows have no source collection. Spotify-backed mirror rows reference one tracked Spotify playlist or the tracked Liked Songs collection and are source-managed.
+
+```text
+id              INTEGER PRIMARY KEY
+name            TEXT NOT NULL
+source_collection_id INTEGER NULL REFERENCES source_collections(id) ON DELETE CASCADE
+m3u_path        TEXT NULL
+m3u_managed     INTEGER NOT NULL DEFAULT 0 CHECK (m3u_managed IN (0, 1))
+cover_source_url TEXT NULL
+cover_path      TEXT NULL
+last_synced_at  INTEGER NULL
+sync_error      TEXT NULL
+created_at      INTEGER NOT NULL
+updated_at      INTEGER NOT NULL
+```
+
+`source_collection_id IS NULL` means the playlist is user-authored/imported and directly editable. A non-null value means the row mirrors that Spotify source collection. `source_collection_id` is unique when present so one tracked Spotify playlist or Liked Songs collection produces at most one Local Playlist mirror.
+
+### `local_playlist_entries`
+
+```text
+id                INTEGER PRIMARY KEY
+playlist_id       INTEGER NOT NULL REFERENCES local_playlists(id) ON DELETE CASCADE
+position          INTEGER NOT NULL
+library_track_id  INTEGER NOT NULL REFERENCES library_tracks(id)
+created_at        INTEGER NOT NULL
+UNIQUE(playlist_id, position)
+```
+
+`position` owns playlist order. The same `library_track_id` may occur more than once because duplicate entries are valid playlist state.
 
 ### `playlist_exports`
 
@@ -706,6 +752,7 @@ Create indexes for:
 - `acquisition_jobs(library_track_id, status)`
 - `sync_runs(started_at)`
 - `playlist_exports(collection_id, created_at)`
+- unique partial index on `local_playlists(source_collection_id)` when `source_collection_id IS NOT NULL`
 
 Do not add FTS initially.
 
@@ -1036,6 +1083,8 @@ A provider-reported success is not sufficient.
 
 A candidate must reach the automatic-match threshold or be manually confirmed before normalization into the canonical library.
 
+Embedded tags normally override provider metadata during this verification. A narrow catalog-drift exception handles alternate-release metadata: when decoded title/artist/duration are exact, `conflictingIsrc` is the only matcher warning, and no hard incompatibility is present, a different embedded ISRC and album may be accepted as release-level metadata drift. Automatic acquisitions still reject a selected provider candidate whose own non-null ISRC conflicts with the requested track. For a candidate explicitly selected from the persisted manual-resolution set, that candidate-level ISRC conflict may be accepted when title, artist, and decoded duration remain exact and no version incompatibility is present. This never bypasses live, acoustic, remix, demo, instrumental, radio-edit, extended, or other hard recording conflicts.
+
 ## Local Library Scanner
 
 ### Scan Scope
@@ -1224,7 +1273,7 @@ pub trait AcquisitionProvider {
 }
 ```
 
-Core types must not expose Sockseek DTOs.
+Core types must not expose provider-specific DTOs.
 
 `TrackQuery` contains normalized provider-neutral metadata such as:
 
@@ -1235,15 +1284,61 @@ Core types must not expose Sockseek DTOs.
 - ISRC
 - version information
 
-`Candidate` contains only data needed for display, ranking, and a later provider call, plus an opaque provider token.
+`Candidate` contains only data needed for display, ranking, and a later provider call, plus an opaque provider token. Optional audio-quality metadata includes format, size, bitrate in kbps, sample rate in Hz, and bit depth when the provider exposes it. Provider adapters return raw metadata without a trusted score. The acquisition coordinator computes a provider-neutral `confidence` from `0` to `100` and persists the scored form when later download or manual resolution needs it. When a provider completes a download, Refrain inspects the actual staged audio and refreshes the selected candidate's format, size, bitrate, sample rate, and bit depth before persisting the downloaded state. Match confidence remains identity-only. Normal candidates sort by identity confidence first, then prefer FLAC, other lossless formats, higher bit depth, sample rate, and bitrate. Compatible exact-ISRC candidates are already identity-equivalent, so they sort by audio quality before confidence. This acquisition confidence is separate from the reconciliation confidence stored in `track_links`.
+
+Acquisition ranking weighs exact normalized ISRC strongest, followed by exact normalized title/artist identity, duration proximity, and album agreement, while explicit title, artist, duration, and ISRC contradictions reduce confidence. A compatible exact-ISRC candidate can bypass ambiguity when its artist and duration evidence remain compatible and its title is either equal after normalization or a normalized base/suffix variant of the requested title; genuinely contradictory titles still disqualify the exact-ISRC shortcut. Multiple equivalent compatible exact-ISRC records do not force manual resolution solely because more than one provider record exists. Ranked compatible exact-ISRC candidates from one provider share the coordinator's bounded automatic-attempt budget and are ordered by lossless quality before metadata confidence, so a failed mirror/release can immediately fall through to the next equivalent candidate before provider fallback. Other automatic choices require confidence `>= 75` and at least an 8-point lead over the runner-up. For each provider, the coordinator uses candidates at confidence `>= 55` to decide whether automatic selection is sufficiently clear. If the complete provider chain produces no successful automatic match, manual resolution persists every returned ranked candidate, including lower-confidence outputs, grouped by provider in configured priority order.
 
 Providers may implement direct acquisition without a separate user-visible search step.
+
+## Monochrome Integration
+
+### Role
+
+Monochrome is the default highest-priority acquisition provider. Refrain follows the current Monochrome frontend's public track-service contract for primary candidate search and lossless streaming while keeping all Monochrome DTOs behind `AcquisitionProvider`. Antra and Sockseek remain separate providers that can be enabled and ordered independently.
+
+### API and failover
+
+The primary path uses `https://tracks.monochrome.st/search/tracks?q=...&limit=...` for candidate lookup and `https://tracks.monochrome.st/track/<trackId>` for direct lossless audio. Search results are converted immediately into provider-neutral `AcquisitionCandidate` values. Numeric sample-rate and bit-depth fields are preserved when the track service exposes them. When those fields are absent, Refrain performs bounded range probes against the candidate FLAC streams and reads only the FLAC STREAMINFO prefix to recover the actual sample rate and bit depth for manual-resolution display and quality ordering; failed probes leave the values unknown rather than fabricating them. The legacy API's `LOSSLESS` label is projected as CD quality at 44.1 kHz / 16-bit; unknown Hi-Res values remain unset until the downloaded file can be inspected. Candidate tokens contain the provider track ID plus an internal source discriminator so persisted tokens from the older provider implementation remain readable.
+
+If the primary track service is unavailable during search, Refrain falls back to the older compatible Monochrome API pool. That fallback uses `/search/` for candidate lookup and `/track/` for lossless playback manifests. The same pool is also used as a download-path fallback after a primary direct stream exhausts its bounded retries or fails with transport, HTTP, or FLAC-protocol errors. Refrain performs a fresh legacy lookup for the requested track and accepts the fallback only when title, artist, duration, and available ISRC evidence remain compatible. Legacy playback requests `LOSSLESS` first because compatible HiFi APIs expose that tier as a direct FLAC/BTS manifest more consistently; `HI_RES_LOSSLESS` remains a secondary attempt. `REFRAIN_MONOCHROME_API_URLS` may replace only this fallback list with a comma-separated set of approved endpoints for development or recovery. Provider failure is mapped to provider-neutral errors rather than leaking transport details into core acquisition behavior.
+
+### Download model
+
+For the primary track-service path, Refrain performs a direct HTTPS GET and requires the returned payload to begin with the native FLAC `fLaC` signature before accepting it. Request-start failures, HTTP `429`, transient server responses, interrupted bodies, transient non-FLAC payloads, and empty responses are retried using a capped exponential delay from 500 ms through 8 seconds. Interrupted response bodies retain the `.part` file and resume with HTTP range requests on the next attempt. A direct-path HTTP 403 is not repeatedly retried against the same endpoint, but it does qualify for the legacy download-path fallback. When switching from the primary stream to a legacy stream, Refrain removes the primary `.part` file and resets byte progress so bytes from different encodings or endpoints cannot be concatenated. For the legacy fallback, Refrain accepts only direct manifests whose codec or MIME type identifies FLAC and whose encryption type is `NONE`, and the returned media URL must be HTTPS. MPEG-DASH XML manifests are recognized explicitly and skipped because Refrain does not currently assemble/remux segmented TIDAL DASH streams. Confirmed playback-level transport/protocol outages open a 60-second in-process Monochrome cooldown; `health()` reports the provider temporarily unavailable during that window so the coordinator immediately advances to the next configured provider. Track-specific 404s and local filesystem errors do not open the cooldown. Both direct paths stream bytes into a `.part` file inside the existing Refrain-controlled staging directory, report transferred/total bytes from in-process state when a total is available, support cooperative cancellation, and atomically rename the completed part file to `.flac`. Provider completion remains the durable `staged` verification boundary, but normal sync and targeted acquisition immediately consume that state through Milestone 14 verification/import rather than waiting for a second user action.
+
+No Monochrome or Tidal secret is stored in Refrain. The primary track-service contract is unauthenticated from Refrain's perspective; Refrain does not copy Monochrome's browser credentials or Turnstile-protected unified-playback authorization flow.
+
+## Antra Integration
+
+### Role
+
+Antra is an optional authenticated acquisition provider behind the same `AcquisitionProvider` boundary. Refrain implements the public desktop HTTP protocol independently and does not copy Antra application code. The initial adapter intentionally uses only the authenticated Tidal and Qobuz mirrors because they provide a clean lossless track-search and direct-FLAC boundary for Refrain.
+
+### Device authentication and endpoint discovery
+
+Refrain starts login with `POST https://antra.hoshi.cfd/api/device/code`, opens the returned verification URL in the user's browser, and polls `POST /api/device/token` with the device code until approval, expiration, or failure. The approved device token is stored only in the operating system credential store. SQLite and frontend local storage must never persist the token.
+
+Authenticated provider discovery uses `GET /api/desktop/endpoints` with the device token in `X-API-Key`. Refrain caches the returned endpoint manifest in process for five minutes and invalidates the cache when the user signs in or out. Provider health requires both a stored token and at least one usable Tidal or Qobuz endpoint. A locally stored token only means credentials are configured; the health call is the authoritative remote-validity check.
+
+### Search and candidate identity
+
+For each available lossless mirror, Refrain tries exact ISRC lookup before text search. Tidal uses `/api/search/isrc/{isrc}` and `/search/?s=...`; Qobuz uses `/api/search/isrc/{isrc}` and `/api/search?title=...&artist=...&limit=5`. Provider-specific responses are immediately projected into provider-neutral candidates.
+
+Antra candidate tokens contain only the mirror source and provider track ID. Endpoint URLs and authentication material are deliberately excluded so persisted candidates can be re-resolved against the current authenticated manifest and cannot leak credentials. Exact Tidal ISRC responses that omit duration are enriched through the mirror track-metadata endpoint before they are eligible for compatible-exact automatic selection; this prevents an exact identifier from bypassing Refrain's duration/version safety checks when the mirror payload is incomplete.
+
+For equivalent exact-ISRC Antra candidates, lossless quality preference is explicit and takes precedence over small release-metadata confidence differences: Hi-Res FLAC is preferred first, then CD-quality FLAC, then FLAC with unknown quality metadata. Tidal `HI_RES_LOSSLESS` and `LOSSLESS` payloads are projected into the same bit-depth/sample-rate fields used by the provider-neutral candidate ranker so exact-ISRC results receive the same quality ordering as text-search results.
+
+### Download model
+
+Selected Tidal or Qobuz candidates stream from the mirror's `/api/stream/{trackId}` endpoint into the normal Refrain-controlled staging directory. Refrain retries transient request failures, HTTP `429`, and server errors using bounded attempts. Authentication failures are non-retryable provider errors, and mirror responses that explicitly report lossless unavailability are treated as non-retryable for that candidate. The first bytes of the response must contain the native FLAC `fLaC` signature before the download is accepted. A successful HTTP response whose body is not FLAC is classified as a mirror-candidate failure, records the mirror and response content type for diagnosis, skips repeated attempts against that same deterministic payload, and remains retryable at the coordinator level so the next compatible Antra mirror candidate can run immediately.
+
+Antra downloads run in process, expose transferred and total bytes through provider job state, support cooperative cancellation, and clean temporary partial files on cancellation or terminal failure. The adapter currently serializes Antra transfers with a provider-local mutex, so Refrain's global three-track worker pool can continue processing other providers while only one Antra stream is active at a time. HTTP range resume is not currently implemented for Antra.
 
 ## Sockseek Integration
 
 ### Role
 
-Sockseek is the initial acquisition provider.
+Sockseek was the first implemented acquisition provider and remains an inactive fallback while Monochrome is active.
 
 Refrain uses Sockseek only for Soulseek search/download behavior.
 
@@ -1263,7 +1358,9 @@ sockseek daemon
 
 bound to loopback only.
 
-Choose an available local port at runtime rather than assuming port `5030`.
+Choose an available local API port at runtime rather than assuming port `5030`. Also assign Sockseek an available Soulseek listen port instead of relying on its default `49998`; a stale or crashed sidecar must not prevent the next managed daemon from initializing its Soulseek client.
+
+The transient runtime configuration sets `pref-format = flac,alac,wav`. This is a soft preference, so Sockseek prioritizes lossless search/download candidates while retaining lossy files as fallback when no preferred format is available. Refrain reads Sockseek's `FileCandidateDto` bitrate, sample rate, extension, size, and file attributes; `BitDepth` attributes are projected into provider-neutral candidate quality metadata.
 
 The adapter owns sidecar lifecycle:
 
@@ -1299,11 +1396,17 @@ The `3.0.5` adapter uses Sockseek's published OpenAPI contract for:
 - `POST /api/jobs/{id}/cancel` for cooperative cancellation
 - `/api/events` SignalR subscriptions for progress and invalidation wakeups
 
+Sockseek may briefly return `404 Not Found` for a newly submitted job or its result projection before the queued job has finished materializing in the daemon state store. Refrain treats `404` from these optional polling reads as pending and retries instead of failing the acquisition. While both the job and result projection are absent, Refrain also compares Sockseek's `restartCount` with the value captured immediately before submission. If the count advanced, the search was lost during a Sockseek engine restart, commonly after Soulseek login initialization failed; Refrain stops polling and reports a retryable `soulseekUnavailable` condition instead of waiting for the generic search timeout. A `404` when starting a download from a previously displayed candidate means the candidate's search context has expired, typically after a sidecar restart; Refrain reports that as a retryable `candidateExpired` condition so the user can search again.
+
+Sockseek search polling uses a 30-second application deadline. File results received before that deadline remain usable even if Sockseek has not marked the search complete. When the deadline expires with no file results, Refrain cancels the stale search job. If Soulseek reports ready at that point, the provider result is treated as an ordinary empty search so the acquisition chain can continue without repeating a 90-second timeout. If Soulseek is still unready, Refrain reports retryable `soulseekUnavailable` so the normal provider-chain retry policy still applies to an actual provider outage.
+
+Sockseek's idle `None` state remains healthy because the sidecar creates the Soulseek session lazily. Explicit terminal connection states such as `Disconnected`, `Failed`, `Error`, and `Stopped` are different: provider health reports unavailable immediately, allowing the ordered chain to continue without submitting another search that is expected to time out. Cancellation is idempotent; a `404` from a cancel request means the provider job has already disappeared and is treated as success.
+
 Provider-specific search-job IDs and candidate file references remain serialized inside the opaque provider token and do not enter the core data model.
 
 ### Staging
 
-Sockseek downloads into a Refrain-controlled staging directory, never directly into the canonical library.
+Acquisition providers download into a Refrain-controlled staging directory, never directly into the canonical library.
 
 Suggested runtime layout:
 
@@ -1311,14 +1414,23 @@ Suggested runtime layout:
 <AppData>/refrain/runtime/acquisition/<job-id>/
 ```
 
-After provider completion:
+After provider completion, the normal synchronization and targeted-acquisition paths immediately continue through:
 
 1. inspect actual downloaded files
 2. select the candidate file
 3. read tags and properties
 4. run acquisition verification
 5. if accepted, normalize into the library
-6. if rejected, keep enough diagnostic state for the issue UI and clean staging according to retention rules
+6. insert the accepted file as a managed preferred `LocalFile`
+7. if rejected, leave the staged file outside the canonical library and persist a per-track verification failure for recovery
+
+The durable provider-complete `staged`/user-facing `downloaded` state is still retained as a recovery boundary. It is normally transient because successful downloads are consumed automatically by verification/import. When recovery is needed, the Staging UI may submit selected downloaded job IDs for reprocessing. Each selected job is verified/imported independently; failure of one job does not roll back or block successful imports from the same selection.
+
+Spotify Sync also owns automatic recovery of this boundary when existing acquisition state is intentionally retained, such as non-composite sync/recovery paths. Before acquiring missing tracks, it checks downloaded jobs that still have no present local file. If the recorded staging artifact has disappeared, the job is converted to a reacquirable failure and is queued again during the same sync. After acquisition, Sync verifies/imports every downloaded job that still lacks a local file. The composite manual Sync Library action is the explicit exception: it clears the previous acquisition session before Local sync, so old failed, resolution, cancelled, and downloaded rows are abandoned rather than recovered. Non-terminal import failures otherwise remain downloaded and retain their specific error code/message for inspection and retry.
+
+The Staging workspace is a two-mode surface. While tracked material still needs a local copy, it renders acquisition cards with linked source artwork, checkbox-driven contextual actions, a right-side metadata/provider inspector, and a bottom transfer dock for live byte progress. When no acquisition work remains, it renders detailed synchronization state using the current/latest `sync_runs` record, including phase progression, run counts, status, and cancellation for an active run.
+
+Some provider FLAC streams contain valid audio properties but no embedded tags. Verification therefore treats missing optional tag evidence as unknown rather than conflicting: if the selected provider candidate supplies an exact title and artist match and the decoded staged file duration exactly satisfies the matcher duration evidence, the file may pass verification even when album and track/disc metadata are unavailable. Present embedded tags still take precedence over provider metadata, and any hard incompatibility or warning continues to prevent this reduced-evidence acceptance path.
 
 ### Soulseek Credentials
 
@@ -1367,7 +1479,7 @@ Reconciliation computes actions without allowing the acquisition provider to def
 
 Synchronization runs carry a durable `scope` of `local` or `spotify`. Legacy pre-scope runs remain distinguishable in persistence.
 
-The desktop UI exposes one primary **Sync Library** action. It runs the local scope first and, unless that phase fails or is cancelled, runs the Spotify scope second. **Scan Files** invokes the local scanner directly without starting either synchronization scope. **Refresh Spotify** refreshes persisted source state without running the synchronization workflow.
+The desktop UI exposes one primary **Sync Library** action. It runs the local scope first and, unless that phase fails or is cancelled, runs the Spotify scope second. When acquisition is enabled, the Spotify scope continues successful acquisition jobs directly into verification/import before normalization. **Scan Files** invokes the local scanner directly without starting either synchronization scope. The scanner walks the library root for supported audio plus `.m3u` / `.m3u8` files. Unknown M3U files are imported after audio indexing so their entries can resolve to present local files; only files referenced by an imported playlist are given logical library-track identities during this lightweight path. Existing Refrain playlists with the same M3U path are left unchanged on later scans. **Refresh Spotify** refreshes persisted source state without starting a synchronization run, then performs a lightweight source-to-library reconciliation so newly tracked missing songs immediately materialize as stable logical tracks for Staging and tracked Spotify playlist/Liked Songs mirrors are refreshed.
 
 Local Sync executes:
 
@@ -1393,7 +1505,7 @@ Spotify Sync executes:
 8. verify staged audio
 9. normalize accepted files
 10. apply safe removals
-11. resolve playlist projections
+11. resolve tracked Spotify playlist and Liked Songs mirrors
 12. finish and report
 ```
 
@@ -1414,6 +1526,8 @@ source_track_sync_overrides
 ```
 
 Collection refresh replaces entry rows but preserves the collection and source-track identities, so these rules survive ordinary Spotify refreshes. A source track is desired for Spotify Sync if any accessible collection includes it after applying the per-track override first and the collection default second. Changing a collection-level tracking switch writes the new collection rule and clears that collection's per-track overrides atomically, so the collection action means all tracked or all untracked. Later per-track actions may create new overrides. Acquisition queueing uses the same predicate and cancels stale queued jobs that are no longer desired.
+
+For `kind IN ('playlist', 'liked_songs')`, a collection-level `default_included = 1` also owns one source-linked Local Playlist. Reconciliation preserves effective tracked order and duplicate positions through `track_links`, updates the mirror after source/tracking changes, and removes the derived row when collection-level tracking is disabled. Saved Albums remain outside Local Playlist mirroring. Local Playlist summary/detail projections join the linked `source_collections.image_url`, so Spotify mirror artwork follows the persisted source collection without duplicating image state into `local_playlists`. Source-linked rows reject direct rename/delete/membership mutation; user-authored rows remain editable. Database open performs one idempotent mirror reconciliation so existing tracked Spotify playlists and Liked Songs are materialized immediately after upgrading to the mirror-capable schema.
 
 ### Idempotency
 
@@ -1485,6 +1599,30 @@ Unavailable Spotify items are not considered resolved audio entries.
 
 The UI should report unresolved counts separately.
 
+## Local Playlist M3U Synchronization
+
+Local Playlist sync is a persisted editing/synchronization workflow, not an immutable source export. It resolves each `local_playlist_entries.library_track_id` directly to that track's preferred present `LocalFile`.
+
+Local-library scanning also supports one-time discovery of existing M3U/M3U8 files under the configured root. The importer ignores blank/comment lines, resolves relative audio paths against the playlist directory, preserves ordering and duplicate references, and creates a Local Playlist keyed by its canonical M3U path when that path is not already managed. Subsequent scans do not replace the persisted playlist entries, because after import the Refrain copy is the editable source of truth and the linked M3U becomes its synchronization target.
+
+New user-authored Local Playlists and source-linked Spotify mirrors are managed by Refrain. A managed playlist resolves its target from the configured library root as `<Library Root>/Playlists/<sanitized playlist name>.m3u8`. Target selection avoids collisions with other persisted playlist targets and existing files. Managed targets are created automatically, including the `Playlists` directory. A managed user-playlist rename resolves a new filename and removes the previous managed file after the replacement succeeds.
+
+For a source-linked Spotify mirror with `source_collections.image_url`, playlist synchronization also maintains a downloaded cover sidecar beside the managed M3U8. `cover_source_url` records which Spotify artwork URL produced the current sidecar and `cover_path` records the Refrain-owned file so unchanged artwork can be reused without a network request and renamed/moved with the managed playlist target. JPEG, PNG, WebP, and GIF responses are supported with a bounded HTTPS download. The normal target uses the M3U8 basename with the detected image extension; if that path is already occupied by an unrelated file, Refrain selects a collision-safe `.cover` filename instead. Cover download failure is logged and retried later without failing an otherwise valid playlist-file synchronization.
+
+Imported/user-owned M3U targets keep `m3u_managed = 0` and retain their existing path. Refrain never relocates those external targets merely because the persisted playlist is edited.
+
+Before writing, every entry must resolve to a path that currently exists as a file. If any entry fails this check:
+
+- refuse the complete sync
+- preserve the existing destination file
+- persist a user-visible `sync_error`
+
+On success, generate UTF-8 extended M3U in persisted playlist order, including duplicate positions. Prefer a relative path from the M3U location to the audio file when representable and fall back to an absolute native path when necessary. Write through a temporary file in the destination directory and replace the destination only after the complete output is ready. Record `last_synced_at` and clear `sync_error` after replacement succeeds.
+
+Automatic synchronization runs after playlist creation, rename, add/remove/reorder mutations, tracked Spotify playlist reconciliation, library-root/settings changes, and application startup. Automatic sync failure is persisted on the playlist but does not roll back an otherwise valid playlist mutation. The Local Playlists UI displays managed/link state, target path, last sync time, and any sync error without exposing manual target selection or a manual Sync button.
+
+The command boundary retains M3U target assignment and explicit sync as lower-level/backward-compatible operations for imported or externally linked playlist targets. Local Songs multi-selection and per-track menus call the add-tracks command with library-track IDs; normal desktop playlist management relies on automatic synchronization.
+
 ## Playlist Export
 
 ### Export Preconditions
@@ -1499,7 +1637,7 @@ If unresolved entries exist:
 
 ### M3U8 Export
 
-Generate UTF-8 M3U8.
+Generate UTF-8 M3U8. Portable bundle mode also downloads the source playlist artwork when `image_url` is present and stores it in the archive as `cover.<image extension>`. Because bundle export is an explicit operation, a declared source cover that cannot be downloaded causes the export to fail rather than silently producing an incomplete bundle.
 
 Preserve:
 
@@ -1641,7 +1779,16 @@ reject_match
 clear_match_decision
 
 list_acquisition_jobs
-cancel_acquisition_job
+list_staging_items
+start_staging_track
+start_all_staging
+retry_failed_staging
+cancel_staging_track
+cancel_active_staging
+resolve_staging_track
+reject_staging_candidate
+search_again_staging_track
+continue_staging_tracks
 
 export_playlist
 list_exports
@@ -1683,6 +1830,8 @@ List commands support:
 
 Local-library and Spotify track projections should support server-side filtering once a filter would otherwise require loading the entire collection into the webview. Common filters include search, artist, album, year, format, Spotify membership, and local/presence state. Spotify collection summaries also project aggregate local-entry and attention-entry counts so Albums and Playlists can expose the same local-state overview without loading every collection's entries into the webview. Technical filters such as path/location, acquisition state, match state, explicit state, and duration can use the same query boundary behind the UI's Advanced controls.
 
+Until those projections provide server-side filtering for the relevant view, Liked Songs and Local Library keep client-side search/filter correctness by eagerly requesting subsequent pages whenever a query or filter is active. Reactive filtering expressions must explicitly depend on the current search/filter values so Svelte invalidates the result set when controls change.
+
 Long track lists should be virtualized in the UI.
 
 ## Desktop Views
@@ -1703,12 +1852,17 @@ Primary navigation is organized around two source workspaces plus secondary util
 
 ```text
 Local
+  Songs
+  Playlists
 Spotify
+  Liked Songs
+  Albums
+  Playlists
 Settings
 Issues (secondary attention flow)
 ```
 
-The Local workspace shows only present local-library tracks and annotates matched Spotify membership. Each row includes its local file path and local artwork when available. The Spotify workspace contains Liked Songs, Saved Albums, and Playlists sections with persistent tracking controls. Inaccessible playlists are excluded from the normal playlist list and exposed in a collapsed secondary section.
+The Local and Spotify parent rows are independently collapsible. Local > Songs shows only present local-library tracks and annotates matched Spotify membership; each row includes its local file path and local artwork when available. Local > Playlists uses a playlist browser that opens a dedicated detail view. It manages editable user-authored playlists alongside read-only tracked Spotify mirrors, shows automatic managed/linked M3U8 state and sync diagnostics, and exposes ordered track membership without manual file-target or sync controls. The Spotify workspace contains Liked Songs, Saved Albums, and Playlists sections with persistent tracking controls. Inaccessible playlists are excluded from the normal playlist list and exposed in a collapsed secondary section.
 
 Spotify track tables support row multi-selection for tracking changes. Single-track changes continue through `set_source_track_tracking`; bulk `Track`, `Exclude`, and reset-to-default changes use `set_source_tracks_tracking`, which validates that every selected source track belongs to the collection and applies the deduplicated overrides in one SQLite transaction before the frontend reloads collection/source state once.
 
@@ -1717,6 +1871,8 @@ Use a compact desktop-density system rather than a literal global CSS zoom. Redu
 Use dense media rows and chips for track/state browsing. Avoid spreadsheet-style tables for the main Local and Spotify browsing flows.
 
 Saved Albums and Playlists use responsive artwork-first grids. Selecting a collection replaces the grid with that collection's track view rather than keeping a permanent master-detail sidebar. The detail view provides an obvious return action. Liked Songs remains a dense track view.
+
+Saved Album and Playlist cards support a native-style right-click pin toggle. Pins are frontend-only ordering preferences persisted in `localStorage` under `refrain-spotify-pinned-collections`; they store the collection kind, provider collection ID, display name, image URL, and current database ID. Pinned cards are sorted to the front of their respective Albums or Playlists grid, and the card's cover badge must react immediately when pin state changes. Pinning does not alter Spotify tracking state or require a database migration. If a persisted pin is outside the initially loaded collection page, the collection browser continues pagination until the pinned collection is available or the list is exhausted.
 
 Default-visible filters are search, Spotify/local state, artist, album, year, format, and Spotify membership where applicable. Path/location, acquisition state, match state, explicit state, and duration live behind an Advanced control.
 
@@ -1775,25 +1931,23 @@ Do not expose secrets or raw credential-bearing upstream responses.
 
 ## Issue Model
 
-The Issues UI is a projection over unresolved durable state rather than a separate general-purpose ticket system.
+The Issues UI is a projection over unresolved durable state rather than a separate general-purpose ticket system. It is reserved for conditions that require a user decision or repair rather than normal library/source differences or acquisition workflow state.
 
-The primary synchronization issue projection is intentionally limited to two user-facing states:
+`Local Only` is a normal Local Library status and is not an issue. A tracked Spotify item that simply lacks a local copy belongs to Staging. Match-review remains an Issue because it requires an identity decision before the local/source relationship is reliable. A previously known local file whose durable file state is `missing`, an invalid local file, and an inaccessible non-playlist source collection also remain Issues. Inaccessible playlists are excluded from the Issues projection.
 
-- `Local Only`: a logical library track has a present local file but no membership in any accessible imported Spotify collection.
-- `Needs Local Copy`: a Spotify source track is included by persistent tracking rules but has no linked present local file. Match-review candidates are a resolution path for this same state rather than a separate source-wide issue category.
+The invalid-file detail exposes an explicit user action to move that file to the platform Trash / Recycle Bin. This action is limited to a durable `invalid` local-file row whose canonical path is inside the configured library root. Because the action is explicitly user initiated, it may trash an `external` file; the managed-only ownership rule continues to apply to automatic cleanup.
 
-Issue matching must use the same persisted collection defaults and per-track overrides as Spotify Sync. Untracked Spotify entries must not become issues merely because they are absent locally.
+Issue matching and Staging eligibility use the same persisted collection defaults and per-track overrides as Spotify Sync. Untracked Spotify entries must not become Issues or Staging work merely because they are absent locally.
 
 Examples:
 
-- local-only track is absent from Spotify source state
-- tracked Spotify track has no present local file
 - tracked source track needs match review
-- acquisition exhausted or failed for tracked desired state
-- Spotify playlist items inaccessible as retained diagnostic state
+- previously known local file is missing
+- local file is invalid or unreadable
+- inaccessible non-playlist Spotify source collection
 - managed cleanup could not move file to trash
 - mirror target write conflict
-- acquired file failed verification
+- acquisition/provider failures and failed acquisition verification remain in Staging rather than becoming Issues
 
 Issues should clear automatically when their underlying state is resolved.
 
@@ -1850,7 +2004,12 @@ Key practices:
 - transactional source updates
 - in-memory matching indexes per sync
 - paginated UI queries
-- virtualized long lists
+- virtualized long desktop track lists with bounded overscan so rendering cost follows the viewport rather than the number of loaded rows
+- offscreen rendering containment for constrained card/list layouts that cannot use fixed-row virtualization
+- reuse already-loaded frontend projections during ordinary navigation; explicit refreshes, mutations, and synchronization remain responsible for invalidating/reloading affected state
+- attach document/window listeners for repeated row controls only while the control is active rather than once per rendered row
+- polling projections must avoid replacing Svelte state when the returned queue/run data is unchanged
+- share resize observation and avoid layout measurement for simple collection-label rows
 - lazy file hashing
 - lazy cover-art loading
 - deduplicated application-data cover-art caching rather than repeated embedded-image decoding during every render
@@ -1868,12 +2027,12 @@ Start conservatively.
 Default:
 
 ```text
-1 active Sockseek acquisition job
+3 active track acquisition chains during bulk Staging / Sync Library work
 ```
 
-The provider interface may support greater concurrency later.
+Bulk acquisition uses a fixed-size worker pool rather than one thread per missing track. Each worker processes one logical track at a time and preserves the normal provider hierarchy, candidate ranking, retry policy, cancellation checks, and per-job staging directory. Single-track acquisition and manual candidate actions remain single-track operations.
 
-A single active job reduces sidecar complexity, network contention, and incorrect parallel duplicate acquisition.
+The three-track default improves throughput for slow remote providers while bounding network pressure, retry amplification, and provider-side load. `list_staging_items` continues to merge progress independently for every active provider job, so simultaneous transfers remain observable per track.
 
 Before starting a job, re-check whether the target library track acquired a valid preferred file since it was queued.
 
@@ -1891,16 +2050,18 @@ For transient HTTP failures:
 
 ### Acquisition
 
-An acquisition job may attempt up to 3 provider acquisitions automatically.
+An acquisition job may attempt up to 3 candidates within a provider automatically. The coordinator traverses enabled providers in configured priority order until one successfully stages the track or all providers have been exhausted.
 
 Each retry must either:
 
 - use a different provider candidate
 - or follow a provider-declared retryable failure
 
+A different fallback candidate may be attempted automatically only when it independently meets the acquisition confidence threshold. If an automatic attempt fails, continue with the next configured provider. If the ordered chain ends on a retryable provider or transfer failure, rerun the complete provider chain with fresh search results up to three total chain attempts using short exponential backoff. If at least one provider identified an automatic-quality match but every automatic transfer attempt across those chain retries ultimately fails, persist the transfer failure as a retryable acquisition failure and do not convert the known match back into manual resolution. Only when no provider identified an automatic-quality match should returned search outputs be persisted as `needsResolution`, grouped by provider priority.
+
 Do not repeatedly download the exact same rejected candidate.
 
-After automatic attempts are exhausted, mark the track failed and surface an issue.
+Retrying failed Staging work, using `Search Again`, or running Sync Library must clear stale candidate state and run a fresh ordered provider search for unresolved tracks. If every provider returns no candidates, keep the track failed and retryable in Staging.
 
 ### Filesystem
 

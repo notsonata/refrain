@@ -1,10 +1,16 @@
-use std::{error::Error, fs, path::PathBuf, sync::Arc};
+use std::{
+    error::Error,
+    fs,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    db::Database, reconciliation::SyncCoordinator, sockseek::SockseekManager,
-    source_sync::SourceRefreshControl, spotify::SpotifyClient,
+    antra::AntraProvider, db::Database, monochrome::MonochromeProvider,
+    playlist_sync::sync_managed_local_playlists, reconciliation::SyncCoordinator,
+    sockseek::SockseekManager, source_sync::SourceRefreshControl, spotify::SpotifyClient,
 };
 
 pub struct AppState {
@@ -13,6 +19,9 @@ pub struct AppState {
     pub spotify: Arc<SpotifyClient>,
     pub source_refresh: Arc<SourceRefreshControl>,
     pub sync: Arc<SyncCoordinator>,
+    pub library_lock: Arc<RwLock<()>>,
+    pub monochrome: Arc<MonochromeProvider>,
+    pub antra: Arc<AntraProvider>,
     pub sockseek: Arc<SockseekManager>,
 }
 
@@ -21,15 +30,18 @@ impl AppState {
         app_data_dir: PathBuf,
         database: Arc<Database>,
         spotify: Arc<SpotifyClient>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, crate::acquisition::ProviderError> {
+        Ok(Self {
             app_data_dir,
             database,
             spotify,
             source_refresh: Arc::new(SourceRefreshControl::default()),
             sync: Arc::new(SyncCoordinator::default()),
+            library_lock: Arc::new(RwLock::new(())),
+            monochrome: Arc::new(MonochromeProvider::new()?),
+            antra: Arc::new(AntraProvider::new()?),
             sockseek: Arc::new(SockseekManager::default()),
-        }
+        })
     }
 }
 
@@ -41,15 +53,18 @@ pub fn initialize(app_data_dir: PathBuf) -> Result<AppState, Box<dyn Error>> {
     initialize_logging(log_dir);
 
     let database = Arc::new(Database::open(app_data_dir.join("refrain.sqlite3"))?);
+    sync_managed_local_playlists(&database)?;
+    let recovered_acquisitions = database.recover_interrupted_acquisition_jobs()?;
     let spotify = Arc::new(SpotifyClient::new()?);
 
     tracing::info!(
         app_data_dir = %app_data_dir.display(),
         database_path = %database.path().display(),
+        recovered_acquisitions,
         "application persistence initialized"
     );
 
-    Ok(AppState::new(app_data_dir, database, spotify))
+    Ok(AppState::new(app_data_dir, database, spotify)?)
 }
 
 fn initialize_logging(log_dir: PathBuf) {

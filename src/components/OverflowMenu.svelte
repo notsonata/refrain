@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy } from 'svelte';
   import type { OverflowMenuItem } from '../lib/menu';
   import Icon from './Icon.svelte';
 
@@ -11,11 +11,46 @@
   let menu: HTMLDivElement;
   let top = 0;
   let left = 0;
+  let listening = false;
 
   const menuWidth = 196;
 
+  function onPointerDown(event: PointerEvent) {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (!trigger.contains(target) && !menu?.contains(target)) close();
+  }
+
+  function onKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Escape') close();
+  }
+
+  function onViewportChange() {
+    close();
+  }
+
+  function startListening() {
+    if (listening) return;
+    listening = true;
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('scroll', onViewportChange, true);
+    window.addEventListener('resize', onViewportChange);
+  }
+
+  function stopListening() {
+    if (!listening) return;
+    listening = false;
+    document.removeEventListener('pointerdown', onPointerDown);
+    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('scroll', onViewportChange, true);
+    window.removeEventListener('resize', onViewportChange);
+  }
+
   function close() {
+    if (!open && !listening) return;
     open = false;
+    stopListening();
   }
 
   function positionMenu() {
@@ -41,6 +76,7 @@
       return;
     }
     open = true;
+    startListening();
     positionMenu();
   }
 
@@ -63,29 +99,7 @@
     run(item);
   }
 
-  onMount(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (!trigger.contains(target) && !menu?.contains(target)) close();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-    };
-    const onViewportChange = () => close();
-
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('scroll', onViewportChange, true);
-    window.addEventListener('resize', onViewportChange);
-
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('scroll', onViewportChange, true);
-      window.removeEventListener('resize', onViewportChange);
-    };
-  });
+  onDestroy(stopListening);
 </script>
 
 {#if items.length > 0}

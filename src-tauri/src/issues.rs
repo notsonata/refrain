@@ -63,6 +63,7 @@ pub(crate) fn get_match_review(
     let Some(source) = database.source_match_track(source_track_id)? else {
         return Ok(None);
     };
+    let source_image_url = database.source_track_image_url(source_track_id)?;
     let library_tracks = database.library_match_tracks()?;
     let existing_link = database.persisted_track_link(source_track_id)?;
     let rejected = database.rejected_library_track_ids(source_track_id)?;
@@ -86,14 +87,14 @@ pub(crate) fn get_match_review(
                 ))
             })?;
         candidates.push(MatchReviewCandidate {
-            track: review_track(track),
+            track: review_track(track, database.library_track_image_url(track.id)?),
             evidence: evidence.clone(),
             files: database.local_files_for_library_track(track.id)?,
         });
     }
 
     Ok(Some(MatchReview {
-        source: review_track(&source),
+        source: review_track(&source, source_image_url),
         outcome: result.outcome,
         selected_library_track_id: result.selected_library_track_id,
         method: result.method,
@@ -117,6 +118,7 @@ fn match_review_issues(database: &Database) -> Result<Vec<IssueRow>, DatabaseErr
         if result.outcome != MatchOutcome::Review {
             continue;
         }
+        let image_url = database.source_track_image_url(source_track_id)?;
         issues.push(IssueRow {
             id: format!("match:{source_track_id}"),
             kind: IssueKind::MatchReview,
@@ -133,12 +135,14 @@ fn match_review_issues(database: &Database) -> Result<Vec<IssueRow>, DatabaseErr
             candidate_count: Some(result.candidates.len()),
             confidence: result.confidence,
             path: None,
+            image_url,
+            artwork_path: None,
         });
     }
     Ok(issues)
 }
 
-fn review_track(track: &MatchTrackDescriptor) -> MatchReviewTrack {
+fn review_track(track: &MatchTrackDescriptor, image_url: Option<String>) -> MatchReviewTrack {
     MatchReviewTrack {
         id: track.id,
         title: track.title.clone(),
@@ -151,6 +155,7 @@ fn review_track(track: &MatchTrackDescriptor) -> MatchReviewTrack {
         explicit: track.explicit,
         version_kind: track.version_kind.clone(),
         version_detail: track.version_detail.clone(),
+        image_url,
     }
 }
 

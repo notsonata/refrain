@@ -60,8 +60,8 @@ It includes:
 - matching Spotify source tracks to logical library tracks
 - associating logical library tracks with physical local files
 - identifying missing, ambiguous, failed, and available tracks
-- acquisition of missing tracks through a modular acquisition provider
-- Sockseek/Soulseek as the initial acquisition provider
+- acquisition of missing tracks through a modular ordered provider chain
+- Monochrome as the default highest-priority lossless provider, with authenticated Antra and Sockseek available as optional ordered providers
 - staging and verification of acquired audio before it enters the library
 - normalization of managed library paths and filenames
 - resolved local playlists
@@ -170,11 +170,11 @@ The user selects the local music-library root from Settings. Activating the Libr
 
 ### Manage Settings
 
-Settings is organized into five working category tabs for General, Sync, Spotify, Library, and Advanced. Appearance controls live in General, while Sockseek/Soulseek acquisition controls live in Sync. The category tabs remain on one horizontal row at supported desktop sizes; changing tabs replaces the settings panel without leaving the Settings workspace, and keyboard users can move between categories with the standard horizontal tab keys.
+Settings is organized into five working category tabs for General, Sync, Spotify, Library, and Advanced. Appearance controls live in General, while acquisition controls live in Sync. Acquisition Settings expose an ordered enabled-provider list: providers can be added, removed while at least one remains, and moved up or down to define search priority. Acquisition enablement and provider-order changes persist immediately without a separate Save action. Health controls are shown for enabled providers, and Sockseek account controls are shown whenever Sockseek is enabled. The category tabs remain on one horizontal row at supported desktop sizes; changing tabs replaces the settings panel without leaving the Settings workspace, and keyboard users can move between categories with the standard horizontal tab keys.
 
 Appearance provides Light, Dark, and System theme choices. The selected theme is stored locally on the device, applied before the main interface mounts, and System follows operating-system light/dark changes while the app is running. Dark mode uses an approximately `#181818` application canvas with distinct elevated, control, hover, and selected surfaces, bright foreground text, and clear dark-theme borders. Filled blue actions use darker action-specific fills so white labels retain strong contrast. On macOS and Windows, the native window appearance is synchronized with Refrain's selected theme and the native material is refreshed after theme changes. The base window remains transparent so the primary navigation sidebar can expose the native Sidebar/Acrylic material. The complete application content pane, including all Settings content and the Settings summary rail, is painted as an opaque themed layer above that base window so native material cannot bleed into content surfaces.
 
-The latest checked Sockseek provider-health result is stored locally so Settings can restore the previously verified version/readiness message after an app restart. The UI identifies restored health as coming from the previous session until the user runs Check Sockseek again.
+The latest checked Monochrome provider-health result is stored locally so Settings can restore the previously verified availability message after an app restart. The UI identifies restored health as coming from the previous session until the user runs Check Monochrome again.
 
 On wide desktop layouts, a compact summary rail keeps Spotify account state, synchronization shortcuts, and local-library status visible while the selected category remains the primary work surface. The rail collapses away when the content area becomes too narrow.
 
@@ -191,9 +191,11 @@ The user can browse:
 
 Repeated occurrences of the same track in a playlist remain visible as repeated entries.
 
-Saved Albums and Playlists use an artwork-first grid browser rather than a permanent collection sidebar. Selecting a card opens that collection's track view, with a clear action to return to the collection grid. Liked Songs remains track-oriented.
+Saved Albums and Playlists use an artwork-first grid browser rather than a permanent collection sidebar. Selecting a card opens that collection's track view, with a clear action to return to the collection grid. Liked Songs remains track-oriented. Right-clicking an album or playlist card exposes a pin toggle. Pinned collections stay at the front of their respective Albums or Playlists grid, persist across restarts, and show their pin state directly on the cover.
 
 The normal Playlists grid contains only accessible playlists. Inaccessible playlists remain available in a collapsed secondary section so they do not compete with collections the user can act on.
+
+Search and filtering in Liked Songs must cover the complete collection rather than only the currently visible page. While a query or filter is active and more source entries remain, the view continues loading pages until the complete imported collection can be evaluated.
 
 ### Browse and Filter the Local Library
 
@@ -201,7 +203,9 @@ The Local workspace is a compact desktop library browser. Each local track row s
 
 Search remains visible on dense library screens. State, metadata, and technical filters belong behind a single compact `Filters` control so the toolbar stays focused on search and primary actions.
 
-The desktop shell keeps the left navigation at a stable 214 px width as the window grows or shrinks. Refrain enforces a 973 × 697 minimum window size; when the remaining workspace becomes narrow, main-content controls reflow, grids reduce columns, and split views stack while dense tables keep their own internal scrolling.
+Local Library search and filtering must cover the complete indexed result set rather than only the currently visible page. While a query or filter is active and more rows remain, the view continues loading pages until the complete current library projection can be evaluated.
+
+The desktop shell keeps the left navigation at a stable 214 px width as the window grows or shrinks. Refrain enforces a 973 × 720 minimum window size; when the remaining workspace becomes narrow, main-content controls reflow, grids reduce columns, and split views stack while dense tables keep their own internal scrolling.
 
 The filter panel may include:
 
@@ -227,22 +231,21 @@ Spotify track views use the same filtering model where the fields are meaningful
 
 Spotify track tables expose the per-song tracking state directly near the track title. Users can toggle one song at a time or select multiple loaded track rows and use one stateful bulk action to include or exclude the selection from tracking. Bulk selection does not alter search or filter state.
 
-The user-facing Issues state has two synchronization discrepancies:
+`Local Only` is a normal Local Library status: the track exists on disk but has no membership in the imported accessible Spotify source state. It remains visible in Local Library metrics and track status, but it is not an Issue.
 
-- `Local Only`: a present local track is absent from the imported accessible Spotify source state.
-- `Needs Local Copy`: a Spotify track selected by collection or per-track tracking rules has no confirmed present local file. Ambiguous matches are handled as a resolution path within this state.
+The Issues workspace is reserved for conditions that need a decision or repair, including ambiguous local↔Spotify matching, a previously known local file becoming missing, invalid local files, and inaccessible source collections other than playlists. Inaccessible playlists remain source diagnostics and do not enter Issues. Invalid local files expose an explicit Move to Trash action that uses the platform Trash / Recycle Bin for files inside the configured library root. Acquisition-specific failures and provider ambiguity are handled in Staging.
 
-Untracked Spotify material that is not downloaded locally is normal browseable source state and is not an issue.
+The Staging workspace contains only tracked Spotify material that still needs a present local copy. A tracked track enters Staging immediately as `Needs Local Copy`, even before an acquisition job exists. Untracked Spotify material that is absent locally is normal browseable source state and does not enter Staging. Non-active Staging rows can be excluded from tracking through the checkbox multi-selection actions. Excluding a Staging track applies exclusions to every linked Spotify source reference for that logical track so it leaves the tracked-only Staging projection. When no tracked material needs acquisition, Staging becomes the detailed synchronization view and shows the current/latest sync phase, timeline, counts, and cancellation state.
 
 ### Scan Files
 
-Scan Files is the lightweight local operation. It indexes the configured local-library root and refreshes Refrain's representation of the files currently on disk. It does not acquire missing Spotify tracks or run the full reconciliation workflow.
+Scan Files is the lightweight local operation. It indexes supported audio under the configured local-library root and also discovers `.m3u` / `.m3u8` playlist files. A previously unknown local playlist file is imported into Local > Playlists, preserving its ordered entries and intentional duplicates when those entries resolve to indexed local audio. Once imported, the persisted Refrain playlist is authoritative so later scans do not overwrite in-app playlist edits from an older file on disk. Scan Files does not acquire missing Spotify tracks or run the full reconciliation workflow.
 
 The Local workspace shows each present local track and, when matched, where it appears on Spotify such as Liked Songs, a saved album, or one or more playlists.
 
 ### Sync Library
 
-Sync Library is the primary end-to-end synchronization action. It first performs the local reconciliation/normalization phase, then refreshes Spotify source state, applies the user's persistent tracking rules, and reconciles the resulting tracked subset. Missing tracked tracks may be queued for acquisition when acquisition is enabled. Untracked Spotify material remains browseable but does not become desired local state.
+Sync Library is the primary end-to-end synchronization action. It first performs the local reconciliation/normalization phase, then refreshes Spotify source state, applies the user's persistent tracking rules, and reconciles the resulting tracked subset. When acquisition is enabled, missing tracked tracks are queued, downloaded, verified, tagged, and imported automatically as part of the same operation. Untracked Spotify material remains browseable but does not become desired local state.
 
 The internal local and Spotify synchronization scopes remain repeatable and independently persisted, but the normal UI presents them as one Sync Library action. Repeating synchronization without relevant source, tracking, or local changes must not create duplicate downloads or duplicate managed files.
 
@@ -258,13 +261,14 @@ When Refrain cannot establish identity confidently:
 
 ### Acquire a Missing Track
 
-1. A missing library track is submitted to the configured acquisition provider.
-2. The provider searches for or obtains a candidate audio file.
-3. The candidate remains outside the canonical library while being evaluated.
-4. Refrain inspects the resulting file and compares it against the requested track.
-5. A verified candidate is normalized and imported.
-6. A clearly incorrect candidate is rejected.
-7. If no suitable candidate can be obtained, the track remains visible as unresolved or failed.
+1. A tracked track without a present local copy appears in Staging as `Needs Local Copy`.
+2. **Sync Library** is a fresh acquisition session. Before the Local phase begins, Refrain abandons every prior acquisition job and provider candidate/error state, removes Refrain-owned acquisition staging artifacts from the previous session, and clears temporary provider outage state. The later Spotify phase then creates new jobs only for tracks that are still tracked and still missing. In Staging, checkbox selection exposes contextual actions for targeted start/retry, cancellation, and recovery processing without a permanent top action bar. A selected failed track also exposes a direct **Retry** action in its inspector; it immediately shows a retrying state and runs the same fresh provider-chain search used by **Search Again**.
+3. Refrain records `Queued`, then `Searching`, while enabled acquisition providers are searched in configured priority order. Bulk Staging and Sync Library acquisition may process up to three missing tracks concurrently; each track keeps its own ordered provider chain, retries, staging directory, progress, and terminal state. For each provider, Refrain scores and orders candidates using provider-neutral title, artist, album, duration, and ISRC evidence. A compatible exact-ISRC candidate may proceed automatically even when the provider returned multiple equivalent exact-ISRC records. Cosmetic title suffix differences do not disqualify an exact-ISRC candidate when the title still shares the same normalized base and artist/duration evidence remains compatible. Equivalent exact-ISRC candidates are ordered by audio quality before confidence, so a higher-resolution lossless candidate is attempted first. If one exact candidate fails with a retryable transfer error, Refrain tries the next ranked compatible exact candidate from that same provider within the normal bounded attempt budget before advancing to the next provider. Other automatic selections require a high confidence score and a meaningful lead over the runner-up. If the current provider does not produce an automatic-quality match, or its automatic acquisition attempts fail, Refrain continues to the next configured provider. If the ordered provider chain ends on a retryable provider or transfer failure, Refrain automatically reruns the complete provider search/acquisition chain up to three total chain attempts with backoff before surfacing `Failed`. A provider that cannot start or reports unavailable does not prevent a lower-priority configured provider from being tried. Providers may temporarily suppress new work after a confirmed service-wide playback outage so a bulk queue can immediately continue through lower-priority providers rather than repeating the same unavailable endpoint for every track.
+4. `Needs Resolution` is for candidate-identity ambiguity, not transport failure. If no configured provider identifies an automatic-quality match, the track pauses as `Needs Resolution` whenever any provider returned candidates. Manual resolution groups candidates by provider in provider-priority order and shows all returned outputs for each provider. Candidate identity includes both provider and provider token. Within the same match confidence, FLAC and other lossless formats are preferred, followed by stronger available audio-quality metadata. For equivalent exact-ISRC Antra candidates, Hi-Res FLAC ranks ahead of CD-quality FLAC, which ranks ahead of FLAC whose quality metadata is unknown even when release metadata gives the lower-quality candidate a slightly higher confidence score. Sockseek rows display provider-reported format, bitrate, sample rate, bit depth, and size when available. Monochrome rows preserve numeric sample-rate and bit-depth metadata when its search response exposes them; when the primary search omits those values, Refrain reads the candidate FLAC STREAMINFO prefix with a bounded range probe and shows the actual kHz/bit depth when that probe succeeds. Legacy `LOSSLESS` candidates are identified as CD-quality 44.1 kHz / 16-bit. After any provider completes a download, Refrain reads the actual staged audio properties and refreshes the selected candidate's format, size, bitrate, sample rate, and bit depth before presenting the downloaded state. If Sockseek has already returned file results but does not report search completion before the bounded wait expires, Refrain preserves those partial findings and includes them with candidates from the other providers instead of discarding them as a timeout. `Add` uses the candidate's provider, `Reject` removes only that provider/token pair, and `Search Again` reruns the ordered chain with fresh provider results. Retrying failed Staging work refreshes the existing row through the current provider chain; starting Sync Library instead discards all previous resolution state and creates a new acquisition session. If Refrain already found an automatic-quality match but its transfer fails after provider fallback is exhausted, acquisition remains `Failed` and retryable rather than asking the user to manually re-select that known match. If every provider returns no candidates, acquisition likewise remains `Failed` for retry.
+5. During an active provider download, Staging shows live byte progress when the active provider reports it. Until byte totals are available, download progress is shown as indeterminate rather than as a synthetic percentage. The selected track's artwork and detailed metadata remain visible in the right-side inspector. Durable provider/job state remains authoritative when live progress is unavailable. Because provider runtime jobs are process-local, any persisted `searching` or `downloading` acquisition found during application startup is classified as an interrupted retryable failure rather than left active indefinitely. Retry can requeue that row; starting Sync Library abandons it with the rest of the previous acquisition session.
+6. Provider output first lands outside the canonical library in Refrain-controlled staging, then normal acquisition flows immediately continue into verification/import instead of waiting for another user action.
+7. Refrain reads the actual file metadata and duration, verifies it against the requested logical track, writes canonical track metadata before import, and embeds linked source artwork when the downloaded file has no embedded cover. Release-level album/ISRC drift is tolerated when decoded title, artist, and duration are exact and there is no warning or incompatibility indicating a different recording version. Automatic acquisitions remain strict when the selected provider candidate itself has a conflicting ISRC. A candidate explicitly chosen from `Needs Resolution` may carry an alternate release ISRC when title, artist, and duration still identify the same recording exactly; live/remix/edit/other incompatible versions remain rejected. Accepted audio is normalized into the canonical library and recorded as managed local audio.
+8. If verification/import cannot complete, the downloaded row remains available for selected recovery processing until the user starts a fresh Sync Library session. Recovery rows are processed independently, so one failure does not block other selected tracks. Starting Sync Library intentionally abandons any unrecovered downloaded rows and reacquires still-missing tracked material from scratch. Once a present local file exists, that track disappears automatically from Staging.
 
 Provider success alone must not imply that a track is synced.
 
@@ -282,9 +286,41 @@ If the user chooses not to keep downloads:
 - Refrain may remove a managed audio file only when no managed collection still references its library track
 - Refrain must not automatically delete an unmanaged pre-existing user file
 
+### Local Playlists and Managed M3U Files
+
+The Local workspace contains two nested views: `Songs` and `Playlists`. The Local and Spotify workspace rows in the sidebar are independently collapsible so their nested destinations can be hidden without changing the active page.
+
+Transient application-wide operation feedback lives in one bounded carousel in the sidebar footer instead of stacking cards or inserting banners into workspace content. The carousel includes library synchronization progress and cancellation, Spotify refresh progress and cancellation, Local Library scan progress/results, and global operation errors. Only one item is shown at a time with previous/next controls and a position count so feedback cannot push sidebar controls off-screen. Selecting an item opens a modal with the complete message. Page-specific validation and contextual error states remain with the page that owns them.
+
+Local Playlists include both user-authored playlists and Spotify-backed mirrors. A user-authored playlist is edited directly in Refrain. Every Spotify playlist or Liked Songs collection with collection-level tracking enabled has one corresponding Local Playlist mirror linked to that source collection. Saved Albums do not create Local Playlist mirrors.
+
+A Spotify-backed Local Playlist follows the source collection's effective tracked membership and artwork when available. Spotify order and intentional duplicate positions are preserved. Per-track exclusions are omitted from the local mirror. The mirror is rebuilt automatically after Spotify refresh, collection/track tracking changes, and Spotify reconciliation so additions, removals, ordering changes, and updated Spotify playlist covers propagate without manual playlist editing.
+
+Spotify-backed Local Playlists are source-managed: their name and membership cannot be renamed, reordered, deleted, or edited directly from Local. Untracking the Spotify playlist or Liked Songs collection removes the derived Local Playlist.
+
+Existing `.m3u` and `.m3u8` files found under the configured local-library root are also imported as Local Playlists during Scan Files. Relative M3U paths are resolved from the playlist file's directory. Comments and extended-M3U metadata lines are ignored for membership resolution, while playlist order and duplicate track entries are preserved.
+
+For user-authored Local Playlists, the user can:
+
+- create, rename, and delete a Local Playlist
+- select one or more tracks in Local > Songs and add them to a Local Playlist
+- add an individual Local track from its row actions
+- preserve intentional duplicate track entries
+- reorder or remove playlist entries without changing the underlying local audio
+
+Playlist membership and ordering persist in SQLite. Refrain automatically maintains a UTF-8 `.m3u8` file for each newly created user playlist and Spotify-backed mirror under `<Library Root>/Playlists/`. The managed filename follows the playlist name and is sanitized for portable filesystem use. Renaming a managed user playlist moves synchronization to the new managed filename and removes the superseded managed file after the replacement succeeds.
+
+Managed playlist files are rewritten automatically after playlist creation, rename, membership changes, reordering, tracked Spotify playlist reconciliation, library-root changes, and application startup. For Spotify-backed mirrors with source artwork, Refrain also downloads a managed image sidecar beside the M3U8 using the same playlist basename when that path is available, such as `Late Nights.m3u8` plus `Late Nights.jpg`. The sidecar follows managed playlist path/name changes, refreshes when Spotify provides a different artwork URL, and avoids overwriting an unrelated pre-existing image by choosing a collision-safe cover filename. There is no manual file picker or Sync action in the Local Playlists UI.
+
+Imported `.m3u` / `.m3u8` files remain linked to their existing user-owned path instead of being silently moved into Refrain's managed `Playlists` directory. In-app edits to an imported playlist still rewrite that linked target automatically.
+
+Before writing, Refrain validates the complete playlist. If any entry no longer resolves to a usable local file, automatic synchronization records the diagnostic on the playlist and leaves any existing destination file unchanged. The playlist edit itself remains persisted. A later automatic synchronization retries after the missing local-copy condition is resolved. Successful synchronization clears the prior error and records the sync time.
+
+M3U output is UTF-8, preserves intentional duplicate entries, includes extended track metadata, and prefers paths relative to the playlist file when they can be represented. Absolute native paths may be used when a relative path cannot be represented, such as across Windows volumes.
+
 ### Export a Playlist
 
-Refrain supports two playlist export modes.
+Source-derived playlist export remains a separate operation from Local Playlist sync. Refrain supports two source playlist export modes.
 
 #### Playlist File Export
 
@@ -297,6 +333,7 @@ Playlist order and intentional duplicate entries must be preserved.
 Exports a portable bundle containing:
 
 - an M3U8 playlist
+- the Spotify playlist cover as `cover.<image extension>` when source artwork exists
 - copies of the audio files needed by the playlist
 
 The playlist inside the bundle must use paths that remain valid when the bundle is moved or extracted elsewhere.
@@ -400,7 +437,7 @@ Refrain may use available filename, path, duration, tags, known mappings, and ot
 
 The acquisition system must be modular.
 
-Sockseek/Soulseek is the initial provider for v1, but core sync behavior must not depend on Sockseek-specific concepts.
+Refrain persists an ordered list of enabled acquisition providers. Monochrome is the default first provider and prefers Monochrome's current public track service for lossless candidate lookup and direct FLAC streaming. If that direct stream fails after its bounded retries, Monochrome may resolve the same recording through the older compatible HTTP API pool and try its lossless manifest before the coordinator advances to the next configured provider. The fallback recording must remain compatible with the requested title, artist, duration, and available ISRC evidence. Antra can be enabled after completing its browser-approved device login and currently searches authenticated Tidal/Qobuz lossless mirrors. Sockseek can also be added anywhere in the ordered chain. Core sync behavior must not depend on provider-private concepts.
 
 Future providers may include other acquisition mechanisms.
 
@@ -416,7 +453,7 @@ Refrain remains responsible for:
 - playlist resolution
 - issue reporting
 
-Tracks that cannot be acquired through the active provider remain visible. They are not silently removed from desired state.
+Tracks that cannot be acquired through the configured provider chain remain visible. They are not silently removed from desired state.
 
 ## Library Normalization
 
@@ -564,7 +601,6 @@ The following are outside the v1 product scope unless explicitly promoted into s
 - music discovery or recommendation features
 - Plex, Jellyfin, Navidrome, or Lidarr integration as a requirement
 - automatic destructive duplicate cleanup of unmanaged files
-- multiple acquisition providers shipping in the initial release
 
 ## Acceptance Criteria
 
@@ -607,6 +643,7 @@ v1.0.0 is complete when:
 - verified files are normalized into the managed library
 - failed or unavailable tracks remain visible
 - playlist order and intentional duplicate entries are preserved
+- the user can create persisted Local Playlists from local-library tracks, preserve duplicate entries and order, and have Refrain automatically maintain their managed M3U8 files without overwriting an existing file when any playlist entry is unavailable
 - resolved playlists can be exported as M3U8 files
 - portable playlist bundles include the playlist and required copied audio
 - the full normalized library and playlists can be mirrored to another mounted filesystem location

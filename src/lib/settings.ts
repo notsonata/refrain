@@ -1,12 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { InvokeFn } from './app-info';
 
+export type AcquisitionProviderId = 'monochrome' | 'antra' | 'sockseek';
+
 export interface AppSettings {
   libraryRoot: string | null;
   keepRemovedManagedFiles: boolean;
   syncOnStartup: boolean;
   syncIntervalMinutes: number | null;
   acquisitionEnabled: boolean;
+  acquisitionProviders: AcquisitionProviderId[];
   spotifyClientId: string | null;
 }
 

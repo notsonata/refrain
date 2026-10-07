@@ -37,6 +37,7 @@ export interface LocalLibraryOverview {
   present: number;
   missing: number;
   invalid: number;
+  localOnly: number;
 }
 
 export interface LibraryTrackFileSummary {

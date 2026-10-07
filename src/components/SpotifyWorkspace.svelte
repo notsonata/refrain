@@ -1,10 +1,22 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
+  import { afterUpdate, onMount } from 'svelte';
   import Icon from './Icon.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
   import TrackList from './TrackList.svelte';
   import type { OverflowMenuItem } from '../lib/menu';
+  import {
+    exportPlaylist,
+    listPlaylistExports,
+    playlistExportErrorMessage,
+    type PlaylistExport,
+    type PlaylistExportMode,
+  } from '../lib/playlist-export';
+  import {
+    pinnedCollectionKey,
+    sortPinnedSpotifyCollectionsFirst,
+  } from '../lib/pinned-collections';
   import type {
     SourceAlbumMetadata,
     SourceCollectionEntryView,
@@ -33,6 +45,7 @@
   export let collectionError: string | null = null;
   export let savedAlbumsLoadingMore = false;
   export let playlistsLoadingMore = false;
+  export let pinnedCollectionKeys: string[] = [];
   export let trackingBusyId: number | null = null;
   export let trackingBulkBusy = false;
   export let detailsSidebarOpen = true;
@@ -60,6 +73,8 @@
         included: boolean | null,
       ) => void | Promise<void>)
     | undefined = undefined;
+  export let onTogglePinnedCollection:
+    ((collection: SourceCollectionSummary) => void) | undefined = undefined;
 
   let collectionSearch = '';
   let collectionState = 'all';
@@ -69,11 +84,20 @@
   let lastCollectionAutoLoadSection: SpotifySection | null = null;
   let collectionActionError: string | null = null;
   let coverDownloading = false;
+  let playlistExports: PlaylistExport[] = [];
+  let playlistExportCollectionId: number | null = null;
+  let playlistExportLoading = false;
+  let playlistExportBusy: PlaylistExportMode | null = null;
+  let playlistExportError: string | null = null;
   let trackListController: TrackListSelectionController | undefined;
   let selectedTrackCount = 0;
   let selectableTrackCount = 0;
   let allShownSelected = false;
   let allSelectedTracksTracked = false;
+  let contextCollection: SourceCollectionSummary | null = null;
+  let contextMenuTop = 0;
+  let contextMenuLeft = 0;
+  const numberFormatter = new Intl.NumberFormat();
   $: trackSelectionItems = buildTrackSelectionMenuItems(
     selectedTrackCount,
     selectableTrackCount,
@@ -89,28 +113,31 @@
     (playlist) => !playlist.isAccessible,
   );
   $: collectionList = section === 'albums' ? savedAlbums : accessiblePlaylists;
-  $: filteredCollections = collectionList.filter((collection) => {
-    const query = collectionSearch.trim().toLocaleLowerCase();
-    if (
-      query &&
-      ![collection.name, ...(collection.albumMetadata?.artists ?? [])].some(
-        (value) => value.toLocaleLowerCase().includes(query),
+  $: filteredCollections = sortPinnedSpotifyCollectionsFirst(
+    collectionList.filter((collection) => {
+      const query = collectionSearch.trim().toLocaleLowerCase();
+      if (
+        query &&
+        ![collection.name, ...(collection.albumMetadata?.artists ?? [])].some(
+          (value) => value.toLocaleLowerCase().includes(query),
+        )
       )
-    )
-      return false;
-    if (
-      collectionState === 'missing' &&
-      collection.localEntryCount >= collection.entryCount
-    )
-      return false;
-    if (
-      collectionState === 'attention' &&
-      collection.attentionEntryCount <= 0 &&
-      collection.isAccessible
-    )
-      return false;
-    return true;
-  });
+        return false;
+      if (
+        collectionState === 'missing' &&
+        collection.localEntryCount >= collection.entryCount
+      )
+        return false;
+      if (
+        collectionState === 'attention' &&
+        collection.attentionEntryCount <= 0 &&
+        collection.isAccessible
+      )
+        return false;
+      return true;
+    }),
+    pinnedCollectionKeys,
+  );
   $: filteredUnavailablePlaylists =
     section === 'playlists' &&
     (collectionState === 'all' || collectionState === 'attention')
@@ -153,6 +180,11 @@
   $: collectionHasMore = collectionLoadedCount < collectionListTotal;
   $: collectionFilterActive =
     collectionSearch.trim() !== '' || collectionState !== 'all';
+  $: collectionHasUnloadedPins = hasUnloadedPinnedCollections(
+    section,
+    collectionList,
+    pinnedCollectionKeys,
+  );
   $: collectionListLoadingMore =
     section === 'albums'
       ? savedAlbumsLoadingMore
@@ -161,7 +193,9 @@
         : false;
   $: if (
     section !== 'liked' &&
-    (collectionLoadAllRequested || collectionFilterActive) &&
+    (collectionLoadAllRequested ||
+      collectionFilterActive ||
+      collectionHasUnloadedPins) &&
     collectionHasMore &&
     !collectionListLoadingMore &&
     (section !== lastCollectionAutoLoadSection ||
@@ -173,7 +207,11 @@
     if (section === 'playlists') onLoadMorePlaylists?.();
   }
   $: if (
-    !(collectionLoadAllRequested || collectionFilterActive) ||
+    !(
+      collectionLoadAllRequested ||
+      collectionFilterActive ||
+      collectionHasUnloadedPins
+    ) ||
     !collectionHasMore
   ) {
     lastCollectionAutoLoadCount = -1;
@@ -188,6 +226,103 @@
     0,
   );
   $: albumDuration = formatAlbumDuration(albumDurationMs);
+
+  afterUpdate(() => {
+    const collectionId =
+      section === 'playlists' && displayedCollection?.kind === 'playlist'
+        ? displayedCollection.id
+        : null;
+    if (collectionId === playlistExportCollectionId) return;
+    playlistExportCollectionId = collectionId;
+    playlistExports = [];
+    playlistExportError = null;
+    playlistExportLoading = false;
+    if (collectionId !== null) void loadPlaylistExportHistory(collectionId);
+  });
+
+  function isCollectionPinned(
+    collection: SourceCollectionSummary,
+    currentPinnedCollectionKeys: string[],
+  ): boolean {
+    if (collection.kind !== 'saved_album' && collection.kind !== 'playlist') {
+      return false;
+    }
+    return currentPinnedCollectionKeys.includes(
+      pinnedCollectionKey({
+        kind: collection.kind,
+        providerCollectionId: collection.providerCollectionId,
+      }),
+    );
+  }
+
+  function hasUnloadedPinnedCollections(
+    currentSection: SpotifySection,
+    loadedCollections: SourceCollectionSummary[],
+    currentPinnedCollectionKeys: string[],
+  ): boolean {
+    if (currentSection === 'liked') return false;
+    const prefix = currentSection === 'albums' ? 'saved_album:' : 'playlist:';
+    const loadedKeys = new Set(loadedCollections.map(pinnedCollectionKey));
+    return currentPinnedCollectionKeys.some(
+      (key) => key.startsWith(prefix) && !loadedKeys.has(key),
+    );
+  }
+
+  function openCollectionContextMenu(
+    event: MouseEvent,
+    collection: SourceCollectionSummary,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const menuWidth = 196;
+    const menuHeight = 42;
+    contextMenuLeft = Math.max(
+      8,
+      Math.min(window.innerWidth - menuWidth - 8, event.clientX),
+    );
+    contextMenuTop = Math.max(
+      8,
+      Math.min(window.innerHeight - menuHeight - 8, event.clientY),
+    );
+    contextCollection = collection;
+  }
+
+  function closeCollectionContextMenu() {
+    contextCollection = null;
+  }
+
+  function toggleContextCollectionPin() {
+    const collection = contextCollection;
+    closeCollectionContextMenu();
+    if (collection) onTogglePinnedCollection?.(collection);
+  }
+
+  onMount(() => {
+    const closeFromPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('.collection-context-menu')
+      ) {
+        return;
+      }
+      closeCollectionContextMenu();
+    };
+    const closeFromKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeCollectionContextMenu();
+    };
+    const closeFromViewport = () => closeCollectionContextMenu();
+    document.addEventListener('pointerdown', closeFromPointer);
+    document.addEventListener('keydown', closeFromKey);
+    document.addEventListener('scroll', closeFromViewport, true);
+    window.addEventListener('resize', closeFromViewport);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromPointer);
+      document.removeEventListener('keydown', closeFromKey);
+      document.removeEventListener('scroll', closeFromViewport, true);
+      window.removeEventListener('resize', closeFromViewport);
+    };
+  });
 
   function collectionStatus(collection: SourceCollectionSummary): string {
     if (collection.trackedEntryCount <= 0) return 'Untracked';
@@ -206,7 +341,7 @@
   }
 
   function formatNumber(value: number): string {
-    return new Intl.NumberFormat().format(value);
+    return numberFormatter.format(value);
   }
 
   function formatAlbumType(value: string | null | undefined): string {
@@ -309,6 +444,74 @@
     }
   }
 
+  async function loadPlaylistExportHistory(collectionId: number) {
+    playlistExportLoading = true;
+    try {
+      const page = await listPlaylistExports(collectionId, 0, 5);
+      if (playlistExportCollectionId === collectionId) {
+        playlistExports = page.items;
+      }
+    } catch (error) {
+      if (playlistExportCollectionId === collectionId) {
+        playlistExportError = playlistExportErrorMessage(error);
+      }
+    } finally {
+      if (playlistExportCollectionId === collectionId) {
+        playlistExportLoading = false;
+      }
+    }
+  }
+
+  async function exportCurrentPlaylist(mode: PlaylistExportMode) {
+    const collection = displayedCollection;
+    if (!collection || section !== 'playlists' || playlistExportBusy !== null) {
+      return;
+    }
+    playlistExportError = null;
+    const extension = mode === 'bundle' ? 'zip' : 'm3u8';
+    const destination = await save({
+      title:
+        mode === 'bundle'
+          ? 'Export portable playlist bundle'
+          : 'Export playlist',
+      defaultPath: `${safeCollectionFilename(collection.name)}.${extension}`,
+      filters: [
+        mode === 'bundle'
+          ? { name: 'ZIP archive', extensions: ['zip'] }
+          : { name: 'M3U8 playlist', extensions: ['m3u8'] },
+      ],
+    });
+    if (!destination) return;
+
+    playlistExportBusy = mode;
+    try {
+      await exportPlaylist(collection.id, mode, destination);
+      await loadPlaylistExportHistory(collection.id);
+    } catch (error) {
+      playlistExportError = playlistExportErrorMessage(error);
+      await loadPlaylistExportHistory(collection.id);
+    } finally {
+      playlistExportBusy = null;
+    }
+  }
+
+  function playlistExportLabel(mode: PlaylistExportMode): string {
+    return mode === 'bundle' ? 'Portable bundle' : 'M3U8';
+  }
+
+  function playlistExportFileName(destination: string): string {
+    return destination.split(/[\\/]/).pop() || destination;
+  }
+
+  function formatExportTime(timestamp: number): string {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(timestamp));
+  }
+
   async function copyText(value: string) {
     await navigator.clipboard.writeText(value);
   }
@@ -341,6 +544,23 @@
         action: downloadCollectionCover,
         disabled: coverDownloading,
       });
+    }
+    if (section === 'playlists' && displayedCollection.kind === 'playlist') {
+      items.push(
+        {
+          label: 'Export M3U8',
+          icon: 'playlist',
+          action: () => exportCurrentPlaylist('m3u8'),
+          disabled: playlistExportBusy !== null,
+          separatorBefore: items.length > 0,
+        },
+        {
+          label: 'Export Portable Bundle',
+          icon: 'download',
+          action: () => exportCurrentPlaylist('bundle'),
+          disabled: playlistExportBusy !== null,
+        },
+      );
     }
 
     return items;
@@ -668,6 +888,70 @@
           {/if}
         </section>
 
+        {#if section === 'playlists'}
+          <section class="album-inspector-section playlist-export-section">
+            <div class="album-inspector-heading">
+              <div>
+                <h2 class="album-inspector-title">Exports</h2>
+                <p class="playlist-export-caption">
+                  Immutable playlist snapshots
+                </p>
+              </div>
+            </div>
+            <div class="playlist-export-actions">
+              <button
+                type="button"
+                class="btn"
+                disabled={playlistExportBusy !== null}
+                onclick={() => exportCurrentPlaylist('m3u8')}
+              >
+                <Icon name="playlist" size={13} />
+                {playlistExportBusy === 'm3u8' ? 'Exporting…' : 'M3U8'}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                disabled={playlistExportBusy !== null}
+                onclick={() => exportCurrentPlaylist('bundle')}
+              >
+                <Icon name="download" size={13} />
+                {playlistExportBusy === 'bundle' ? 'Exporting…' : 'Bundle'}
+              </button>
+            </div>
+            {#if playlistExportError}
+              <p class="album-action-error playlist-export-error">
+                {playlistExportError}
+              </p>
+            {/if}
+            {#if playlistExportLoading && playlistExports.length === 0}
+              <p class="playlist-export-empty">Loading export history…</p>
+            {:else if playlistExports.length === 0}
+              <p class="playlist-export-empty">No exports yet.</p>
+            {:else}
+              <div class="playlist-export-history">
+                {#each playlistExports as exportRun (exportRun.id)}
+                  <div class="playlist-export-history-row">
+                    <div class="playlist-export-history-main">
+                      <strong>{playlistExportLabel(exportRun.mode)}</strong>
+                      <span title={exportRun.destination}
+                        >{playlistExportFileName(exportRun.destination)}</span
+                      >
+                    </div>
+                    <div class="playlist-export-history-meta">
+                      <span>{formatExportTime(exportRun.createdAt)}</span>
+                      <span
+                        class:success={exportRun.status === 'succeeded'}
+                        class:attention={exportRun.status === 'failed'}
+                        >{exportRun.status}</span
+                      >
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </section>
+        {/if}
+
         <section class="album-inspector-section album-cover-section">
           <div class="album-cover-panel">
             {#if displayedCollection.imageUrl}
@@ -854,7 +1138,12 @@
           {#if collectionState !== 'all'}
             <span class="filter-count">1</span>
           {/if}
-          <Icon name="chevron-down" size={13} />
+          <span
+            class="disclosure-chevron"
+            class:expanded={collectionFiltersOpen}
+          >
+            <Icon name="chevron-right" size={13} />
+          </span>
         </button>
       </div>
 
@@ -906,6 +1195,8 @@
                 <button
                   type="button"
                   class="collection-card"
+                  oncontextmenu={(event) =>
+                    openCollectionContextMenu(event, collection)}
                   onclick={() =>
                     section === 'albums'
                       ? onSelectSavedAlbum?.(collection)
@@ -921,6 +1212,11 @@
                       >
                         {collection.name.slice(0, 1).toUpperCase()}
                       </div>
+                    {/if}
+                    {#if isCollectionPinned(collection, pinnedCollectionKeys)}
+                      <span class="collection-pin-badge" aria-label="Pinned">
+                        <Icon name="pin" size={12} />
+                      </span>
                     {/if}
                   </div>
                   <p class="collection-name">{collection.name}</p>
@@ -997,3 +1293,33 @@
     {/if}
   {/if}
 </div>
+
+{#if contextCollection}
+  <div
+    class="overflow-menu collection-context-menu"
+    role="menu"
+    tabindex="-1"
+    aria-label={`${contextCollection.name} actions`}
+    style={`top:${contextMenuTop}px; left:${contextMenuLeft}px;`}
+    oncontextmenu={(event) => event.preventDefault()}
+  >
+    <button
+      type="button"
+      class="overflow-menu-item"
+      role="menuitem"
+      onclick={toggleContextCollectionPin}
+    >
+      <Icon
+        name={isCollectionPinned(contextCollection, pinnedCollectionKeys)
+          ? 'pin-off'
+          : 'pin'}
+        size={14}
+      />
+      <span
+        >{isCollectionPinned(contextCollection, pinnedCollectionKeys)
+          ? 'Unpin from top'
+          : 'Pin to top'}</span
+      >
+    </button>
+  </div>
+{/if}

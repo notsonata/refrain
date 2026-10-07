@@ -248,7 +248,7 @@ Recommended reference canvas:
 - height: 900 to 960 px
 - aspect ratio: approximately 16:10
 
-The current approved concepts use a large desktop window rather than a compact floating utility. The default application window may remain 1100 × 720. The minimum window size is 973 × 697. The UI must continue to reflow below the default size rather than relying on the minimum dimensions to preserve the desktop composition. The same content geometry should be viable on macOS, Windows, and mainstream Linux desktop environments.
+The current approved concepts use a large desktop window rather than a compact floating utility. The default application window may remain 1100 × 780. The minimum window size is 973 × 720. The UI must continue to reflow below the default size rather than relying on the minimum dimensions to preserve the desktop composition. The same content geometry should be viable on macOS, Windows, and mainstream Linux desktop environments.
 
 ## 4.2 Window frame and platform chrome
 
@@ -1954,7 +1954,7 @@ At narrower widths:
 6. truncate secondary metadata
 7. keep wide data tables internally scrollable instead of forcing the application window wider
 
-Keep the application minimum size at 973 × 697. Responsive behavior still belongs to the content area, and these minimum dimensions should only prevent the workspace from becoming impractically small.
+Keep the application minimum size at 973 × 720. Responsive behavior still belongs to the content area, and these minimum dimensions should only prevent the workspace from becoming impractically small.
 
 ---
 

@@ -3437,6 +3437,7 @@ dependencies = [
  "getrandom 0.4.3",
  "keyring",
  "lofty",
+ "objc2-foundation",
  "open",
  "reqwest",
  "rusqlite",
@@ -3456,6 +3457,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "walkdir",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

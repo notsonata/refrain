@@ -4,7 +4,6 @@ use std::{
     fmt, fs,
     io::{self, Read},
     path::{Component, Path, PathBuf},
-    process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -148,6 +147,49 @@ pub(crate) fn normalize_resolved_files(
     }
 
     Ok(summary)
+}
+
+pub(crate) fn move_acquired_file_to_library(
+    database: &Database,
+    library_root: &Path,
+    library_track_id: i64,
+    source: &Path,
+    extension: &str,
+) -> Result<PathBuf, NormalizationError> {
+    let root = canonicalize(library_root, "resolve library root")?;
+    let candidate = database
+        .normalization_candidate_for_track(library_track_id)?
+        .ok_or_else(|| {
+            NormalizationError::InvalidState(format!(
+                "library track {library_track_id} was not found for acquisition import"
+            ))
+        })?;
+    let extension = sanitize_extension(extension);
+    if extension.is_empty() {
+        return Err(NormalizationError::InvalidState(
+            "acquired file has no usable extension".into(),
+        ));
+    }
+    let relative = canonical_relative_path(&candidate, &extension);
+    validate_relative_path(&relative)?;
+    let base_target = root.join(relative);
+    validate_destination_parent(&root, &base_target)?;
+    let occupied = database
+        .local_files_snapshot()?
+        .into_iter()
+        .map(|file| (portable_path_key(Path::new(&file.path)), file.id))
+        .collect::<HashMap<_, _>>();
+    let target = resolve_collision_target(&base_target, source, 0, library_track_id, &occupied)?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|source| NormalizationError::Io {
+            operation: "create acquisition import directory",
+            path: parent.to_path_buf(),
+            source,
+        })?;
+        validate_destination_parent(&root, &target)?;
+    }
+    move_file(source, &target)?;
+    Ok(target)
 }
 
 fn canonical_relative_path(candidate: &NormalizationCandidate, extension: &str) -> PathBuf {
@@ -440,7 +482,7 @@ impl FileOperations for StdFileOperations {
     }
 }
 
-fn move_file(source: &Path, target: &Path) -> Result<(), NormalizationError> {
+pub(crate) fn move_file(source: &Path, target: &Path) -> Result<(), NormalizationError> {
     move_file_with(&StdFileOperations, source, target)
 }
 
@@ -584,18 +626,51 @@ pub(crate) fn trash_managed_local_file(
     Ok(())
 }
 
-fn platform_trash(path: &Path) -> Result<(), NormalizationError> {
-    #[cfg(target_os = "macos")]
-    let status = Command::new("osascript")
-        .arg("-e")
-        .arg(
-            "on run argv\n tell application \"Finder\" to delete POSIX file (item 1 of argv)\nend run",
-        )
-        .arg(path)
-        .status();
+pub(crate) fn trash_invalid_local_file(
+    database: &Database,
+    library_root: &Path,
+    local_file_id: i64,
+) -> Result<(), NormalizationError> {
+    let file = database.local_file(local_file_id)?.ok_or_else(|| {
+        NormalizationError::InvalidState(format!("local file {local_file_id} was not found"))
+    })?;
+    if file.state != "invalid" {
+        return Err(NormalizationError::InvalidState(
+            "only invalid local files can be moved to Trash from Issues".into(),
+        ));
+    }
+    let root = canonicalize(library_root, "resolve library root")?;
+    let path = canonicalize(Path::new(&file.path), "resolve invalid file")?;
+    ensure_path_inside_root(&root, &path, "invalid file")?;
+    platform_trash(&path)?;
+    database.mark_local_files_missing(&[local_file_id])?;
+    Ok(())
+}
 
-    #[cfg(target_os = "windows")]
-    let status = Command::new("powershell")
+#[cfg(target_os = "macos")]
+fn platform_trash(path: &Path) -> Result<(), NormalizationError> {
+    use objc2_foundation::{NSFileManager, NSURL};
+
+    let url = NSURL::from_file_path(path).ok_or_else(|| {
+        NormalizationError::InvalidState(format!(
+            "could not create a macOS file URL for {}",
+            path.display()
+        ))
+    })?;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|source| {
+            NormalizationError::InvalidState(format!(
+                "failed to move {} to Trash: {}",
+                path.display(),
+                *source
+            ))
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn platform_trash(path: &Path) -> Result<(), NormalizationError> {
+    let status = std::process::Command::new("powershell")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -605,21 +680,37 @@ fn platform_trash(path: &Path) -> Result<(), NormalizationError> {
         .arg(path)
         .status();
 
-    #[cfg(target_os = "linux")]
-    let status = Command::new("gio")
+    finish_platform_trash(path, status)
+}
+
+#[cfg(target_os = "linux")]
+fn platform_trash(path: &Path) -> Result<(), NormalizationError> {
+    let status = std::process::Command::new("gio")
         .arg("trash")
         .arg("--")
         .arg(path)
         .status();
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    finish_platform_trash(path, status)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn platform_trash(path: &Path) -> Result<(), NormalizationError> {
     let status: io::Result<std::process::ExitStatus> = Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "platform Trash integration is unavailable",
     ));
 
+    finish_platform_trash(path, status)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn finish_platform_trash(
+    path: &Path,
+    status: io::Result<std::process::ExitStatus>,
+) -> Result<(), NormalizationError> {
     let status = status.map_err(|source| NormalizationError::Io {
-        operation: "move managed file to Trash",
+        operation: "move file to Trash",
         path: path.to_path_buf(),
         source,
     })?;
@@ -1021,5 +1112,77 @@ mod tests {
             PathBuf::from(file.path),
             canonical_root.join("Artist/Album (2024)/01 - Track.flac")
         );
+    }
+
+    #[test]
+    fn issue_trash_refuses_non_invalid_local_files() {
+        let directory = TestDir::new("trash-valid-guard");
+        let database = Database::open(directory.0.join("refrain.sqlite3")).unwrap();
+        let library_root = directory.0.join("Music");
+        fs::create_dir_all(&library_root).unwrap();
+        let file_path = library_root.join("valid.flac");
+        fs::write(&file_path, b"audio").unwrap();
+        let local_file_id = database
+            .insert_local_file(&LocalFileWrite {
+                path: file_path.to_string_lossy().into_owned(),
+                state: "present".into(),
+                format: Some("flac".into()),
+                file_size: 5,
+                modified_at: 1,
+                duration_ms: None,
+                bitrate: None,
+                sample_rate: None,
+                channels: None,
+                content_hash: None,
+                tag_title: None,
+                tag_artists: Vec::new(),
+                tag_album: None,
+                tag_year: None,
+                tag_isrc: None,
+                artwork_path: None,
+                artwork_mime: None,
+                scan_error: None,
+            })
+            .unwrap();
+
+        let error = trash_invalid_local_file(&database, &library_root, local_file_id).unwrap_err();
+        assert!(error.to_string().contains("only invalid local files"));
+        assert!(file_path.exists());
+    }
+
+    #[test]
+    fn issue_trash_refuses_invalid_files_outside_library_root() {
+        let directory = TestDir::new("trash-boundary-guard");
+        let database = Database::open(directory.0.join("refrain.sqlite3")).unwrap();
+        let library_root = directory.0.join("Music");
+        fs::create_dir_all(&library_root).unwrap();
+        let file_path = directory.0.join("outside.flac");
+        fs::write(&file_path, b"broken").unwrap();
+        let local_file_id = database
+            .insert_local_file(&LocalFileWrite {
+                path: file_path.to_string_lossy().into_owned(),
+                state: "invalid".into(),
+                format: Some("flac".into()),
+                file_size: 6,
+                modified_at: 1,
+                duration_ms: None,
+                bitrate: None,
+                sample_rate: None,
+                channels: None,
+                content_hash: None,
+                tag_title: None,
+                tag_artists: Vec::new(),
+                tag_album: None,
+                tag_year: None,
+                tag_isrc: None,
+                artwork_path: None,
+                artwork_mime: None,
+                scan_error: Some("Unreadable audio".into()),
+            })
+            .unwrap();
+
+        let error = trash_invalid_local_file(&database, &library_root, local_file_id).unwrap_err();
+        assert!(matches!(error, NormalizationError::UnsafePath(_)));
+        assert!(file_path.exists());
     }
 }

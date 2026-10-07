@@ -18,6 +18,7 @@ const overview: LocalLibraryOverview = {
   present: 2,
   missing: 1,
   invalid: 0,
+  localOnly: 1,
 };
 
 const page: LocalFilePage = {

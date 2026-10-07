@@ -173,6 +173,7 @@ impl Database {
                 present: 0,
                 missing: 0,
                 invalid: 0,
+                local_only: 0,
             };
             let mut statement =
                 connection.prepare("SELECT state, COUNT(*) FROM local_files GROUP BY state")?;
@@ -189,6 +190,28 @@ impl Database {
                     _ => {}
                 }
             }
+            overview.local_only = connection.query_row(
+                "SELECT COUNT(*)
+                 FROM library_tracks AS track
+                 WHERE EXISTS (
+                    SELECT 1 FROM local_files AS file
+                    WHERE file.library_track_id = track.id
+                      AND file.state = 'present'
+                 )
+                   AND NOT EXISTS (
+                    SELECT 1
+                    FROM track_links AS link
+                    INNER JOIN collection_entries AS entry
+                       ON entry.source_track_id = link.source_track_id
+                    INNER JOIN source_collections AS collection
+                       ON collection.id = entry.collection_id
+                    WHERE link.library_track_id = track.id
+                      AND collection.is_accessible = 1
+                      AND entry.item_type = 'track'
+                 )",
+                [],
+                |row| row.get::<_, i64>(0),
+            )? as usize;
             Ok(overview)
         })
     }
@@ -230,6 +253,65 @@ impl Database {
             )?;
             Ok(connection.last_insert_rowid())
         })
+    }
+
+    pub(crate) fn insert_managed_local_file_for_track(
+        &self,
+        library_track_id: i64,
+        value: &LocalFileWrite,
+    ) -> Result<i64, DatabaseError> {
+        if value.state != "present" {
+            return Err(DatabaseError::InvalidState(
+                "only a verified present file can be imported as managed audio".into(),
+            ));
+        }
+        let mut connection = self.lock_connection()?;
+        let transaction = connection.transaction()?;
+        let now = now_ms();
+        let artists_json = serde_json::to_string(&value.tag_artists)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        transaction.execute(
+            "UPDATE local_files
+             SET is_preferred = 0, updated_at = ?1
+             WHERE library_track_id = ?2",
+            params![now, library_track_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO local_files (
+                library_track_id, path, ownership, is_preferred, state, format, file_size,
+                modified_at, duration_ms, bitrate, sample_rate, channels, content_hash,
+                tag_title, tag_artists_json, tag_album, tag_year, tag_isrc, artwork_path,
+                artwork_mime, scan_error, created_at, updated_at
+             ) VALUES (
+                ?1, ?2, 'managed', 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20
+             )",
+            params![
+                library_track_id,
+                value.path,
+                value.state,
+                value.format,
+                value.file_size,
+                value.modified_at,
+                value.duration_ms,
+                value.bitrate,
+                value.sample_rate,
+                value.channels,
+                value.content_hash,
+                value.tag_title,
+                artists_json,
+                value.tag_album,
+                value.tag_year,
+                value.tag_isrc,
+                value.artwork_path,
+                value.artwork_mime,
+                value.scan_error,
+                now,
+            ],
+        )?;
+        let id = transaction.last_insert_rowid();
+        transaction.commit()?;
+        Ok(id)
     }
 
     pub(crate) fn update_local_file_scan(
@@ -572,5 +654,34 @@ mod tests {
                 .unwrap()
                 .is_preferred
         );
+    }
+
+    #[test]
+    fn overview_counts_present_tracks_without_spotify_membership_as_local_only() {
+        let path = TestDatabasePath::new();
+        let database = Database::open(path.0.clone()).unwrap();
+        let connection = database.lock_connection().unwrap();
+        let now = now_ms();
+        connection
+            .execute(
+                "INSERT INTO library_tracks (
+                    title, normalized_title, artists_json, normalized_artists, created_at, updated_at
+                 ) VALUES ('Local Track', 'local track', '[\"Artist\"]', 'artist', ?1, ?1)",
+                [now],
+            )
+            .unwrap();
+        let library_track_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO local_files (
+                    library_track_id, path, ownership, state, file_size, modified_at, created_at, updated_at
+                 ) VALUES (?1, '/music/local.flac', 'external', 'present', 100, 1, ?2, ?2)",
+                params![library_track_id, now],
+            )
+            .unwrap();
+        drop(connection);
+
+        let overview = database.local_library_overview().unwrap();
+        assert_eq!(overview.local_only, 1);
     }
 }

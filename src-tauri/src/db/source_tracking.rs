@@ -110,6 +110,35 @@ impl Database {
         Ok(())
     }
 
+    pub fn exclude_library_track_from_tracking(
+        &self,
+        library_track_id: i64,
+    ) -> Result<(), DatabaseError> {
+        let updated_at = now_ms();
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO source_track_sync_overrides (
+                    collection_id, source_track_id, included, updated_at
+                 )
+                 SELECT DISTINCT entry.collection_id, entry.source_track_id, 0, ?2
+                 FROM track_links AS link
+                 INNER JOIN collection_entries AS entry
+                    ON entry.source_track_id = link.source_track_id
+                 INNER JOIN source_collections AS collection
+                    ON collection.id = entry.collection_id
+                 WHERE link.library_track_id = ?1
+                   AND collection.is_accessible = 1
+                   AND entry.item_type = 'track'
+                   AND entry.source_track_id IS NOT NULL
+                 ON CONFLICT(collection_id, source_track_id) DO UPDATE SET
+                    included = 0,
+                    updated_at = excluded.updated_at",
+                params![library_track_id, updated_at],
+            )?;
+            Ok(())
+        })
+    }
+
     pub(crate) fn tracked_source_track_ids(&self) -> Result<Vec<i64>, DatabaseError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(

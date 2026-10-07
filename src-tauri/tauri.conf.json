@@ -15,9 +15,9 @@
         "label": "main",
         "title": "Refrain",
         "width": 1100,
-        "height": 720,
+        "height": 780,
         "minWidth": 973,
-        "minHeight": 697,
+        "minHeight": 720,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "devtools": false

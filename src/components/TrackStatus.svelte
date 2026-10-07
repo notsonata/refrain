@@ -7,7 +7,7 @@
 <span class="state-text">
   {#if status === 'local-spotify'}
     <span class="state-dot success"></span>
-  {:else if status === 'local-only'}
+  {:else if status === 'local-only' || status === 'needs-local-copy'}
     <span class="state-dot warning"></span>
   {:else}
     <span class="state-dot info"></span>

@@ -1,5 +1,14 @@
 export type OverflowMenuIcon =
-  'check' | 'close' | 'copy' | 'download' | 'folder' | 'link' | 'refresh';
+  | 'check'
+  | 'close'
+  | 'copy'
+  | 'download'
+  | 'folder'
+  | 'link'
+  | 'refresh'
+  | 'sort-asc'
+  | 'sort-desc'
+  | 'playlist';
 
 export interface OverflowMenuItem {
   label: string;

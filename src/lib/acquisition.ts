@@ -2,13 +2,23 @@ import { invoke } from '@tauri-apps/api/core';
 import type { InvokeFn } from './app-info';
 
 export interface AcquisitionCandidate {
+  provider: string | null;
   providerToken: string;
+  source: string | null;
+  fileName: string | null;
   title: string | null;
   artists: string[];
   album: string | null;
   durationMs: number | null;
   format: string | null;
   sizeBytes: number | null;
+  bitrateKbps?: number | null;
+  sampleRateHz?: number | null;
+  bitDepth?: number | null;
+  confidence?: number | null;
+  isrc?: string | null;
+  recordingId?: string | null;
+  releaseId?: string | null;
 }
 
 export interface AcquisitionJob {

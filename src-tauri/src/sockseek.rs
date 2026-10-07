@@ -5,7 +5,7 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -15,7 +15,10 @@ use std::{
 #[cfg(unix)]
 use std::io::Write;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::{
+    StatusCode,
+    blocking::{Client, Response},
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tauri::AppHandle;
@@ -38,7 +41,7 @@ use crate::{
 pub const SOCKSEEK_VERSION: &str = "3.0.5";
 const SOCKSEEK_PROVIDER_ID: &str = "sockseek";
 const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(12);
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(90);
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const SEARCH_POLL_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Debug)]
@@ -70,6 +73,17 @@ impl From<std::io::Error> for SockseekError {
 impl From<ProviderError> for SockseekError {
     fn from(error: ProviderError) -> Self {
         Self::Provider(error)
+    }
+}
+
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, name: &'static str) -> MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(mutex = name, "recovering poisoned Sockseek mutex");
+            mutex.clear_poison();
+            poisoned.into_inner()
+        }
     }
 }
 
@@ -136,7 +150,7 @@ impl SockseekManager {
         app: &AppHandle,
         app_data_dir: &Path,
     ) -> Result<Arc<SockseekProvider>, SockseekError> {
-        let mut process = self.process.lock().unwrap();
+        let mut process = lock_or_recover(&self.process, "manager process");
         if let Some(active) = process.as_ref()
             && active.provider.compatible_daemon().is_ok()
         {
@@ -165,17 +179,33 @@ impl SockseekManager {
     }
 
     pub fn shutdown(&self) {
-        if let Some(process) = self.process.lock().unwrap().take() {
+        if let Some(process) = lock_or_recover(&self.process, "manager process").take() {
             stop_process(process);
         }
+    }
+
+    pub fn progress_for_job(&self, provider_job_id: &str) -> Option<(i64, i64)> {
+        let process = lock_or_recover(&self.process, "manager process");
+        let active = process.as_ref()?;
+        active.provider.progress_for_job(provider_job_id)
+    }
+
+    pub fn cancel_active_job(&self, provider_job_id: &str) -> Result<(), SockseekError> {
+        let process = lock_or_recover(&self.process, "manager process");
+        if let Some(active) = process.as_ref() {
+            active.provider.cancel(provider_job_id)?;
+        }
+        Ok(())
     }
 }
 
 impl Drop for SockseekManager {
     fn drop(&mut self) {
-        if let Ok(process) = self.process.get_mut()
-            && let Some(process) = process.take()
-        {
+        let process = self
+            .process
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(process) = process.take() {
             stop_process(process);
         }
     }
@@ -205,15 +235,18 @@ fn start_sidecar(
     app_data_dir: &Path,
     credentials: &SoulseekCredentials,
 ) -> Result<SockseekProcess, SockseekError> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))?;
-    let port = listener.local_addr()?.port();
-    drop(listener);
+    let api_listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let port = api_listener.local_addr()?.port();
+    let soulseek_listener = TcpListener::bind(("0.0.0.0", 0))?;
+    let soulseek_port = soulseek_listener.local_addr()?.port();
+    drop(api_listener);
+    drop(soulseek_listener);
 
     let runtime_dir = app_data_dir.join("runtime").join("sockseek");
     fs::create_dir_all(&runtime_dir)?;
     restrict_directory(&runtime_dir)?;
     let config_path = runtime_dir.join(format!("sockseek-{port}.conf"));
-    write_runtime_config(&config_path, app_data_dir, credentials)?;
+    write_runtime_config(&config_path, app_data_dir, credentials, soulseek_port)?;
 
     let sidecar = app
         .shell()
@@ -300,14 +333,16 @@ fn write_runtime_config(
     path: &Path,
     app_data_dir: &Path,
     credentials: &SoulseekCredentials,
+    soulseek_port: u16,
 ) -> Result<(), SockseekError> {
     let output_dir = app_data_dir.join("runtime").join("acquisition");
     fs::create_dir_all(&output_dir)?;
     let content = format!(
-        "username = {}\npassword = {}\noutput-dir = {}\n",
+        "username = {}\npassword = {}\noutput-dir = {}\nlisten-port = {}\npref-format = flac,alac,wav\n",
         credentials.username,
         credentials.password,
-        output_dir.display()
+        output_dir.display(),
+        soulseek_port
     );
 
     #[cfg(unix)]
@@ -372,23 +407,30 @@ impl EventWake {
                 total_bytes = progress.total_bytes,
                 "Sockseek download progress"
             );
-            self.progress
-                .lock()
-                .unwrap()
+            lock_or_recover(&self.progress, "event progress")
                 .insert(progress.job_id.clone(), progress);
         }
-        let mut generation = self.generation.lock().unwrap();
+        let mut generation = lock_or_recover(&self.generation, "event generation");
         *generation = generation.wrapping_add(1);
         self.changed.notify_all();
     }
 
     fn wait(&self, timeout: Duration) {
-        let generation = self.generation.lock().unwrap();
+        let generation = lock_or_recover(&self.generation, "event generation");
         let observed = *generation;
-        let _guard = self
+        let _guard = match self
             .changed
             .wait_timeout_while(generation, timeout, |current| *current == observed)
-            .unwrap();
+        {
+            Ok(result) => result,
+            Err(poisoned) => {
+                tracing::warn!(
+                    mutex = "event generation",
+                    "recovering poisoned Sockseek mutex"
+                );
+                poisoned.into_inner()
+            }
+        };
     }
 }
 
@@ -578,6 +620,22 @@ impl SockseekProvider {
         decode_response(response)
     }
 
+    fn get_optional_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Option<T>, ProviderError> {
+        let response = self
+            .http
+            .get(format!("{}{path}", self.base_url))
+            .send()
+            .map_err(provider_transport_error)?;
+        if is_optional_not_found(response.status()) {
+            Ok(None)
+        } else {
+            decode_response(response).map(Some)
+        }
+    }
+
     fn post_json<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -592,49 +650,121 @@ impl SockseekProvider {
         decode_response(response)
     }
 
+    fn post_optional_json<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<Option<T>, ProviderError> {
+        let response = self
+            .http
+            .post(format!("{}{path}", self.base_url))
+            .json(body)
+            .send()
+            .map_err(provider_transport_error)?;
+        if is_optional_not_found(response.status()) {
+            Ok(None)
+        } else {
+            decode_response(response).map(Some)
+        }
+    }
+
     fn post_empty(&self, path: &str) -> Result<(), ProviderError> {
         let response = self
             .http
             .post(format!("{}{path}", self.base_url))
             .send()
             .map_err(provider_transport_error)?;
-        if response.status().is_success() {
+        if response.status().is_success() || is_optional_not_found(response.status()) {
             Ok(())
         } else {
             Err(provider_http_error(response))
         }
     }
 
-    fn wait_for_search(&self, job_id: &str) -> Result<FileResultSnapshot, ProviderError> {
+    fn wait_for_search(
+        &self,
+        job_id: &str,
+        initial_restart_count: i64,
+    ) -> Result<FileResultSnapshot, ProviderError> {
         let deadline = Instant::now() + SEARCH_TIMEOUT;
+        let mut best_partial_snapshot: Option<FileResultSnapshot> = None;
         loop {
-            let snapshot: FileResultSnapshot =
-                self.get_json(&format!("/api/jobs/{job_id}/results/files"))?;
-            if snapshot.is_complete {
-                return Ok(snapshot);
+            let snapshot: Option<FileResultSnapshot> =
+                self.get_optional_json(&format!("/api/jobs/{job_id}/results/files"))?;
+            if snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.is_complete)
+            {
+                return Ok(snapshot.expect("completed snapshot should exist"));
+            }
+            if let Some(current) = snapshot.as_ref()
+                && !current.items.is_empty()
+                && best_partial_snapshot
+                    .as_ref()
+                    .is_none_or(|best| current.items.len() >= best.items.len())
+            {
+                best_partial_snapshot = Some(current.clone());
             }
 
-            let detail: JobDetail = self.get_json(&format!("/api/jobs/{job_id}"))?;
-            if is_terminal(&detail.summary.lifecycle_state) {
+            let detail: Option<JobDetail> =
+                self.get_optional_json(&format!("/api/jobs/{job_id}"))?;
+            if let Some(ref detail) = detail
+                && is_terminal(&detail.summary.lifecycle_state)
+            {
                 return match normalized(&detail.summary.terminal_outcome).as_str() {
-                    "succeeded" => Ok(snapshot),
+                    "succeeded" => snapshot
+                        .filter(|snapshot| !snapshot.items.is_empty())
+                        .or(best_partial_snapshot)
+                        .ok_or_else(|| {
+                            ProviderError::new(
+                                "searchResultsUnavailable",
+                                "Sockseek completed the search before its result snapshot became available. Retry the search.",
+                                true,
+                            )
+                        }),
                     "cancelled" => Err(ProviderError::new(
                         "searchCancelled",
                         "Sockseek search was cancelled.",
                         true,
                     )),
-                    _ => Err(job_failure(&detail.summary, "Sockseek search failed.")),
+                    _ => best_partial_snapshot
+                        .ok_or_else(|| job_failure(&detail.summary, "Sockseek search failed.")),
                 };
             }
+            if snapshot.is_none() && detail.is_none() {
+                let status: ServerStatus = self.get_json("/api/server/status")?;
+                if let Some(error) = search_interrupted_by_restart(initial_restart_count, &status) {
+                    return Err(error);
+                }
+            }
             if Instant::now() >= deadline {
-                return Err(ProviderError::new(
-                    "searchTimeout",
-                    "Sockseek search did not finish in time.",
-                    true,
-                ));
+                if let Some(snapshot) = best_partial_snapshot {
+                    tracing::warn!(
+                        job_id,
+                        candidates = snapshot.items.len(),
+                        "Sockseek search exceeded its deadline; using partial file results"
+                    );
+                    return Ok(snapshot);
+                }
+
+                let status: ServerStatus = self.get_json("/api/server/status")?;
+                if let Err(error) = self.post_empty(&format!("/api/jobs/{job_id}/cancel")) {
+                    tracing::warn!(
+                        job_id,
+                        %error,
+                        "could not cancel timed-out Sockseek search job"
+                    );
+                }
+                return search_deadline_result(None, &status);
             }
             self.wake.wait(SEARCH_POLL_DELAY);
         }
+    }
+
+    fn progress_for_job(&self, provider_job_id: &str) -> Option<(i64, i64)> {
+        let progress = lock_or_recover(&self.wake.progress, "event progress");
+        let progress = progress.get(provider_job_id)?;
+        Some((progress.bytes_transferred, progress.total_bytes))
     }
 }
 
@@ -666,6 +796,56 @@ fn soulseek_not_ready_message(state: &str) -> String {
     }
 }
 
+fn soulseek_state_is_unavailable(state: &str) -> bool {
+    matches!(
+        normalized(state).as_str(),
+        "disconnected" | "failed" | "error" | "stopped"
+    )
+}
+
+fn search_interrupted_by_restart(
+    initial_restart_count: i64,
+    status: &ServerStatus,
+) -> Option<ProviderError> {
+    if status.restart_count <= initial_restart_count {
+        return None;
+    }
+
+    Some(ProviderError::new(
+        "soulseekUnavailable",
+        "Sockseek restarted while opening the Soulseek session, so the search job was lost. Retry later or verify the Soulseek login.",
+        true,
+    ))
+}
+
+fn search_deadline_result(
+    snapshot: Option<FileResultSnapshot>,
+    status: &ServerStatus,
+) -> Result<FileResultSnapshot, ProviderError> {
+    if let Some(snapshot) = snapshot {
+        return Ok(snapshot);
+    }
+    if status.soulseek_client.is_ready {
+        tracing::info!(
+            soulseek_state = %status.soulseek_client.state,
+            "Sockseek search deadline reached with no file results"
+        );
+        return Ok(FileResultSnapshot {
+            is_complete: false,
+            items: Vec::new(),
+        });
+    }
+
+    Err(ProviderError::new(
+        "soulseekUnavailable",
+        format!(
+            "Sockseek search could not complete because Soulseek is not ready ({}).",
+            status.soulseek_client.state
+        ),
+        true,
+    ))
+}
+
 impl AcquisitionProvider for SockseekProvider {
     fn id(&self) -> &'static str {
         SOCKSEEK_PROVIDER_ID
@@ -674,13 +854,22 @@ impl AcquisitionProvider for SockseekProvider {
     fn health(&self) -> Result<ProviderHealth, ProviderError> {
         self.compatible_daemon()?;
         let status: ServerStatus = self.get_json("/api/server/status")?;
+        let unavailable = soulseek_state_is_unavailable(&status.soulseek_client.state);
         Ok(ProviderHealth {
             // Sockseek 3.0.5 creates and logs in its Soulseek client lazily
             // when a login-requiring job is submitted. The normal idle state
             // is therefore `None`, not provider unavailability.
-            available: true,
+            // Explicit terminal/disconnected states are different: once the
+            // sidecar reports one, skip it immediately instead of making every
+            // queued track wait through another search deadline.
+            available: !unavailable,
             version: Some(SOCKSEEK_VERSION.to_owned()),
-            message: Some(if status.soulseek_client.is_ready {
+            message: Some(if unavailable {
+                format!(
+                    "Soulseek is unavailable ({}). Refrain will try the next provider.",
+                    status.soulseek_client.state
+                )
+            } else if status.soulseek_client.is_ready {
                 "Soulseek connected.".to_owned()
             } else {
                 soulseek_not_ready_message(&status.soulseek_client.state)
@@ -689,6 +878,7 @@ impl AcquisitionProvider for SockseekProvider {
     }
 
     fn search(&self, query: &TrackQuery) -> Result<Vec<AcquisitionCandidate>, ProviderError> {
+        let status: ServerStatus = self.get_json("/api/server/status")?;
         let request = TrackSearchRequest {
             song_query: SongQuery {
                 artist: query.artists.first().cloned(),
@@ -703,7 +893,7 @@ impl AcquisitionProvider for SockseekProvider {
             include_full_results: false,
         };
         let summary: JobSummary = self.post_json("/api/jobs/search/tracks", &request)?;
-        let snapshot = self.wait_for_search(&summary.job_id)?;
+        let snapshot = self.wait_for_search(&summary.job_id, status.restart_count)?;
 
         snapshot
             .items
@@ -711,20 +901,30 @@ impl AcquisitionProvider for SockseekProvider {
             .map(|item| {
                 let provider_token = serde_json::to_string(&CandidateToken {
                     search_job_id: summary.job_id.clone(),
-                    username: item.reference.username,
+                    username: item.reference.username.clone(),
                     filename: item.reference.filename.clone(),
                 })
                 .map_err(|error| {
                     ProviderError::new("providerProtocol", error.to_string(), false)
                 })?;
                 Ok(AcquisitionCandidate {
+                    provider: Some("sockseek".to_owned()),
                     provider_token,
+                    source: Some(item.reference.username.clone()),
+                    file_name: Some(item.reference.filename.clone()),
                     title: Some(remote_basename(&item.reference.filename)),
                     artists: query.artists.clone(),
                     album: query.album.clone(),
                     duration_ms: item.length.map(|seconds| i64::from(seconds) * 1_000),
-                    format: item.extension,
+                    format: candidate_extension(&item),
                     size_bytes: Some(item.size),
+                    bitrate_kbps: item.bit_rate.map(i64::from),
+                    sample_rate_hz: item.sample_rate.map(i64::from),
+                    bit_depth: candidate_bit_depth(&item),
+                    confidence: None,
+                    isrc: None,
+                    recording_id: None,
+                    release_id: None,
                 })
             })
             .collect()
@@ -748,10 +948,18 @@ impl AcquisitionProvider for SockseekProvider {
                 output_parent_dir: request.staging_path.clone(),
             },
         };
-        let jobs: Vec<JobSummary> = self.post_json(
-            &format!("/api/jobs/{}/downloads/files", token.search_job_id),
-            &body,
-        )?;
+        let jobs: Vec<JobSummary> = self
+            .post_optional_json(
+                &format!("/api/jobs/{}/downloads/files", token.search_job_id),
+                &body,
+            )?
+            .ok_or_else(|| {
+                ProviderError::new(
+                    "candidateExpired",
+                    "Sockseek no longer has the search context for this candidate. Search again and choose a current result.",
+                    true,
+                )
+            })?;
         let job = jobs.into_iter().next().ok_or_else(|| {
             ProviderError::new(
                 "providerProtocol",
@@ -759,9 +967,7 @@ impl AcquisitionProvider for SockseekProvider {
                 true,
             )
         })?;
-        self.staging_by_job
-            .lock()
-            .unwrap()
+        lock_or_recover(&self.staging_by_job, "staging paths")
             .insert(job.job_id.clone(), PathBuf::from(&request.staging_path));
         Ok(ProviderJob {
             provider_job_id: job.job_id,
@@ -769,7 +975,11 @@ impl AcquisitionProvider for SockseekProvider {
     }
 
     fn status(&self, provider_job_id: &str) -> Result<ProviderJobStatus, ProviderError> {
-        let detail: JobDetail = self.get_json(&format!("/api/jobs/{provider_job_id}"))?;
+        let Some(detail): Option<JobDetail> =
+            self.get_optional_json(&format!("/api/jobs/{provider_job_id}"))?
+        else {
+            return Ok(ProviderJobStatus::Pending);
+        };
         if !is_terminal(&detail.summary.lifecycle_state) {
             return match normalized(&detail.summary.lifecycle_state).as_str() {
                 "pending" => Ok(ProviderJobStatus::Pending),
@@ -779,10 +989,7 @@ impl AcquisitionProvider for SockseekProvider {
 
         match normalized(&detail.summary.terminal_outcome).as_str() {
             "succeeded" => {
-                let output_paths = self
-                    .staging_by_job
-                    .lock()
-                    .unwrap()
+                let output_paths = lock_or_recover(&self.staging_by_job, "staging paths")
                     .get(provider_job_id)
                     .map(|path| staged_files(path))
                     .transpose()
@@ -843,6 +1050,31 @@ fn remote_basename(path: &str) -> String {
         .to_owned()
 }
 
+fn candidate_extension(candidate: &FileCandidate) -> Option<String> {
+    candidate
+        .extension
+        .as_deref()
+        .map(str::trim)
+        .filter(|extension| !extension.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            remote_basename(&candidate.reference.filename)
+                .rsplit_once('.')
+                .map(|(_, extension)| extension.trim())
+                .filter(|extension| !extension.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+fn candidate_bit_depth(candidate: &FileCandidate) -> Option<i64> {
+    candidate
+        .attributes
+        .iter()
+        .find(|attribute| normalized(&attribute.kind) == "bitdepth")
+        .map(|attribute| i64::from(attribute.value))
+        .filter(|value| *value > 0)
+}
+
 fn decode_response<T: DeserializeOwned>(response: Response) -> Result<T, ProviderError> {
     if response.status().is_success() {
         response.json().map_err(|error| {
@@ -855,6 +1087,10 @@ fn decode_response<T: DeserializeOwned>(response: Response) -> Result<T, Provide
     } else {
         Err(provider_http_error(response))
     }
+}
+
+fn is_optional_not_found(status: StatusCode) -> bool {
+    status == StatusCode::NOT_FOUND
 }
 
 fn provider_transport_error(error: reqwest::Error) -> ProviderError {
@@ -916,6 +1152,7 @@ struct ServerInfo {
 #[serde(rename_all = "camelCase")]
 struct ServerStatus {
     soulseek_client: SoulseekClientStatus,
+    restart_count: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -943,21 +1180,33 @@ struct SongQuery {
     artist_maybe_wrong: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FileResultSnapshot {
     is_complete: bool,
     items: Vec<FileCandidate>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FileCandidate {
     #[serde(rename = "ref")]
     reference: FileCandidateRef,
     size: i64,
+    bit_rate: Option<i32>,
+    sample_rate: Option<i32>,
     length: Option<i32>,
     extension: Option<String>,
+    #[serde(default)]
+    attributes: Vec<FileAttribute>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileAttribute {
+    #[serde(rename = "type")]
+    kind: String,
+    value: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1011,7 +1260,142 @@ struct ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{soulseek_not_ready_message, versions_equivalent};
+    use std::{fs, panic::AssertUnwindSafe, process};
+
+    use reqwest::StatusCode;
+
+    use crate::security::SoulseekCredentials;
+
+    use super::{
+        FileCandidate, FileResultSnapshot, ServerStatus, SoulseekClientStatus, candidate_bit_depth,
+        candidate_extension, is_optional_not_found, search_deadline_result,
+        search_interrupted_by_restart, soulseek_not_ready_message, soulseek_state_is_unavailable,
+        versions_equivalent, write_runtime_config,
+    };
+
+    #[test]
+    fn sockseek_timeout_keeps_partial_file_results_for_manual_resolution() {
+        let snapshot: FileResultSnapshot = serde_json::from_value(serde_json::json!({
+            "isComplete": false,
+            "items": [{
+                "ref": {
+                    "username": "listener",
+                    "filename": "Artist\\Album\\01 Song.flac"
+                },
+                "size": 25000000,
+                "bitRate": 980,
+                "sampleRate": 96000,
+                "length": 180,
+                "extension": "flac",
+                "attributes": []
+            }]
+        }))
+        .unwrap();
+
+        let result = search_deadline_result(
+            Some(snapshot),
+            &ServerStatus {
+                soulseek_client: SoulseekClientStatus {
+                    state: "Connected".to_owned(),
+                    is_ready: true,
+                },
+                restart_count: 0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].reference.username, "listener");
+    }
+
+    #[test]
+    fn sockseek_deadline_without_results_is_empty_when_soulseek_is_ready() {
+        let result = search_deadline_result(
+            None,
+            &ServerStatus {
+                soulseek_client: SoulseekClientStatus {
+                    state: "Connected".to_owned(),
+                    is_ready: true,
+                },
+                restart_count: 0,
+            },
+        )
+        .unwrap();
+
+        assert!(result.items.is_empty());
+    }
+
+    #[test]
+    fn sockseek_deadline_without_results_remains_retryable_when_soulseek_is_unready() {
+        let error = search_deadline_result(
+            None,
+            &ServerStatus {
+                soulseek_client: SoulseekClientStatus {
+                    state: "Connecting".to_owned(),
+                    is_ready: false,
+                },
+                restart_count: 0,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "soulseekUnavailable");
+        assert!(error.retryable);
+        assert!(error.message.contains("Connecting"));
+    }
+
+    #[test]
+    fn missing_search_job_reports_sockseek_restart_instead_of_timing_out() {
+        let status = ServerStatus {
+            soulseek_client: SoulseekClientStatus {
+                state: "None".to_owned(),
+                is_ready: false,
+            },
+            restart_count: 4,
+        };
+
+        let error = search_interrupted_by_restart(3, &status)
+            .expect("a newer Sockseek restart should interrupt the missing search job");
+
+        assert_eq!(error.code, "soulseekUnavailable");
+        assert!(error.retryable);
+        assert!(error.message.contains("search job was lost"));
+        assert!(search_interrupted_by_restart(4, &status).is_none());
+    }
+
+    #[test]
+    fn runtime_config_assigns_explicit_soulseek_listen_port() {
+        let root = std::env::temp_dir().join(format!(
+            "refrain-sockseek-config-listen-port-{}",
+            process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("sockseek.conf");
+        let credentials = SoulseekCredentials {
+            username: "listener-test".to_owned(),
+            password: "secret-test".to_owned(),
+        };
+
+        write_runtime_config(&config_path, &root, &credentials, 45678).unwrap();
+        let content = fs::read_to_string(&config_path).unwrap();
+
+        assert!(content.lines().any(|line| line == "listen-port = 45678"));
+        assert!(
+            content
+                .lines()
+                .any(|line| line == "pref-format = flac,alac,wav")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn optional_sockseek_reads_treat_only_not_found_as_absent() {
+        assert!(is_optional_not_found(StatusCode::NOT_FOUND));
+        assert!(!is_optional_not_found(StatusCode::BAD_REQUEST));
+        assert!(!is_optional_not_found(StatusCode::INTERNAL_SERVER_ERROR));
+    }
 
     #[test]
     fn sockseek_versions_accept_trailing_zero_components() {
@@ -1038,5 +1422,52 @@ mod tests {
             soulseek_not_ready_message("Connecting"),
             "Sockseek is ready. Soulseek state: Connecting."
         );
+    }
+
+    #[test]
+    fn sockseek_terminal_connection_states_are_unavailable() {
+        for state in ["Disconnected", "failed", "ERROR", "Stopped"] {
+            assert!(soulseek_state_is_unavailable(state), "{state}");
+        }
+        for state in ["None", "Connecting", "Connected", "Ready"] {
+            assert!(!soulseek_state_is_unavailable(state), "{state}");
+        }
+    }
+
+    #[test]
+    fn sockseek_file_candidate_exposes_quality_and_filename_extension() {
+        let candidate: FileCandidate = serde_json::from_value(serde_json::json!({
+            "ref": {
+                "username": "listener",
+                "filename": "Artist\\Album\\01 Song.flac"
+            },
+            "size": 25000000,
+            "bitRate": 980,
+            "sampleRate": 96000,
+            "length": 180,
+            "extension": "",
+            "attributes": [
+                { "type": "BitDepth", "value": 24 }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(candidate_extension(&candidate).as_deref(), Some("flac"));
+        assert_eq!(candidate.bit_rate, Some(980));
+        assert_eq!(candidate.sample_rate, Some(96_000));
+        assert_eq!(candidate_bit_depth(&candidate), Some(24));
+    }
+
+    #[test]
+    fn sockseek_manager_recovers_after_process_mutex_is_poisoned() {
+        let manager = super::SockseekManager::default();
+        let poison = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _process = manager.process.lock().unwrap();
+            panic!("poison Sockseek process mutex for regression coverage");
+        }));
+
+        assert!(poison.is_err());
+        let shutdown = std::panic::catch_unwind(AssertUnwindSafe(|| manager.shutdown()));
+        assert!(shutdown.is_ok());
     }
 }

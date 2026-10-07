@@ -17,19 +17,26 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 ## Frontend
 
 - `src/main.ts` — frontend entry point
-- `src/App.svelte` — compact desktop shell, Local/Spotify navigation, collection grid/detail state, scoped synchronization orchestration, Spotify connect/refresh flows, Issues, and Settings controls
+- `src/App.svelte` — compact desktop shell, collapsible Local/Spotify navigation, Local Playlist orchestration, collection grid/detail state, scoped synchronization orchestration, Spotify connect/refresh flows, Issues, and Settings controls
 - `src/app.css` — approved light desktop design system, application shell, shared controls/tables/grids, semantic states, and responsive viewport/layout rules
 - `src/components/Icon.svelte` — shared icon facade backed by on-demand Lucide and Simple Icons components through `unplugin-icons`
 - `src/components/DataTableHeader.svelte` — shared sortable, draggable, resizable table header with persisted per-table column order, widths, and sort state
-- `src/components/SpotifyWorkspace.svelte` — Liked Songs track view plus artwork-first Saved Albums/Playlists grids, collection detail navigation, persistent tracking controls, and collapsed unavailable playlists
+- `src/components/SpotifyWorkspace.svelte` — Liked Songs track view plus artwork-first Saved Albums/Playlists grids, collection detail navigation, persistent tracking controls, playlist export/history UI, and collapsed unavailable playlists
 - `src/components/TrackList.svelte` — virtualized dense Spotify track rows with persistent sortable/reorderable/resizable columns, lazy artwork, state/technical filters, local-state metadata, direct per-track tracking overrides, row multi-selection, and bulk tracking actions
-- `src/components/LibraryView.svelte` — present-local-library rows with persistent sortable/reorderable/resizable columns, embedded artwork, visible paths, Spotify membership chips, state/technical filters, and Local Sync controls
+- `src/components/LibraryView.svelte` — present-local-library rows with persistent sortable/reorderable/resizable columns, embedded artwork, visible paths, Spotify membership chips, state/technical filters, selection, and Add to editable user-authored Local Playlist actions
+- `src/components/LocalPlaylistsView.svelte` — Local Playlist browser/detail UI for user-authored playlists plus read-only Spotify-backed mirrors, with search, ordered track membership, automatic managed/linked M3U8 state, sync diagnostics, and playlist/entry editing controls where allowed
 - `src/components/IssuesView.svelte` — unresolved issue queue, issue details, candidate review, and manual match-decision controls
+- `src/components/StagingView.svelte` — tracked-only acquisition cards with linked artwork, checkbox-driven contextual actions, right-side metadata/provider inspection, bottom transfer progress, provider-grouped manual candidate resolution, and the no-work synchronization detail view
 - `src/lib/app-info.ts` — application-info Tauri command wrapper
 - `src/lib/acquisition.ts` — acquisition job/status projection types and Tauri command wrapper
-- `src/lib/dialog.ts` — native Library root folder-picker wrapper
-- `src/lib/settings.ts` — settings command wrapper
-- `src/lib/sockseek.ts` — Soulseek credential and Sockseek provider-health command wrappers
+- `src/lib/staging.ts` — Staging projection types plus per-track acquisition, cancellation, candidate resolution, and downloaded-recovery processing wrappers
+- `src/lib/dialog.ts` — native Library root folder picker plus retained lower-level M3U/M3U8 save-target helper for legacy/external-target flows; Local Playlists does not expose this picker
+- `src/lib/playlists.ts` — typed Local Playlist persistence/editing wrappers plus retained lower-level explicit target/sync commands; normal Local Playlist UI uses automatic synchronization
+- `src/lib/playlist-export.ts` — typed immutable Spotify playlist M3U8/portable-bundle export and history command wrappers
+- `src/lib/settings.ts` — settings command wrapper including the ordered acquisition-provider ID list
+- `src/lib/monochrome.ts` — Monochrome provider-health command wrapper and cached health state
+- `src/lib/antra.ts` — Antra account/device-login, sign-out, provider-health, and cached-health command wrappers
+- `src/lib/sockseek.ts` — Soulseek credential and Sockseek provider-health wrappers
 - `src/lib/library.ts` — local-library overview, logical-track projection, paginated file, scan, hash, and preferred-file command wrappers
 - `src/lib/issues.ts` — issue projection/count types, match-review data, and issue command wrappers
 - `src/lib/matching.ts` — matching evidence and manual confirm/reject/clear command wrappers
@@ -43,7 +50,7 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 
 - `src-tauri/src/main.rs` — native binary entry point
 - `src-tauri/src/lib.rs` — Tauri application builder and command registration
-- `src-tauri/src/acquisition.rs` — provider-neutral acquisition interface, coordinator, staging, retry/cancellation behavior, and fake-provider integration tests
+- `src-tauri/src/acquisition.rs` — provider-neutral acquisition interface, ordered provider-chain coordinator, staged/manual resolution behavior, retry/cancellation behavior, and fake-provider integration tests
 - `src-tauri/src/app.rs` — application initialization, data directory, logging, database, and shared state
 - `src-tauri/src/commands/mod.rs` — Tauri command boundary exposed to the frontend
 - `src-tauri/src/spotify.rs` — Spotify PKCE authentication, token lifecycle, and Spotify client behavior
@@ -54,11 +61,19 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/issues.rs` — issue and match-review application services exposed through Tauri commands
 - `src-tauri/src/reconciliation.rs` — one-active-sync coordination plus distinct Local and Spotify orchestration, cancellation, matching, acquisition, and normalization phases
 - `src-tauri/src/normalization.rs` — canonical library paths, portable filename sanitization, collision handling, safe moves, ownership-safe normalization, and guarded platform Trash integration
-- `src-tauri/src/security.rs` — OS credential-store abstraction for Spotify refresh credentials
-- `src-tauri/src/sockseek.rs` — Sockseek 3.0.5 sidecar lifecycle, HTTP adapter, SignalR wake/reconnect path, credential config materialization, staging, and version/health checks
+- `src-tauri/src/verification.rs` — staged-audio metadata verification, selective downloaded-job processing, canonical import, and managed local-file persistence
+- `src-tauri/src/playlist_sync.rs` — automatic managed Local Playlist target resolution and UTF-8 extended-M3U generation, including portable filename sanitization, collision avoidance, managed-file rename cleanup, duplicate/order preservation, relative paths, temporary-file replacement, and persisted sync results
+- `src-tauri/src/playlist_artwork.rs` — bounded HTTPS playlist-cover download plus JPEG/PNG/WebP/GIF detection shared by managed mirror sidecars and portable bundle export
+- `src-tauri/src/playlist_export.rs` — immutable Spotify playlist export preconditions, M3U8 rendering, atomic replacement, portable ZIP creation, relative-path handling, and bundle audio deduplication
+- `src-tauri/src/security.rs` — OS credential-store abstractions for Spotify refresh credentials, Soulseek credentials, and the Antra device token
+- `src-tauri/src/monochrome.rs` — default-priority Monochrome acquisition provider, current `tracks.monochrome.st` search/direct-FLAC path, legacy compatible-API fallback, candidate mapping, staged streaming, progress, and cancellation
+- `src-tauri/src/antra.rs` — authenticated Antra acquisition provider, device login, endpoint discovery, Tidal/Qobuz search, direct FLAC staging, progress, cancellation, and provider-local download serialization
+- `src-tauri/src/sockseek.rs` — optional Sockseek 3.0.5 provider lifecycle, HTTP adapter, SignalR wake/reconnect path, credential config materialization, staging, and version/health checks
 - `src-tauri/src/domain/library.rs` — local-file and logical-library projection types
 - `src-tauri/src/domain/acquisition.rs` — provider-neutral query/candidate/job/health types and persisted acquisition projection types
 - `src-tauri/src/domain/issues.rs` — issue, issue-count, and match-review projection types
+- `src-tauri/src/domain/playlists.rs` — Local Playlist summary/detail/entry projection types
+- `src-tauri/src/domain/playlist_exports.rs` — immutable source-playlist export snapshot/history projection types
 
 ## Persistence
 
@@ -71,6 +86,8 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/src/db/source_browse.rs` — paginated Spotify browse projections used by the desktop UI
 - `src-tauri/src/db/source_tracking.rs` — persistent collection defaults, per-track tracking overrides, and tracked-source desired-state projection
 - `src-tauri/src/db/local_library.rs` — local-file persistence, overview/pages, logical-library rows, hash persistence, missing-state updates, and preferred-file selection
+- `src-tauri/src/db/local_playlists.rs` — Local Playlist CRUD, ordered/duplicate membership persistence, source-linked Spotify mirror reconciliation/edit guards, managed/external M3U target state, entry reorder/removal, and sync result persistence
+- `src-tauri/src/db/playlist_exports.rs` — source-playlist export resolution, immutable export-entry persistence, completion/failure state, and export-history queries
 - `src-tauri/src/db/issues.rs` — computed non-match unresolved-state projections for missing/invalid files and inaccessible collections
 - `src-tauri/src/db/matching.rs` — source/library match descriptors plus persisted confirmations and rejections
 - `src-tauri/src/db/reconciliation.rs` — sync-run persistence, accessible-source projection, library-track materialization, automatic links, and preferred-file resolution
@@ -79,10 +96,18 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 - `src-tauri/migrations/0004_matching.sql` — `track_links` and `track_rejections` schema/indexes
 - `src-tauri/migrations/0005_reconciliation.sql` — `sync_runs` persistence and chronological index
 - `src-tauri/migrations/0006_acquisition.sql` — durable provider-neutral `acquisition_jobs` persistence and indexes
+- `src-tauri/migrations/0013_acquisition_staging.sql` — user-facing acquisition stage and persisted manual-candidate-set fields
+- `src-tauri/migrations/0015_acquisition_provider.sql` — legacy single acquisition-provider setting used as the migration source for existing installs
+- `src-tauri/migrations/0016_acquisition_provider_chain.sql` — ordered acquisition-provider JSON setting migrated from the previous single-provider value
 - `src-tauri/migrations/0007_sync_scopes_and_tracking.sql` — scoped sync-run metadata plus persistent Spotify collection/track tracking rules
 - `src-tauri/migrations/0008_local_artwork.sql` — cached embedded-artwork path and MIME references for local files
 - `src-tauri/migrations/0009_album_metadata.sql` — persisted Spotify saved-album artists, release metadata, label, copyrights, and external URL
 - `src-tauri/migrations/0010_collection_artwork.sql` — collection-level Spotify artwork and external URLs, including playlist covers
+- `src-tauri/migrations/0014_local_playlists.sql` — user-authored Local Playlist metadata, ordered library-track entries, M3U target, and sync status persistence
+- `src-tauri/migrations/0017_playlist_exports.sql` — immutable Spotify source-playlist export runs and per-position snapshot entries
+- `src-tauri/migrations/0018_spotify_playlist_mirrors.sql` — source-collection link and uniqueness constraint for tracked Spotify-backed Local Playlist mirrors
+- `src-tauri/migrations/0019_managed_local_playlist_files.sql` — managed-playlist target ownership flag and upgrade of playlists without an existing external target into automatic managed M3U8 mode
+- `src-tauri/migrations/0020_local_playlist_cover_sidecars.sql` — persisted source-artwork URL and Refrain-owned cover-sidecar path for managed Spotify playlist mirrors
 - `src-tauri/migrations/` — SQLite migrations
 
 ## Packaging and configuration
@@ -116,11 +141,15 @@ This is a navigation index for the current Refrain codebase. Source remains auth
 | Local library scanning/indexing             | `src-tauri/src/local_library.rs`, `src-tauri/src/db/local_library.rs`, `src/lib/library.ts`, `src/App.svelte`                                                                         |
 | Browse logical library                      | `src-tauri/src/db/issues.rs`, `src/lib/library.ts`, `src/components/LibraryView.svelte`, `src/App.svelte`                                                                             |
 | Issues and manual resolution                | `src-tauri/src/issues.rs`, `src-tauri/src/db/issues.rs`, `src/lib/issues.ts`, `src/components/IssuesView.svelte`, `src/App.svelte`                                                    |
+| Staging acquisition workspace               | `src-tauri/src/acquisition.rs`, `src-tauri/src/db/acquisition.rs`, `src-tauri/src/monochrome.rs`, `src/lib/staging.ts`, `src/components/StagingView.svelte`, `src/App.svelte`         |
 | Acquisition provider boundary/status        | `src-tauri/src/acquisition.rs`, `src-tauri/src/db/acquisition.rs`, `src-tauri/src/domain/acquisition.rs`, `src/lib/acquisition.ts`                                                    |
-| Sockseek acquisition provider               | `src-tauri/src/sockseek.rs`, `src-tauri/src/security.rs`, `src/lib/sockseek.ts`, `scripts/fetch-sockseek-sidecar.mjs`                                                                 |
+| Monochrome acquisition provider             | `src-tauri/src/monochrome.rs`, `src/lib/monochrome.ts`, `src-tauri/src/commands/mod.rs`, `src-tauri/src/reconciliation.rs`                                                            |
+| Antra authenticated acquisition provider    | `src-tauri/src/antra.rs`, `src-tauri/src/security.rs`, `src/lib/antra.ts`, `src-tauri/src/commands/mod.rs`, `src-tauri/src/reconciliation.rs`                                           |
+| Sockseek fallback provider                  | `src-tauri/src/sockseek.rs`, `src-tauri/src/security.rs`, `src/lib/sockseek.ts`, `scripts/fetch-sockseek-sidecar.mjs`                                                                 |
 | Matching and manual decisions               | `src-tauri/src/matching.rs`, `src-tauri/src/db/matching.rs`, `src/lib/matching.ts`                                                                                                    |
 | Local / Spotify scoped sync                 | `src-tauri/src/reconciliation.rs`, `src-tauri/src/db/reconciliation.rs`, `src-tauri/src/db/source_tracking.rs`, `src-tauri/src/normalization.rs`, `src/lib/sync.ts`, `src/App.svelte` |
 | Filesystem normalization / ownership safety | `src-tauri/src/normalization.rs`, `src-tauri/src/db/normalization.rs`, `src-tauri/src/db/local_library.rs`                                                                            |
+| Spotify playlist export                     | `src-tauri/src/playlist_export.rs`, `src-tauri/src/db/playlist_exports.rs`, `src/lib/playlist-export.ts`, `src/components/SpotifyWorkspace.svelte`                                   |
 | Database migrations                         | `src-tauri/migrations/`, `src-tauri/src/db/mod.rs`                                                                                                                                    |
 | Window/layout behavior                      | `src/App.svelte`, `src/app.css`, `src-tauri/tauri.conf.json`                                                                                                                          |
 | CI/build validation                         | `.github/workflows/ci.yml`, `docs/reference/testing.md`                                                                                                                               |

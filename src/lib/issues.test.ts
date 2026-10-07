@@ -3,6 +3,7 @@ import type { InvokeFn } from './app-info';
 import {
   getMatchReview,
   listIssues,
+  trashInvalidLocalFile,
   type IssuePage,
   type MatchReview,
 } from './issues';
@@ -35,6 +36,7 @@ const review: MatchReview = {
     explicit: false,
     versionKind: null,
     versionDetail: null,
+    imageUrl: null,
   },
   outcome: 'review',
   selectedLibraryTrackId: null,
@@ -67,5 +69,17 @@ describe('issue commands', () => {
     ) as InvokeFn;
 
     await expect(getMatchReview(7, invoke)).resolves.toEqual(review);
+  });
+
+  it('moves an invalid local file to Trash through the Issues command', async () => {
+    const invoke = vi.fn(
+      async <T>(command: string, args?: Record<string, unknown>) => {
+        expect(command).toBe('trash_invalid_local_file');
+        expect(args).toEqual({ localFileId: 9 });
+        return undefined as T;
+      },
+    ) as InvokeFn;
+
+    await expect(trashInvalidLocalFile(9, invoke)).resolves.toBeUndefined();
   });
 });
