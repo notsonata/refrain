@@ -27,7 +27,7 @@
   import Pin from '~icons/lucide/pin';
   import PinOff from '~icons/lucide/pin-off';
   import RefreshCw from '~icons/lucide/refresh-cw';
-  import Repeat2 from '~icons/lucide/repeat-2';
+  import RotateCw from '~icons/lucide/rotate-cw';
   import Search from '~icons/lucide/search';
   import Settings from '~icons/lucide/settings';
   import SlidersHorizontal from '~icons/lucide/sliders-horizontal';
@@ -91,7 +91,7 @@
     settings: Settings,
     issues: TriangleAlert,
     search: Search,
-    refresh: RefreshCw,
+    refresh: RotateCw,
     filter: SlidersHorizontal,
     'chevron-down': ChevronDown,
     'chevron-right': ChevronRight,
@@ -114,7 +114,7 @@
     'sort-asc': ArrowUpNarrowWide,
     'sort-desc': ArrowDownNarrowWide,
     grip: GripVertical,
-    sync: Repeat2,
+    sync: RefreshCw,
     info: Info,
     database: Database,
     link: ExternalLink,

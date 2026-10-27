@@ -4,7 +4,7 @@
   export let status: TrackStatus;
 </script>
 
-<span class="state-text">
+<span class="state-text" title={trackStatusLabel(status)}>
   {#if status === 'local-spotify'}
     <span class="state-dot success"></span>
   {:else if status === 'local-only' || status === 'needs-local-copy'}
@@ -12,5 +12,5 @@
   {:else}
     <span class="state-dot info"></span>
   {/if}
-  {trackStatusLabel(status)}
+  <span class="state-label">{trackStatusLabel(status)}</span>
 </span>

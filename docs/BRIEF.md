@@ -10,9 +10,9 @@ Spotify can represent the music a user wants to keep, but that state is separate
 
 Refrain treats Spotify as the desired state for a local music library.
 
-It imports playlists, Liked Songs, and saved albums, reconciles them against local library state, and resolves each source track to a logical library track. Missing tracks can be acquired through modular download providers, initially Sockseek/Soulseek, then staged, verified, normalized, and added to the canonical library.
+It imports playlists, Liked Songs, and saved albums, reconciles them against local library state, and resolves each source track to a logical library track. When the user enables acquisition, missing tracks can be acquired through an ordered provider chain, with Monochrome preselected by default and Antra and Sockseek/Soulseek available as optional providers, then staged, verified, normalized, and added to the canonical library.
 
-Playlist and album membership is stored separately from audio files, so a track is stored once even when it appears in multiple Spotify collections. Refrain can export resolved playlists as M3U8 files, create portable playlist bundles containing copied audio, and mirror the full library and playlists to another filesystem location.
+Playlist and album membership is stored separately from audio files, so a track is stored once even when it appears in multiple Spotify collections. Refrain can export resolved Spotify playlists as M3U8 files and create portable playlist bundles containing copied audio. Mirroring the full library and playlists to another filesystem location remains planned work.
 
 ## Goals
 
@@ -41,7 +41,7 @@ Playlist and album membership is stored separately from audio files, so a track 
 
 - Scan and reconcile a local music library.
 - Match Spotify source tracks to logical library tracks and local files.
-- Acquire missing tracks through a modular acquisition engine, initially using Sockseek.
+- Acquire missing tracks through a configurable, ordered provider chain with Monochrome as the default and Antra and Sockseek available optionally.
 - Stage and verify acquired files before importing them.
 - Normalize filesystem organization and filenames.
 - Preserve one local copy for tracks referenced by multiple Spotify collections.
@@ -52,7 +52,7 @@ Playlist and album membership is stored separately from audio files, so a track 
 - Mirror the normalized library and playlists to another mounted filesystem location.
 - Manual, startup, and configurable periodic synchronization.
 
-Future work may include additional acquisition providers, rclone-backed remote mirrors, and other source integrations.
+The v1.0.0 scope includes features already implemented and features still planned, including destination mirroring and scheduled synchronization; see `docs/STATUS.md` for current progress. Future work may include further acquisition providers, rclone-backed remote mirrors, and other source integrations.
 
 ## Constraints
 

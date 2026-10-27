@@ -4,6 +4,7 @@ import type {
   SourceCollectionSummary,
   SpotifySourceOverview,
 } from '../lib/source';
+import type { LocalPlaylistSummary } from '../lib/playlists';
 import SpotifyWorkspace from './SpotifyWorkspace.svelte';
 
 const overview: SpotifySourceOverview = {
@@ -161,5 +162,61 @@ describe('SpotifyWorkspace liked songs', () => {
     expect(body).toContain('M3U8');
     expect(body).toContain('Bundle');
     expect(body).toContain('No exports yet.');
+  });
+
+  it('links a Spotify playlist to its matching local mirror only', () => {
+    const playlist: SourceCollectionSummary = {
+      id: 5,
+      providerCollectionId: 'playlist-5',
+      kind: 'playlist',
+      name: 'Road Trip',
+      isAccessible: true,
+      accessIssue: null,
+      entryCount: 3,
+      trackedByDefault: true,
+      trackedEntryCount: 3,
+      localEntryCount: 3,
+      attentionEntryCount: 0,
+      imageUrl: null,
+    };
+    const mirror: LocalPlaylistSummary = {
+      id: 42,
+      name: 'Road Trip',
+      sourceCollectionId: playlist.id,
+      imageUrl: null,
+      customArtworkPath: null,
+      entryCount: 3,
+      m3uPath: null,
+      m3uManaged: true,
+      lastSyncedAt: null,
+      syncError: null,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const props = {
+      section: 'playlists' as const,
+      overview,
+      currentCollection: playlist,
+      playlists: [playlist],
+      playlistTotal: 1,
+      entries: [],
+      collectionTotal: 3,
+    };
+
+    const matching = render(SpotifyWorkspace, {
+      props: { ...props, localPlaylists: [mirror] },
+    });
+    expect(matching.body).toContain('Open Local Copy');
+
+    const unrelated = render(SpotifyWorkspace, {
+      props: {
+        ...props,
+        localPlaylists: [{ ...mirror, sourceCollectionId: 6 }],
+      },
+    });
+    expect(unrelated.body).not.toContain('Open Local Copy');
+
+    const untracked = render(SpotifyWorkspace, { props });
+    expect(untracked.body).not.toContain('Open Local Copy');
   });
 });

@@ -1,10 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
-  import { tableGridTemplate, type TableColumn } from '../lib/table-columns';
+  import {
+    mergeSharedColumns,
+    migrateLegacyColumns,
+    restoredColumnWidth,
+    tableGridTemplate,
+    type TableColumn,
+  } from '../lib/table-columns';
 
   export let columns: TableColumn[] = [];
   export let storageKey: string;
+  export let legacyStorageKey: string | undefined = undefined;
+  export let legacyStorageKeys: readonly string[] = [];
+  export let resetLegacyWidthIds: readonly string[] = [];
   export let sortId: string;
   export let sortDirection: 'asc' | 'desc' = 'asc';
   export let compact = false;
@@ -63,18 +72,19 @@
         byId.delete(saved.id);
         return {
           ...current,
-          width: Math.max(
-            current.minWidth,
-            typeof saved.width === 'number' ? saved.width : current.width,
-          ),
+          width: restoredColumnWidth(current, saved.width),
         };
       })
       .filter((column): column is TableColumn => column !== null);
 
     if (allowedIds) {
       const shared = [...restored, ...byId.values()];
-      const specific = columns.filter((column) => !allowedIds.has(column.id));
-      columns = keepActionsLast([...shared, ...specific]);
+      let sharedIndex = 0;
+      columns = keepActionsLast(
+        columns.map((column) =>
+          allowedIds.has(column.id) ? shared[sharedIndex++] : column,
+        ),
+      );
       return;
     }
 
@@ -87,20 +97,30 @@
 
   onMount(() => {
     const tableState = readState(storageKey);
-    if (tableState) {
-      restoreColumns(tableState.columns);
+    const legacyState = tableState
+      ? null
+      : ([...legacyStorageKeys, ...(legacyStorageKey ? [legacyStorageKey] : [])]
+          .map(readState)
+          .find((state) => state !== null) ?? null);
+    const activeState = tableState ?? legacyState;
+    if (activeState) {
+      restoreColumns(
+        legacyState
+          ? migrateLegacyColumns(activeState.columns, resetLegacyWidthIds)
+          : activeState.columns,
+      );
       if (
-        tableState.sortId &&
-        (columns.some((column) => column.id === tableState.sortId) ||
-          tableState.sortId === defaultSortId)
+        activeState.sortId &&
+        (columns.some((column) => column.id === activeState.sortId) ||
+          activeState.sortId === defaultSortId)
       ) {
-        sortId = tableState.sortId;
+        sortId = activeState.sortId;
       }
       if (
-        tableState.sortDirection === 'asc' ||
-        tableState.sortDirection === 'desc'
+        activeState.sortDirection === 'asc' ||
+        activeState.sortDirection === 'desc'
       ) {
-        sortDirection = tableState.sortDirection;
+        sortDirection = activeState.sortDirection;
       }
     }
 
@@ -110,6 +130,7 @@
         restoreColumns(sharedState.columns, new Set(sharedColumnIds));
       }
     }
+    if (legacyState) persist();
   });
 
   function persist() {
@@ -124,12 +145,15 @@
 
     if (sharedStorageKey && sharedColumnIds.length > 0) {
       const sharedIds = new Set(sharedColumnIds);
+      const previousShared = readState(sharedStorageKey);
       localStorage.setItem(
         sharedStorageKey,
         JSON.stringify({
-          columns: columns
-            .filter((column) => sharedIds.has(column.id))
-            .map(({ id, width }) => ({ id, width })),
+          columns: mergeSharedColumns(
+            columns,
+            previousShared?.columns ?? [],
+            sharedIds,
+          ),
         }),
       );
     }
@@ -301,13 +325,15 @@
             <Icon name="grip" size={11} />
           </span>
         {/if}
-        <span
-          class="column-resize-handle"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={`Resize ${column.label || 'column'}`}
-          onpointerdown={(event) => startResize(event, column)}
-        ></span>
+        {#if column.resizable !== false}
+          <span
+            class="column-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={`Resize ${column.label || 'column'}`}
+            onpointerdown={(event) => startResize(event, column)}
+          ></span>
+        {/if}
       </div>
     {/each}
   </div>

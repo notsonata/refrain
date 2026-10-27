@@ -2,7 +2,34 @@
 
 All notable released changes to Refrain are documented here.
 
+## [0.9.0] - 2026-10-28
+
+### What's New
+
+#### New features
+
+- Create Local Playlists and keep tracked Spotify playlists in sync with their local copies.
+- Export Spotify playlists as M3U8 files or portable ZIP bundles with audio and artwork.
+- Mirror your library to another destination with verified copies and recovery of interrupted runs.
+
+#### Improvements
+
+- Keep managed playlist files current as your library changes, with playlist artwork controls and clear notices when tracks are unavailable locally.
+- See sync progress, results, and recent runs more clearly across your library and Spotify.
+- Find missing tracks through the configured acquisition providers, with downloaded audio checked before it is added to your library.
+
+#### Fixes
+
+- Recover incomplete downloads during a later sync, including when a staged file has disappeared.
+- Preserve playlist order and duplicate tracks when scanning and updating playlist files.
+
 ## [0.6.0] - 2026-09-27
+
+### What's New
+
+- Browse and manage a local music library alongside Spotify, with matching, sync, and clear issue resolution.
+- Find missing tracks through configurable acquisition providers and import verified downloads into the library.
+- Use a redesigned desktop workspace with persistent light and dark appearance modes.
 
 ### Added
 
@@ -28,6 +55,11 @@ All notable released changes to Refrain are documented here.
 - repaired cross-platform CI, Tauri feature configuration, Windows packaging configuration, SSR-safe collection-chip measurement, and stale frontend/Rust tests
 
 ## [0.1.0] - 2026-09-25
+
+### What's New
+
+- Connect your Spotify account, browse your music, and sync saved songs, albums, playlists, and playlist tracks in a desktop app.
+- Download the app for Windows, macOS, or Linux from GitHub Releases.
 
 ### Added
 

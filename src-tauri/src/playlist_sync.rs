@@ -7,8 +7,14 @@ use std::{
 use crate::{
     db::{Database, DatabaseError, now_ms},
     domain::{LocalPlaylistDetail, LocalPlaylistEntry},
-    playlist_artwork::{DownloadedPlaylistArtwork, download_playlist_artwork},
+    playlist_artwork::{
+        DownloadedPlaylistArtwork, PLAYLIST_DIRECTORY, configured_custom_artwork_directory,
+        download_playlist_artwork, import_custom_playlist_artwork,
+        is_owned_custom_playlist_artwork, remove_custom_playlist_artwork,
+    },
 };
+
+pub(crate) const MANAGED_M3U_MARKER: &str = "#REFRAIN-MANAGED-PLAYLIST";
 
 pub fn sync_local_playlist(
     database: &Database,
@@ -18,7 +24,7 @@ pub fn sync_local_playlist(
     let prepared = prepare_playlist_for_sync(database, &playlist)?;
     let result = sync_local_playlist_file(&prepared);
     match result {
-        Ok(()) => {
+        Ok(missing) => {
             if prepared.m3u_managed && prepared.m3u_path != playlist.m3u_path {
                 let path = prepared.m3u_path.as_deref().ok_or_else(|| {
                     LocalPlaylistSyncError::InvalidTarget(
@@ -27,7 +33,28 @@ pub fn sync_local_playlist(
                 })?;
                 database.set_local_playlist_managed_m3u_path(playlist_id, path)?;
             }
-            let synced = database.record_local_playlist_sync_success(playlist_id, now_ms())?;
+            let mut synced = database.record_local_playlist_sync_success(playlist_id, now_ms())?;
+            if !missing.is_empty() {
+                let sample = missing
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let message = format!(
+                    "{} unavailable {} omitted from the regenerated M3U: {}{}",
+                    missing.len(),
+                    if missing.len() == 1 {
+                        "track was"
+                    } else {
+                        "tracks were"
+                    },
+                    sample,
+                    if missing.len() > 3 { ", …" } else { "" }
+                );
+                database.record_local_playlist_sync_error(playlist_id, &message)?;
+                synced = database.get_local_playlist(playlist_id)?;
+            }
             if let Err(error) = sync_playlist_cover(database, &synced) {
                 tracing::warn!(
                     playlist_id,
@@ -35,8 +62,11 @@ pub fn sync_local_playlist(
                     "could not synchronize Spotify playlist cover sidecar"
                 );
             }
+            if let Err(error) = migrate_custom_artwork(database, &synced) {
+                tracing::warn!(playlist_id, %error, "could not move saved playlist artwork into library folder");
+            }
             remove_previous_managed_file(&playlist, &prepared);
-            Ok(synced)
+            database.get_local_playlist(playlist_id).map_err(Into::into)
         }
         Err(error) => {
             let message = error.to_string();
@@ -80,6 +110,46 @@ pub fn sync_managed_local_playlists(database: &Database) -> Result<(), DatabaseE
             tracing::warn!(playlist_id, %error, "managed local playlist sync did not complete");
         }
     }
+    // External M3Us stay in their original location, but their custom artwork
+    // belongs to the same Refrain-managed artwork folder as other playlists.
+    for playlist in database.list_local_playlists()? {
+        if !playlist.m3u_managed && playlist.m3u_path.is_some() {
+            let detail = database.get_local_playlist(playlist.id)?;
+            if let Err(error) = migrate_custom_artwork(database, &detail) {
+                tracing::warn!(playlist_id = playlist.id, %error, "could not migrate imported playlist artwork");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn migrate_custom_artwork(
+    database: &Database,
+    playlist: &LocalPlaylistDetail,
+) -> Result<(), String> {
+    let Some(previous) = playlist.custom_artwork_path.as_deref() else {
+        return Ok(());
+    };
+    let previous_path = Path::new(previous);
+    let app_data_dir = database
+        .path()
+        .parent()
+        .ok_or("Application data folder is unavailable.")?;
+    if !is_owned_custom_playlist_artwork(app_data_dir, playlist.id, previous_path) {
+        return Ok(());
+    }
+    let destination_folder = configured_custom_artwork_directory(database)?;
+    if previous_path.parent() == Some(destination_folder.as_path()) || !previous_path.exists() {
+        return Ok(());
+    }
+    let moved = import_custom_playlist_artwork(&destination_folder, playlist.id, previous_path)?;
+    if let Err(error) =
+        database.set_local_playlist_artwork_path(playlist.id, Some(&moved.to_string_lossy()))
+    {
+        remove_custom_playlist_artwork(app_data_dir, playlist.id, &moved.to_string_lossy());
+        return Err(error.to_string());
+    }
+    remove_custom_playlist_artwork(app_data_dir, playlist.id, previous);
     Ok(())
 }
 
@@ -121,7 +191,7 @@ fn managed_playlist_target(
         ));
     }
 
-    let directory = library_root.join("Playlists");
+    let directory = library_root.join(PLAYLIST_DIRECTORY);
     let base = sanitize_playlist_filename(&playlist.name);
     let current = playlist.m3u_path.as_deref().map(PathBuf::from);
     let used = database
@@ -133,9 +203,9 @@ fn managed_playlist_target(
 
     for attempt in 0_u16..=999 {
         let filename = match attempt {
-            0 => format!("{base}.m3u8"),
-            1 => format!("{base} ({}).m3u8", playlist.id),
-            value => format!("{base} ({}-{value}).m3u8", playlist.id),
+            0 => format!("{base}.m3u"),
+            1 => format!("{base} ({}).m3u", playlist.id),
+            value => format!("{base} ({}-{value}).m3u", playlist.id),
         };
         let candidate = directory.join(filename);
         let belongs_to_current = current.as_ref().is_some_and(|path| path == &candidate);
@@ -195,6 +265,20 @@ fn remove_previous_managed_file(previous: &LocalPlaylistDetail, current: &LocalP
             %error,
             "could not remove superseded managed playlist file"
         );
+    }
+    // Only remove the legacy directory when it is empty. Imported M3Us and
+    // other user files left there must survive the migration.
+    if let (Some(old_parent), Some(new_parent)) = (
+        previous_path.parent(),
+        current
+            .m3u_path
+            .as_deref()
+            .and_then(|path| Path::new(path).parent()),
+    ) && old_parent.file_name().and_then(|name| name.to_str()) == Some("Playlists")
+        && old_parent.parent() == new_parent.parent()
+        && new_parent.file_name().and_then(|name| name.to_str()) == Some(PLAYLIST_DIRECTORY)
+    {
+        let _ = fs::remove_dir(old_parent);
     }
 }
 
@@ -298,7 +382,9 @@ fn managed_cover_target(m3u_path: &Path, extension: &str, current: Option<&Path>
     parent.join(format!("{stem}.cover-{}.{}", now_ms(), extension))
 }
 
-fn sync_local_playlist_file(playlist: &LocalPlaylistDetail) -> Result<(), LocalPlaylistSyncError> {
+fn sync_local_playlist_file(
+    playlist: &LocalPlaylistDetail,
+) -> Result<Vec<String>, LocalPlaylistSyncError> {
     let path = playlist.m3u_path.as_deref().ok_or_else(|| {
         LocalPlaylistSyncError::InvalidTarget(
             "Choose an M3U or M3U8 file before syncing this playlist.".to_owned(),
@@ -340,16 +426,26 @@ fn sync_local_playlist_file(playlist: &LocalPlaylistDetail) -> Result<(), LocalP
             _ => missing.push(entry.title.clone()),
         }
     }
-    if !missing.is_empty() {
-        return Err(LocalPlaylistSyncError::UnavailableTracks(missing));
-    }
-
     let mut output = String::from("#EXTM3U\n");
+    if playlist.m3u_managed {
+        output.push_str(MANAGED_M3U_MARKER);
+        output.push('\n');
+    }
     for entry in &playlist.entries {
-        write_entry(&mut output, parent, entry)?;
+        if entry
+            .file_path
+            .as_deref()
+            .is_some_and(|path| Path::new(path).is_file())
+        {
+            write_entry(&mut output, parent, entry)?;
+        } else {
+            output.push_str("#REFRAIN-UNAVAILABLE: ");
+            output.push_str(&sanitize_m3u_metadata(&entry.title));
+            output.push('\n');
+        }
     }
     replace_file(target, output.as_bytes())?;
-    Ok(())
+    Ok(missing)
 }
 
 fn write_entry(
@@ -438,7 +534,7 @@ fn replace_file(target: &Path, bytes: &[u8]) -> Result<(), LocalPlaylistSyncErro
     let filename = target
         .file_name()
         .and_then(|value| value.to_str())
-        .unwrap_or("playlist.m3u8");
+        .unwrap_or("playlist.m3u");
     let temporary = parent.join(format!(
         ".{filename}.refrain-{}-{}.tmp",
         std::process::id(),
@@ -519,7 +615,8 @@ mod tests {
     };
 
     use super::{
-        sync_local_playlist, sync_local_playlist_after_change, sync_playlist_cover_with_fetch,
+        MANAGED_M3U_MARKER, sync_local_playlist, sync_local_playlist_after_change,
+        sync_managed_local_playlists, sync_playlist_cover_with_fetch,
     };
 
     static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
@@ -617,7 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_creates_a_managed_m3u8_under_the_library_root() {
+    fn sync_creates_a_managed_m3u_under_the_library_root() {
         let workspace = TestWorkspace::new();
         let mut settings = workspace
             .database
@@ -635,19 +732,19 @@ mod tests {
             .expect("playlist should create");
 
         let synced = sync_local_playlist(&workspace.database, playlist.id)
-            .expect("playlist should create and sync its managed M3U8");
-        let expected = workspace.root.join("Playlists").join("Late Nights.m3u8");
+            .expect("playlist should create and sync its managed M3U");
+        let expected = workspace.root.join("00 Playlists").join("Late Nights.m3u");
 
         assert_eq!(synced.m3u_path.as_deref(), expected.to_str());
         assert!(expected.is_file());
         assert_eq!(
             fs::read_to_string(expected).expect("managed playlist should be readable"),
-            "#EXTM3U\n"
+            format!("#EXTM3U\n{MANAGED_M3U_MARKER}\n")
         );
     }
 
     #[test]
-    fn spotify_mirror_downloads_cover_next_to_managed_m3u8() {
+    fn spotify_mirror_downloads_cover_next_to_managed_m3u() {
         let workspace = TestWorkspace::new();
         let account_id = workspace
             .database
@@ -690,7 +787,7 @@ mod tests {
             .into_iter()
             .find(|playlist| playlist.source_collection_id == Some(collection_id))
             .expect("mirror should exist");
-        let playlist_path = workspace.root.join("Playlists/Late Nights.m3u8");
+        let playlist_path = workspace.root.join("00 Playlists/Late Nights.m3u");
         fs::create_dir_all(playlist_path.parent().unwrap()).unwrap();
         workspace
             .database
@@ -709,7 +806,7 @@ mod tests {
         })
         .expect("cover should synchronize");
 
-        let cover_path = workspace.root.join("Playlists/Late Nights.jpg");
+        let cover_path = workspace.root.join("00 Playlists/Late Nights.jpg");
         assert_eq!(fs::read(&cover_path).unwrap(), [0xff, 0xd8, 0xff, 0x00]);
         let (source_url, stored_path) = workspace
             .database
@@ -720,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_m3u8_follows_playlist_rename_without_leaving_the_old_file() {
+    fn managed_m3u_follows_playlist_rename_without_leaving_the_old_file() {
         let workspace = TestWorkspace::new();
         let mut settings = workspace
             .database
@@ -745,7 +842,7 @@ mod tests {
             .expect("playlist should rename");
         let renamed = sync_local_playlist(&workspace.database, playlist.id)
             .expect("renamed managed playlist should sync");
-        let renamed_path = workspace.root.join("Playlists/After Hours.m3u8");
+        let renamed_path = workspace.root.join("00 Playlists/After Hours.m3u");
 
         assert_eq!(renamed.m3u_path.as_deref(), renamed_path.to_str());
         assert!(renamed_path.is_file());
@@ -775,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_sync_after_membership_change_rewrites_managed_m3u8() {
+    fn automatic_sync_after_membership_change_rewrites_managed_m3u() {
         let workspace = TestWorkspace::new();
         let mut settings = workspace
             .database
@@ -813,8 +910,9 @@ mod tests {
     }
 
     #[test]
-    fn sync_refuses_missing_files_without_replacing_existing_playlist() {
+    fn sync_replaces_stale_m3u_with_playable_entries_when_tracks_are_missing() {
         let workspace = TestWorkspace::new();
+        let present = workspace.add_track("Playable", "playable.flac", true);
         let missing = workspace.add_track("Missing", "missing.flac", false);
         let playlist = workspace
             .database
@@ -822,33 +920,205 @@ mod tests {
             .expect("playlist should create");
         let playlist = workspace
             .database
-            .add_tracks_to_local_playlist(playlist.id, &[missing])
+            .add_tracks_to_local_playlist(playlist.id, &[present, missing])
             .expect("track should add");
-        let target = workspace.root.join("broken.m3u8");
+        let target = workspace.root.join("broken.m3u");
         fs::write(&target, "existing\n").expect("existing playlist should write");
         workspace
             .database
             .set_local_playlist_m3u_path(playlist.id, Some(&target.to_string_lossy()))
             .expect("target should set");
 
-        let error = sync_local_playlist(&workspace.database, playlist.id)
-            .expect_err("missing file should block sync");
+        let synced = sync_local_playlist(&workspace.database, playlist.id)
+            .expect("missing files should not block an updated playable M3U");
 
-        assert!(error.to_string().contains("Missing"));
-        assert_eq!(
-            fs::read_to_string(&target).expect("existing playlist should remain"),
-            "existing\n"
-        );
-        let detail = workspace
-            .database
-            .get_local_playlist(playlist.id)
-            .expect("playlist should load");
+        let updated = fs::read_to_string(&target).expect("updated playlist should exist");
+        assert!(updated.contains("playable.flac"));
+        assert!(updated.contains("#REFRAIN-UNAVAILABLE: Missing"));
+        assert!(!updated.contains("existing"));
+        assert!(!updated.contains("missing.flac"));
+        assert!(synced.last_synced_at.is_some());
         assert!(
-            detail
+            synced
                 .sync_error
                 .as_deref()
                 .is_some_and(|value| value.contains("Missing"))
         );
+
+        fs::write(workspace.root.join("missing.flac"), b"audio").unwrap();
+        let recovered = sync_local_playlist(&workspace.database, playlist.id).unwrap();
+        assert_eq!(recovered.sync_error, None);
+        assert!(
+            fs::read_to_string(&target)
+                .unwrap()
+                .contains("missing.flac")
+        );
+        assert!(
+            !fs::read_to_string(&target)
+                .unwrap()
+                .contains("#REFRAIN-UNAVAILABLE")
+        );
+    }
+
+    #[test]
+    fn startup_sync_migrates_previous_managed_m3u8_to_m3u() {
+        let workspace = TestWorkspace::new();
+        let mut settings = workspace.database.get_settings().unwrap();
+        settings.library_root = Some(workspace.root.to_string_lossy().into_owned());
+        workspace.database.update_settings(&settings).unwrap();
+        let playlist = workspace.database.create_local_playlist("Legacy").unwrap();
+        let legacy = workspace.root.join("Playlists/Legacy.m3u8");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, format!("#EXTM3U\n{MANAGED_M3U_MARKER}\nold\n")).unwrap();
+        workspace
+            .database
+            .set_local_playlist_managed_m3u_path(playlist.id, &legacy.to_string_lossy())
+            .unwrap();
+
+        sync_managed_local_playlists(&workspace.database).unwrap();
+
+        let expected = workspace.root.join("00 Playlists/Legacy.m3u");
+        assert_eq!(
+            workspace
+                .database
+                .get_local_playlist(playlist.id)
+                .unwrap()
+                .m3u_path
+                .as_deref(),
+            expected.to_str()
+        );
+        assert_eq!(
+            fs::read_to_string(&expected).unwrap(),
+            format!("#EXTM3U\n{MANAGED_M3U_MARKER}\n")
+        );
+        assert!(!legacy.exists());
+        assert!(!workspace.root.join("Playlists").exists());
+    }
+
+    #[test]
+    fn startup_migrates_existing_custom_artwork_without_changing_source_image() {
+        let workspace = TestWorkspace::new();
+        let mut settings = workspace.database.get_settings().unwrap();
+        settings.library_root = Some(workspace.root.to_string_lossy().into_owned());
+        workspace.database.update_settings(&settings).unwrap();
+        let playlist = workspace.database.create_local_playlist("Feels").unwrap();
+        let old_file = workspace
+            .root
+            .join("playlist-artwork")
+            .join(format!("{}-123.png", playlist.id));
+        fs::create_dir_all(old_file.parent().unwrap()).unwrap();
+        let bytes = b"\x89PNG\r\n\x1a\noriginal";
+        fs::write(&old_file, bytes).unwrap();
+        workspace
+            .database
+            .set_local_playlist_artwork_path(playlist.id, Some(&old_file.to_string_lossy()))
+            .unwrap();
+        sync_managed_local_playlists(&workspace.database).unwrap();
+
+        let detail = workspace.database.get_local_playlist(playlist.id).unwrap();
+        let artwork = PathBuf::from(detail.custom_artwork_path.unwrap());
+        assert_eq!(
+            artwork.parent(),
+            Some(workspace.root.join("00 Playlists").as_path())
+        );
+        assert_eq!(fs::read(&artwork).unwrap(), bytes);
+        assert!(!old_file.exists());
+        assert!(workspace.root.join("00 Playlists/Feels.m3u").exists());
+    }
+
+    #[test]
+    fn imported_playlist_keeps_m3u_but_moves_legacy_artwork_to_managed_folder() {
+        let workspace = TestWorkspace::new();
+        let mut settings = workspace.database.get_settings().unwrap();
+        settings.library_root = Some(workspace.root.to_string_lossy().into_owned());
+        workspace.database.update_settings(&settings).unwrap();
+        let m3u = workspace.root.join("Imported.m3u");
+        fs::write(&m3u, "#EXTM3U\n").unwrap();
+        let playlist = workspace
+            .database
+            .import_local_playlist_from_m3u("Imported", &m3u.to_string_lossy(), &[])
+            .unwrap();
+        let old_artwork = workspace
+            .root
+            .join("playlist-artwork")
+            .join(format!("{}-999.png", playlist.id));
+        fs::create_dir_all(old_artwork.parent().unwrap()).unwrap();
+        fs::write(&old_artwork, b"\x89PNG\r\n\x1a\nart").unwrap();
+        workspace
+            .database
+            .set_local_playlist_artwork_path(playlist.id, Some(&old_artwork.to_string_lossy()))
+            .unwrap();
+
+        sync_managed_local_playlists(&workspace.database).unwrap();
+        let detail = workspace.database.get_local_playlist(playlist.id).unwrap();
+        assert_eq!(detail.m3u_path.as_deref(), m3u.to_str());
+        assert_eq!(fs::read_to_string(&m3u).unwrap(), "#EXTM3U\n");
+        assert_eq!(
+            Path::new(detail.custom_artwork_path.as_deref().unwrap()).parent(),
+            Some(workspace.root.join("00 Playlists").as_path())
+        );
+        assert!(!old_artwork.exists());
+    }
+
+    #[test]
+    fn changing_library_root_relocates_custom_artwork_and_managed_m3u() {
+        let workspace = TestWorkspace::new();
+        let mut settings = workspace.database.get_settings().unwrap();
+        settings.library_root = Some(workspace.root.to_string_lossy().into_owned());
+        workspace.database.update_settings(&settings).unwrap();
+        let playlist = workspace.database.create_local_playlist("Drive").unwrap();
+        sync_local_playlist(&workspace.database, playlist.id).unwrap();
+        let original = workspace
+            .root
+            .join("00 Playlists")
+            .join(format!("refrain-artwork-{}-123.png", playlist.id));
+        fs::write(&original, b"\x89PNG\r\n\x1a\ncover").unwrap();
+        workspace
+            .database
+            .set_local_playlist_artwork_path(playlist.id, Some(&original.to_string_lossy()))
+            .unwrap();
+
+        let next_root = workspace.root.join("new-library");
+        fs::create_dir_all(&next_root).unwrap();
+        settings.library_root = Some(next_root.to_string_lossy().into_owned());
+        workspace.database.update_settings(&settings).unwrap();
+        sync_managed_local_playlists(&workspace.database).unwrap();
+
+        let updated = workspace.database.get_local_playlist(playlist.id).unwrap();
+        let artwork = Path::new(updated.custom_artwork_path.as_deref().unwrap());
+        assert_eq!(
+            artwork.parent(),
+            Some(next_root.join("00 Playlists").as_path())
+        );
+        assert_eq!(fs::read(artwork).unwrap(), b"\x89PNG\r\n\x1a\ncover");
+        assert!(!original.exists());
+        assert_eq!(
+            updated.m3u_path.as_deref(),
+            next_root.join("00 Playlists/Drive.m3u").to_str()
+        );
+        assert!(!workspace.root.join("00 Playlists/Drive.m3u").exists());
+    }
+
+    #[test]
+    fn legacy_playlist_directory_is_retained_if_it_contains_unmanaged_files() {
+        let workspace = TestWorkspace::new();
+        let mut settings = workspace.database.get_settings().unwrap();
+        settings.library_root = Some(workspace.root.to_string_lossy().into_owned());
+        workspace.database.update_settings(&settings).unwrap();
+        let playlist = workspace.database.create_local_playlist("Managed").unwrap();
+        let legacy = workspace.root.join("Playlists/Managed.m3u");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, format!("#EXTM3U\n{MANAGED_M3U_MARKER}\n")).unwrap();
+        fs::write(workspace.root.join("Playlists/Personal.m3u"), "#EXTM3U\n").unwrap();
+        workspace
+            .database
+            .set_local_playlist_managed_m3u_path(playlist.id, &legacy.to_string_lossy())
+            .unwrap();
+
+        sync_managed_local_playlists(&workspace.database).unwrap();
+        assert!(workspace.root.join("00 Playlists/Managed.m3u").exists());
+        assert!(workspace.root.join("Playlists/Personal.m3u").exists());
+        assert!(!legacy.exists());
     }
 
     #[test]

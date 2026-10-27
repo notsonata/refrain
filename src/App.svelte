@@ -6,6 +6,7 @@
   import IssuesView from './components/IssuesView.svelte';
   import LibraryView from './components/LibraryView.svelte';
   import LocalPlaylistsView from './components/LocalPlaylistsView.svelte';
+  import MirrorSettings from './components/MirrorSettings.svelte';
   import SettingsView from './components/SettingsView.svelte';
   import SpotifyWorkspace from './components/SpotifyWorkspace.svelte';
   import StagingView from './components/StagingView.svelte';
@@ -22,7 +23,7 @@
     startAntraDeviceLogin,
     type AntraDeviceCode,
   } from './lib/antra';
-  import { chooseLibraryRoot } from './lib/dialog';
+  import { chooseLibraryRoot, choosePlaylistArtwork } from './lib/dialog';
   import {
     getMatchReview,
     listIssues,
@@ -46,6 +47,20 @@
     rejectMatch,
   } from './lib/matching';
   import {
+    cancelMirror,
+    mirrorProgressDetails,
+    mirrorProgressSummary,
+    mirrorTimeEstimate,
+    mirrorTransferSpeed,
+    runMirror,
+    updateMirrorTiming,
+    updateMirrorTransferRate,
+    type MirrorProgress,
+    type MirrorTarget,
+    type MirrorTiming,
+    type MirrorTransferRate,
+  } from './lib/mirror';
+  import {
     loadPinnedSpotifyCollections,
     pinnedCollectionKey,
     savePinnedSpotifyCollections,
@@ -57,9 +72,11 @@
     deleteLocalPlaylist,
     getLocalPlaylist,
     listLocalPlaylists,
+    localPlaylistBrowserItems,
     moveLocalPlaylistEntry,
     removeLocalPlaylistEntry,
     renameLocalPlaylist,
+    setLocalPlaylistArtwork,
     type LocalPlaylistDetail,
     type LocalPlaylistSummary,
   } from './lib/playlists';
@@ -135,14 +152,15 @@
   } from './lib/staging';
 
   type AppView = 'library' | 'spotify' | 'staging' | 'issues' | 'settings';
-  type LocalSection = 'songs' | 'playlists';
+  type LocalSection = 'songs' | 'playlists' | 'mirrors';
   type SpotifySection = 'liked' | 'albums' | 'playlists';
   type SidebarFeedback = {
     id: string;
-    kind: 'error' | 'progress' | 'success';
+    kind: 'error' | 'progress' | 'success' | 'info';
     title: string;
     message: string;
-    action?: 'cancelSync' | 'cancelSource';
+    details?: string;
+    action?: 'cancelSync' | 'cancelSource' | 'cancelMirror';
   };
 
   const sourceProgressEvent = 'spotify-source-refresh-progress';
@@ -234,6 +252,21 @@
   let localPlaylistLoading = false;
   let localPlaylistBusy = false;
   let localPlaylistError: string | null = null;
+  let mirrorBusyTarget: number | null = null;
+  let mirrorBusyPath = '';
+  let mirrorProgress: MirrorProgress | null = null;
+  let mirrorTiming: MirrorTiming | null = null;
+  let mirrorTransferRate: MirrorTransferRate | null = null;
+  let mirrorNow = Date.now();
+  $: mirrorSpeed = mirrorTransferSpeed(
+    mirrorTransferRate,
+    mirrorProgress,
+    mirrorNow,
+  );
+  let mirrorCancelling = false;
+  let mirrorCancelError: string | null = null;
+  let mirrorOutcome: SidebarFeedback | null = null;
+  let mirrorRunRevision = 0;
   let issues: IssueRow[] = [];
   let issueTotal = 0;
   let issueCounts: IssueCounts = {
@@ -267,8 +300,27 @@
   let sidebarFeedbackDialog: SidebarFeedback | null = null;
   let sidebarFeedback: SidebarFeedback[] = [];
   let currentSidebarFeedback: SidebarFeedback | null = null;
+  let liveSidebarFeedbackDialog: SidebarFeedback | null = null;
 
   $: sidebarFeedback = [
+    ...(mirrorBusyTarget !== null
+      ? [
+          {
+            id: 'mirror-progress',
+            kind: 'progress' as const,
+            title: mirrorCancelling ? 'Cancelling mirror' : 'Mirroring library',
+            message: mirrorProgress
+              ? `${mirrorProgressSummary(mirrorProgress)}\n${mirrorTimeEstimate(mirrorTiming, mirrorProgress, mirrorNow)}${mirrorProgress.operation === 'Copying file' ? ` · Transfer ${mirrorSpeed ?? 'calculating…'}` : ''}`
+              : 'Starting mirror…',
+            details: mirrorProgress
+              ? `${mirrorBusyPath}\n${mirrorProgressDetails(mirrorProgress)}\n${mirrorTimeEstimate(mirrorTiming, mirrorProgress, mirrorNow)}${mirrorProgress.operation === 'Copying file' ? `\nTransfer speed: ${mirrorSpeed ?? 'Calculating…'}` : ''}${mirrorCancelError ? `\nCancel request failed: ${mirrorCancelError}` : ''}`
+              : mirrorBusyPath,
+            action: mirrorCancelling ? undefined : ('cancelMirror' as const),
+          },
+        ]
+      : mirrorOutcome
+        ? [mirrorOutcome]
+        : []),
     ...(syncError
       ? [
           {
@@ -374,15 +426,25 @@
     sidebarFeedbackIndex = Math.max(0, sidebarFeedback.length - 1);
   }
   $: currentSidebarFeedback = sidebarFeedback[sidebarFeedbackIndex] ?? null;
+  $: liveSidebarFeedbackDialog =
+    sidebarFeedbackDialog?.id === 'mirror-progress'
+      ? (sidebarFeedback.find((item) => item.id === 'mirror-progress') ??
+        mirrorOutcome ??
+        sidebarFeedbackDialog)
+      : sidebarFeedbackDialog;
 
   $: stagingSyncRun = latestStagingSyncRun(localSyncRun, spotifySyncRun);
 
   onMount(() => {
+    const mirrorTimer = window.setInterval(() => {
+      if (mirrorBusyTarget !== null) mirrorNow = Date.now();
+    }, 1000);
     isMacOS = navigator.userAgent.includes('Macintosh');
     let disposed = false;
     let sourceUnlisten: UnlistenFn | undefined;
     let libraryUnlisten: UnlistenFn | undefined;
     let syncUnlisten: UnlistenFn | undefined;
+    let mirrorUnlisten: UnlistenFn | undefined;
     const stagingPoll = window.setInterval(() => {
       if (!disposed && activeView === 'staging') {
         void loadStaging(true);
@@ -431,13 +493,34 @@
         syncUnlisten = stopListening;
       }
     });
+    void listen<MirrorProgress>('library-mirror-progress', (event) => {
+      if (event.payload.targetId === mirrorBusyTarget) {
+        mirrorNow = Date.now();
+        mirrorTiming = updateMirrorTiming(
+          mirrorTiming,
+          event.payload,
+          mirrorNow,
+        );
+        mirrorTransferRate = updateMirrorTransferRate(
+          mirrorTransferRate,
+          event.payload,
+          mirrorNow,
+        );
+        mirrorProgress = event.payload;
+      }
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else mirrorUnlisten = stopListening;
+    });
     void initialize();
 
     return () => {
       disposed = true;
+      window.clearInterval(mirrorTimer);
       sourceUnlisten?.();
       libraryUnlisten?.();
       syncUnlisten?.();
+      mirrorUnlisten?.();
       window.clearInterval(stagingPoll);
       window.removeEventListener('contextmenu', suppressWebviewContextMenu);
     };
@@ -1002,9 +1085,92 @@
       if (!libraryTracksLoaded && !libraryTracksLoading) {
         void loadLibraryTracks();
       }
-    } else {
+    } else if (section === 'playlists') {
       selectedLocalPlaylist = null;
       void loadLocalPlaylists();
+    }
+  }
+
+  async function startMirror(target: MirrorTarget) {
+    if (mirrorBusyTarget !== null) return;
+    mirrorBusyTarget = target.id;
+    mirrorBusyPath = target.path;
+    mirrorNow = Date.now();
+    mirrorTiming = null;
+    mirrorTransferRate = null;
+    mirrorCancelling = false;
+    mirrorCancelError = null;
+    mirrorProgress = {
+      targetId: target.id,
+      completed: 0,
+      total: 0,
+      phase: 'preparing',
+      operation: 'Starting mirror',
+      currentFile: null,
+      copied: 0,
+      unchanged: 0,
+      removed: 0,
+      fileBytesDone: 0,
+      fileBytesTotal: 0,
+    };
+    mirrorTiming = updateMirrorTiming(null, mirrorProgress, mirrorNow);
+    mirrorOutcome = null;
+    sidebarFeedbackIndex = 0;
+
+    try {
+      const result = await runMirror(target.id);
+      mirrorOutcome = {
+        id: 'mirror-success',
+        kind: 'success',
+        title: 'Library mirror complete',
+        message: `${target.path} · ${result.copied} copied · ${result.unchanged} unchanged · ${result.removed} removed`,
+      };
+    } catch (error) {
+      const reason = operationError(error, 'Mirror run failed.');
+      mirrorOutcome = reason.includes('Mirroring cancelled.')
+        ? {
+            id: 'mirror-cancelled',
+            kind: 'info',
+            title: 'Library mirror cancelled',
+            message: `${target.path} · You can safely resume by mirroring again.`,
+          }
+        : {
+            id: 'mirror-error',
+            kind: 'error',
+            title: 'Library mirror failed',
+            message: `${target.path} · ${reason}`,
+          };
+    } finally {
+      mirrorBusyTarget = null;
+      mirrorProgress = null;
+      mirrorTiming = null;
+      mirrorTransferRate = null;
+      mirrorCancelling = false;
+      mirrorRunRevision += 1;
+      sidebarFeedbackIndex = 0;
+    }
+  }
+
+  async function cancelActiveMirror() {
+    if (mirrorBusyTarget === null || mirrorCancelling) return;
+    const targetId = mirrorBusyTarget;
+    mirrorCancelling = true;
+    mirrorCancelError = null;
+    try {
+      const requested = await cancelMirror(targetId);
+      if (!requested && mirrorBusyTarget === targetId) {
+        mirrorCancelling = false;
+        mirrorCancelError =
+          'The mirror is no longer active. Wait for its result.';
+      }
+    } catch (error) {
+      if (mirrorBusyTarget === targetId) {
+        mirrorCancelling = false;
+        mirrorCancelError = operationError(
+          error,
+          'Could not cancel mirroring.',
+        );
+      }
     }
   }
 
@@ -1147,6 +1313,13 @@
     }
   }
 
+  async function openSpotifyLocalCopy(playlistId: number) {
+    localSection = 'playlists';
+    localExpanded = true;
+    activeView = 'library';
+    await selectLocalPlaylist(playlistId);
+  }
+
   async function createNewLocalPlaylist(name: string) {
     localPlaylistBusy = true;
     localPlaylistError = null;
@@ -1183,9 +1356,51 @@
     }
   }
 
+  async function replaceLocalPlaylistArtwork(playlistId: number) {
+    if (localPlaylistBusy) return;
+    try {
+      // Canceling the native picker leaves the existing artwork unchanged.
+      const path = await choosePlaylistArtwork();
+      if (path !== null) await changeLocalPlaylistArtwork(playlistId, path);
+    } catch (error) {
+      localPlaylistError = operationError(
+        error,
+        'Could not choose playlist artwork.',
+      );
+    }
+  }
+
+  async function changeLocalPlaylistArtwork(
+    playlistId: number,
+    path: string | null,
+  ) {
+    if (localPlaylistBusy) return;
+    localPlaylistBusy = true;
+    localPlaylistError = null;
+    try {
+      const updated = await setLocalPlaylistArtwork(playlistId, path);
+      if (selectedLocalPlaylist?.id === playlistId) {
+        selectedLocalPlaylist = updated;
+      }
+      await refreshLocalPlaylistSummaries();
+    } catch (error) {
+      localPlaylistError = operationError(
+        error,
+        'Could not update playlist artwork.',
+      );
+    } finally {
+      localPlaylistBusy = false;
+    }
+  }
+
   async function deleteSelectedLocalPlaylist() {
     if (!selectedLocalPlaylist || localPlaylistBusy) return;
-    if (!window.confirm(`Delete “${selectedLocalPlaylist.name}”?`)) return;
+    const isExternalPlaylist =
+      !selectedLocalPlaylist.m3uManaged && !!selectedLocalPlaylist.m3uPath;
+    const prompt = isExternalPlaylist
+      ? `Remove “${selectedLocalPlaylist.name}” from Refrain? The linked playlist file will stay on disk and future scans will ignore it.`
+      : `Delete “${selectedLocalPlaylist.name}”?`;
+    if (!window.confirm(prompt)) return;
     localPlaylistBusy = true;
     localPlaylistError = null;
     try {
@@ -1650,7 +1865,12 @@
     issueError = null;
     try {
       await confirmMatch(sourceTrackId, libraryTrackId);
-      await Promise.all([loadIssues(), loadLibraryTracks(), loadStaging(true)]);
+      await Promise.all([
+        loadIssues(),
+        loadLibraryTracks(),
+        loadLocalPlaylists(),
+        loadStaging(true),
+      ]);
     } catch (error) {
       issueError = operationError(error, 'Could not confirm the match.');
     } finally {
@@ -1666,7 +1886,11 @@
     issueError = null;
     try {
       await rejectMatch(sourceTrackId, libraryTrackId);
-      await Promise.all([loadIssues(), loadStaging(true)]);
+      await Promise.all([
+        loadIssues(),
+        loadLocalPlaylists(),
+        loadStaging(true),
+      ]);
     } catch (error) {
       issueError = operationError(error, 'Could not reject the match.');
     } finally {
@@ -1682,7 +1906,11 @@
     issueError = null;
     try {
       await clearMatchDecision(sourceTrackId, libraryTrackId);
-      await Promise.all([loadIssues(), loadStaging(true)]);
+      await Promise.all([
+        loadIssues(),
+        loadLocalPlaylists(),
+        loadStaging(true),
+      ]);
     } catch (error) {
       issueError = operationError(error, 'Could not clear the match decision.');
     } finally {
@@ -1954,6 +2182,8 @@
       void cancelSynchronization();
     } else if (feedback.action === 'cancelSource') {
       void cancelSourceRefresh();
+    } else if (feedback.action === 'cancelMirror') {
+      void cancelActiveMirror();
     }
   }
 
@@ -2017,6 +2247,9 @@
           type="button"
           class:active={activeView === 'library' && localSection === 'songs'}
           class="nav-subrow"
+          aria-current={activeView === 'library' && localSection === 'songs'
+            ? 'page'
+            : undefined}
           onclick={() => openLocalSection('songs')}
         >
           <Icon name="local" size={16} />
@@ -2028,12 +2261,30 @@
           class:active={activeView === 'library' &&
             localSection === 'playlists'}
           class="nav-subrow"
+          aria-current={activeView === 'library' && localSection === 'playlists'
+            ? 'page'
+            : undefined}
           onclick={() => openLocalSection('playlists')}
         >
           <Icon name="playlist" size={16} />
           <span>Playlists</span>
-          <span class="nav-count">{localPlaylists.length.toLocaleString()}</span
+          <span class="nav-count"
+            >{localPlaylistBrowserItems(
+              localPlaylists,
+            ).length.toLocaleString()}</span
           >
+        </button>
+        <button
+          type="button"
+          class:active={activeView === 'library' && localSection === 'mirrors'}
+          class="nav-subrow"
+          aria-current={activeView === 'library' && localSection === 'mirrors'
+            ? 'page'
+            : undefined}
+          onclick={() => openLocalSection('mirrors')}
+        >
+          <Icon name="copy" size={16} />
+          <span>Mirrors</span>
         </button>
       {/if}
 
@@ -2056,6 +2307,9 @@
           type="button"
           class:active={activeView === 'spotify' && spotifySection === 'liked'}
           class="nav-subrow"
+          aria-current={activeView === 'spotify' && spotifySection === 'liked'
+            ? 'page'
+            : undefined}
           onclick={() => {
             activeView = 'spotify';
             void loadSpotifySection('liked');
@@ -2073,6 +2327,9 @@
           type="button"
           class:active={activeView === 'spotify' && spotifySection === 'albums'}
           class="nav-subrow"
+          aria-current={activeView === 'spotify' && spotifySection === 'albums'
+            ? 'page'
+            : undefined}
           onclick={() => {
             activeView = 'spotify';
             void loadSpotifySection('albums');
@@ -2087,6 +2344,10 @@
           class:active={activeView === 'spotify' &&
             spotifySection === 'playlists'}
           class="nav-subrow"
+          aria-current={activeView === 'spotify' &&
+          spotifySection === 'playlists'
+            ? 'page'
+            : undefined}
           onclick={() => {
             activeView = 'spotify';
             void loadSpotifySection('playlists');
@@ -2106,6 +2367,7 @@
         type="button"
         class:active={activeView === 'staging'}
         class="nav-row"
+        aria-current={activeView === 'staging' ? 'page' : undefined}
         onclick={() => openView('staging')}
       >
         <Icon name="download" size={17} />
@@ -2117,6 +2379,7 @@
         type="button"
         class:active={activeView === 'issues'}
         class="nav-row"
+        aria-current={activeView === 'issues' ? 'page' : undefined}
         onclick={() => openView('issues')}
       >
         <Icon name="issues" size={17} />
@@ -2156,7 +2419,10 @@
               </span>
               <span class="sidebar-feedback-copy">
                 <strong>{currentSidebarFeedback.title}</strong>
-                <span>{currentSidebarFeedback.message}</span>
+                <span
+                  class:mirror-progress-message={currentSidebarFeedback.id ===
+                    'mirror-progress'}>{currentSidebarFeedback.message}</span
+                >
               </span>
             </button>
             {#if sidebarFeedback.length > 1 || currentSidebarFeedback.action}
@@ -2198,53 +2464,62 @@
           </div>
         </div>
       {/if}
-      <div class="sidebar-status" aria-label="Spotify synchronization status">
-        <span>
-          Last sync {formatSyncTime(
-            spotifySyncRun?.finishedAt ?? spotifySyncRun?.startedAt,
-          )}
-        </span>
-        <span>
-          Last refresh {formatSyncTime(
-            sourceOverview?.account?.lastSourceSyncAt,
-          )}
-        </span>
-      </div>
       <div
-        class="sidebar-sync-actions"
+        class="sidebar-sync-panel"
         aria-label="Library synchronization controls"
       >
+        <div class="sidebar-sync-status" aria-live="polite">
+          {syncBusy
+            ? 'Sync in progress…'
+            : sourceBusy
+              ? 'Refreshing Spotify…'
+              : `Last sync ${formatSyncTime(
+                  spotifySyncRun?.finishedAt ?? spotifySyncRun?.startedAt,
+                )}`}
+        </div>
+        <div class="sidebar-sync-actions">
+          <button
+            type="button"
+            class="sidebar-action-button primary"
+            onclick={runLibrarySynchronization}
+            disabled={!authStatus?.connected ||
+              syncBusy ||
+              sourceBusy ||
+              stagingBusy}
+          >
+            <span class:is-spinning={syncBusy} class="sidebar-action-icon">
+              <Icon name="sync" size={16} />
+            </span>
+            {syncBusy ? 'Syncing…' : 'Sync Library'}
+          </button>
+          <button
+            type="button"
+            class="sidebar-action-button sidebar-refresh-button"
+            onclick={refreshSource}
+            disabled={!authStatus?.connected || sourceBusy || syncBusy}
+            aria-label={sourceBusy ? 'Refreshing Spotify' : 'Refresh Spotify'}
+            title={`Refresh Spotify · Last refresh ${formatSyncTime(
+              sourceOverview?.account?.lastSourceSyncAt,
+            )}`}
+          >
+            <span class:is-spinning={sourceBusy} class="sidebar-action-icon">
+              <Icon name="refresh" size={17} />
+            </span>
+          </button>
+        </div>
+      </div>
+      <div class="sidebar-settings-row">
         <button
           type="button"
-          class="sidebar-action-button"
-          onclick={runLibrarySynchronization}
-          disabled={!authStatus?.connected ||
-            syncBusy ||
-            sourceBusy ||
-            stagingBusy}
+          class:active={activeView === 'settings'}
+          class="nav-row"
+          aria-current={activeView === 'settings' ? 'page' : undefined}
+          onclick={() => openView('settings')}
         >
-          <Icon name="sync" size={14} />
-          {syncBusy ? 'Syncing…' : 'Sync Library'}
-        </button>
-        <button
-          type="button"
-          class="sidebar-action-button primary"
-          onclick={refreshSource}
-          disabled={!authStatus?.connected || sourceBusy || syncBusy}
-        >
-          <Icon name="refresh" size={14} />
-          {sourceBusy ? 'Refreshing…' : 'Refresh Spotify'}
+          <Icon name="settings" size={17} />
+          <span>Settings</span>
         </button>
       </div>
-      <button
-        type="button"
-        class:active={activeView === 'settings'}
-        class="nav-row"
-        onclick={() => openView('settings')}
-      >
-        <Icon name="settings" size={14} />
-        <span>Settings</span>
-      </button>
     </div>
   </aside>
 
@@ -2291,10 +2566,42 @@
           onCreate={createNewLocalPlaylist}
           onBack={closeLocalPlaylist}
           onRename={renameSelectedLocalPlaylist}
+          onReplaceArtwork={replaceLocalPlaylistArtwork}
+          onRestoreArtwork={(id) => changeLocalPlaylistArtwork(id, null)}
           onDelete={deleteSelectedLocalPlaylist}
           onMoveEntry={moveSelectedLocalPlaylistEntry}
           onRemoveEntry={removeSelectedLocalPlaylistEntry}
         />
+      {:else if activeView === 'library' && localSection === 'mirrors'}
+        <div class="screen">
+          <header class="page-header">
+            <div>
+              <h1 class="page-title">Mirrors</h1>
+              <p class="page-description">
+                Manage copies of your music library on other drives.
+              </p>
+            </div>
+          </header>
+          <div class="mirror-workspace-content">
+            {#key mirrorRunRevision}
+              <MirrorSettings
+                {libraryRoot}
+                busyTarget={mirrorBusyTarget}
+                progress={mirrorProgress}
+                timeEstimate={mirrorTimeEstimate(
+                  mirrorTiming,
+                  mirrorProgress,
+                  mirrorNow,
+                )}
+                transferSpeed={mirrorSpeed}
+                cancelling={mirrorCancelling}
+                cancelError={mirrorCancelError}
+                onRun={startMirror}
+                onCancel={cancelActiveMirror}
+              />
+            {/key}
+          </div>
+        </div>
       {:else if activeView === 'spotify'}
         <SpotifyWorkspace
           bind:detailsSidebarOpen={spotifyDetailsSidebarOpen}
@@ -2303,6 +2610,7 @@
           {savedAlbums}
           {savedAlbumTotal}
           {playlists}
+          {localPlaylists}
           {playlistTotal}
           {currentCollection}
           entries={collectionEntries}
@@ -2319,6 +2627,7 @@
           {trackingBulkBusy}
           onSelectSavedAlbum={selectSavedAlbum}
           onSelectPlaylist={selectPlaylist}
+          onOpenLocalPlaylist={openSpotifyLocalCopy}
           onBackToCollections={closeSpotifyCollection}
           onLoadMoreSavedAlbums={loadMoreSavedAlbums}
           onLoadMorePlaylists={loadMorePlaylists}
@@ -2436,7 +2745,7 @@
     </div>
   </section>
 
-  {#if sidebarFeedbackDialog}
+  {#if liveSidebarFeedbackDialog}
     <div class="sidebar-feedback-modal-layer">
       <button
         type="button"
@@ -2445,7 +2754,7 @@
         onclick={() => (sidebarFeedbackDialog = null)}
       ></button>
       <div
-        class:error={sidebarFeedbackDialog.kind === 'error'}
+        class:error={liveSidebarFeedbackDialog.kind === 'error'}
         class="sidebar-feedback-modal"
         role="dialog"
         aria-modal="true"
@@ -2454,14 +2763,14 @@
         <div class="sidebar-feedback-modal-header">
           <div>
             <span class="sidebar-feedback-modal-kicker">
-              {sidebarFeedbackDialog.kind === 'error'
+              {liveSidebarFeedbackDialog.kind === 'error'
                 ? 'Error'
-                : sidebarFeedbackDialog.kind === 'success'
+                : liveSidebarFeedbackDialog.kind === 'success'
                   ? 'Notification'
                   : 'In progress'}
             </span>
             <h2 id="sidebar-feedback-modal-title">
-              {sidebarFeedbackDialog.title}
+              {liveSidebarFeedbackDialog.title}
             </h2>
           </div>
           <button
@@ -2474,9 +2783,10 @@
           </button>
         </div>
         <p class="sidebar-feedback-modal-message">
-          {sidebarFeedbackDialog.message}
+          {liveSidebarFeedbackDialog.details ??
+            liveSidebarFeedbackDialog.message}
         </p>
-        {#if sidebarFeedbackDialog.action}
+        {#if liveSidebarFeedbackDialog.action}
           <div class="sidebar-feedback-modal-actions">
             <button
               type="button"

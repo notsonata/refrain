@@ -23,6 +23,42 @@ The approved visual direction is represented by these screen families:
 
 New screens must feel like they belong to the exact same product.
 
+**Current implementation authority:** `src/app.css` defines the live light and dark
+semantic tokens and shared control styles. The hexadecimal palettes and mockup
+examples later in this document record the original design direction; use the
+implemented tokens for production UI. Never copy an old accent hex value into
+filled buttons or dark-theme controls without verifying the foreground contrast.
+
+## Implemented accessibility and control rules
+
+- Primary filled actions use `--action-primary-bg`, `--action-primary-hover`, and
+  `--action-primary-text`. The readable blue foreground token `--blue-600` is for
+  links, icons, and text on pale neutral/tinted surfaces, **not** a button fill.
+- Disabled actions use the `--action-disabled-*` or `--control-disabled-*`
+  combinations. Do not make disabled labels unreadable by applying opacity.
+- Status text uses the matching semantic `--green-*`, `--orange-*`, `--red-*`,
+  or `--blue-*` foreground and tinted background token pair.
+- Resolve tokens for both `:root` and `html[data-theme='dark']`. Aim for WCAG AA
+  4.5:1 text contrast, with at least 3:1 for meaningful non-text controls.
+  State must remain distinguishable without relying on color alone.
+- Every button, menu, input, tab, row action, and switch needs a visible keyboard
+  focus indicator. Selected and hover states must remain distinct in both themes.
+- Use the shared `.btn`, `.btn-primary`, `.btn-attention`, `.icon-button`, and
+  sidebar control styles wherever possible. Settings and Staging can size their
+  own controls but must use the same semantic colors and interaction states.
+- Preserve compact desktop spacing without shrinking pointer targets below
+  practical sizes: compact text actions should be at least 32px tall, icon
+  actions generally at least 34px square, and popup menu items at least 36px
+  tall. Check minimum window width, reduced motion, overflowing metadata,
+  and keyboard navigation before approving a change.
+- Context menus must open from keyboard activation, support Up/Down and
+  Home/End navigation between enabled actions, close on Escape, and restore
+  focus to their trigger when dismissed or activated from the keyboard.
+- Contrast regression checks live in `src/app-css.test.ts`; they validate the
+  semantic foreground/background combinations in both themes. Revalidate
+  rendered states during interactive UI reviews, particularly disabled,
+  hover, selected, and focus states.
+
 ---
 
 # 2. Core Design Principles
@@ -351,6 +387,12 @@ Recommended:
 Use it only when persistent contextual detail is useful.
 
 Do not add an inspector just to fill space.
+
+Staging keeps its queue and contextual inspector side by side throughout the
+supported desktop window range, including the 973 px minimum. Keep the inspector
+approximately 260 to 300 px wide, use a compact 64 px artwork-and-title header,
+and let the queue and inspector scroll independently. Reflow queue-row metadata
+and selection actions within their own pane before changing the workspace layout.
 
 ## 5.5 Master-detail split
 

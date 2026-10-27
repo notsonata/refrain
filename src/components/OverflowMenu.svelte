@@ -22,7 +22,48 @@
   }
 
   function onKeyDown(event: KeyboardEvent) {
-    if (event.key === 'Escape') close();
+    if (event.key === 'Escape' && open) {
+      event.preventDefault();
+      close();
+      trigger.focus();
+    } else if (event.key === 'Tab') {
+      close();
+    }
+  }
+
+  function enabledItems() {
+    return Array.from(
+      menu?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ) ?? [],
+    );
+  }
+
+  function focusMenuItem(index: number) {
+    const buttons = enabledItems();
+    if (!buttons.length) return;
+    buttons[(index + buttons.length) % buttons.length].focus();
+  }
+
+  function onMenuKeyDown(event: KeyboardEvent) {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const buttons = enabledItems();
+    if (!buttons.length) return;
+    const currentIndex = buttons.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? buttons.length - 1
+          : event.key === 'ArrowDown'
+            ? currentIndex + 1
+            : currentIndex < 0
+              ? buttons.length - 1
+              : currentIndex - 1;
+    focusMenuItem(nextIndex);
   }
 
   function onViewportChange() {
@@ -70,7 +111,7 @@
     });
   }
 
-  function toggle() {
+  function toggle(event: MouseEvent) {
     if (open) {
       close();
       return;
@@ -78,11 +119,25 @@
     open = true;
     startListening();
     positionMenu();
+    if (event.detail === 0) requestAnimationFrame(() => focusMenuItem(0));
+  }
+
+  function onTriggerKeyDown(event: KeyboardEvent) {
+    if (open || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+    event.preventDefault();
+    open = true;
+    startListening();
+    positionMenu();
+    requestAnimationFrame(() =>
+      focusMenuItem(event.key === 'ArrowUp' ? -1 : 0),
+    );
   }
 
   function run(item: OverflowMenuItem) {
     if (item.disabled) return;
+    const restoreFocus = menu?.contains(document.activeElement);
     close();
+    if (restoreFocus) trigger.focus();
     try {
       const result = item.action();
       void Promise.resolve(result).catch((error) => {
@@ -113,6 +168,7 @@
       aria-haspopup="menu"
       aria-expanded={open}
       onclick={toggle}
+      onkeydown={onTriggerKeyDown}
     >
       <Icon name="more" size={16} />
     </button>
@@ -121,6 +177,8 @@
         bind:this={menu}
         class="overflow-menu"
         role="menu"
+        tabindex="-1"
+        onkeydown={onMenuKeyDown}
         style={`top:${top}px; left:${left}px;`}
       >
         {#each items as item (item.label)}

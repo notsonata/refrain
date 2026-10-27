@@ -18,6 +18,7 @@ use walkdir::{DirEntry, WalkDir};
 use crate::{
     db::{Database, DatabaseError, LocalFileWrite},
     domain::LocalFile,
+    playlist_sync::MANAGED_M3U_MARKER,
 };
 
 pub const LOCAL_LIBRARY_SCAN_PROGRESS_EVENT: &str = "local-library-scan-progress";
@@ -326,6 +327,18 @@ fn import_local_playlists(
         return Ok(());
     }
 
+    let known_playlist_paths = database
+        .list_local_playlists()?
+        .into_iter()
+        .filter_map(|playlist| playlist.m3u_path)
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .collect::<HashSet<_>>();
+    let ignored_playlist_paths = database
+        .ignored_playlist_import_paths()?
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<HashSet<_>>();
+
     let mut local_track_ids = database
         .local_files_snapshot()?
         .into_iter()
@@ -335,6 +348,12 @@ fn import_local_playlists(
 
     for playlist_path in playlist_paths {
         let canonical_playlist = fs::canonicalize(playlist_path)?;
+        if known_playlist_paths.contains(&canonical_playlist)
+            || ignored_playlist_paths.contains(&canonical_playlist)
+            || has_managed_playlist_marker(&canonical_playlist)?
+        {
+            continue;
+        }
         let mut track_ids = Vec::new();
         for path in parse_m3u_paths(&canonical_playlist)? {
             let library_track_id = match local_track_ids.get(&path).copied() {
@@ -366,6 +385,15 @@ fn import_local_playlists(
         )?;
     }
     Ok(())
+}
+
+fn has_managed_playlist_marker(path: &Path) -> Result<bool, LocalLibraryError> {
+    let mut header = [0_u8; 128];
+    let length = fs::File::open(path)?.read(&mut header)?;
+    Ok(String::from_utf8_lossy(&header[..length])
+        .lines()
+        .take(3)
+        .any(|line| line.trim_end_matches('\r') == MANAGED_M3U_MARKER))
 }
 
 fn parse_m3u_paths(path: &Path) -> Result<Vec<PathBuf>, LocalLibraryError> {
@@ -608,7 +636,11 @@ mod tests {
         },
     };
 
-    use crate::db::Database;
+    use crate::{
+        db::Database,
+        domain::{SourceAccount, SourceCollection},
+        playlist_sync::sync_local_playlist,
+    };
 
     use super::*;
 
@@ -827,6 +859,176 @@ mod tests {
             3,
             "rescanning must not overwrite an already imported Refrain playlist"
         );
+    }
+
+    #[test]
+    fn scan_does_not_reimport_tracked_spotify_mirror_after_untracking() {
+        let test = TestLibrary::new("orphaned-spotify-mirror");
+        let database = test.open_database();
+        let mut settings = database.get_settings().unwrap();
+        settings.library_root = Some(test.root.to_string_lossy().into_owned());
+        database.update_settings(&settings).unwrap();
+
+        let account_id = database
+            .upsert_source_account(&SourceAccount {
+                provider: "spotify".into(),
+                provider_account_id: "listener".into(),
+                display_name: None,
+                image_url: None,
+                client_id: "client".into(),
+            })
+            .unwrap();
+        let collection_id = database
+            .upsert_source_collection(&SourceCollection {
+                source_account_id: account_id,
+                provider_collection_id: "shared-playlist".into(),
+                kind: "playlist".into(),
+                name: "Shared Playlist".into(),
+                snapshot_id: None,
+                owner_provider_id: Some("listener".into()),
+                is_accessible: true,
+                access_issue: None,
+                image_url: None,
+                external_url: None,
+                album_metadata: None,
+            })
+            .unwrap();
+
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .unwrap();
+        database.sync_tracked_spotify_playlist_mirrors().unwrap();
+        let mirror = database.list_local_playlists().unwrap().remove(0);
+        sync_local_playlist(&database, mirror.id).unwrap();
+        let managed_path = PathBuf::from(
+            database
+                .get_local_playlist(mirror.id)
+                .unwrap()
+                .m3u_path
+                .unwrap(),
+        );
+        assert!(managed_path.is_file());
+        let cover_path = managed_path.with_extension("jpg");
+        fs::write(&cover_path, b"owned playlist cover").unwrap();
+        database
+            .set_local_playlist_cover_state(
+                mirror.id,
+                Some("https://example.com/cover.jpg"),
+                Some(&cover_path.to_string_lossy()),
+            )
+            .unwrap();
+        let custom_path = managed_path
+            .parent()
+            .unwrap()
+            .join(format!("refrain-artwork-{}-123.png", mirror.id));
+        fs::write(&custom_path, b"\x89PNG\r\n\x1a\ncustom").unwrap();
+        database
+            .set_local_playlist_artwork_path(mirror.id, Some(&custom_path.to_string_lossy()))
+            .unwrap();
+        scan_library(&database, &test.root, |_| {}).unwrap();
+        assert_eq!(database.list_local_playlists().unwrap().len(), 1);
+
+        database
+            .set_source_collection_tracking(collection_id, false)
+            .unwrap();
+        database.sync_tracked_spotify_playlist_mirrors().unwrap();
+        assert!(database.list_local_playlists().unwrap().is_empty());
+        assert!(
+            !managed_path.exists(),
+            "untracking must remove its managed M3U8"
+        );
+        assert!(
+            !cover_path.exists(),
+            "untracking must remove its managed cover"
+        );
+        assert!(
+            !custom_path.exists(),
+            "untracking must remove its owned custom artwork"
+        );
+        scan_library(&database, &test.root, |_| {}).unwrap();
+        assert!(database.list_local_playlists().unwrap().is_empty());
+
+        database
+            .set_source_collection_tracking(collection_id, true)
+            .unwrap();
+        database.sync_tracked_spotify_playlist_mirrors().unwrap();
+        let reenabled = database.list_local_playlists().unwrap();
+        assert_eq!(reenabled.len(), 1);
+        assert_eq!(reenabled[0].source_collection_id, Some(collection_id));
+        sync_local_playlist(&database, reenabled[0].id).unwrap();
+        let replacement_path = database
+            .get_local_playlist(reenabled[0].id)
+            .unwrap()
+            .m3u_path
+            .unwrap();
+        assert_eq!(Path::new(&replacement_path), managed_path);
+        scan_library(&database, &test.root, |_| {}).unwrap();
+        assert_eq!(database.list_local_playlists().unwrap().len(), 1);
+
+        // A manually removed M3U8 must not strand its Refrain-owned sidecar.
+        fs::write(&cover_path, b"another owned playlist cover").unwrap();
+        database
+            .set_local_playlist_cover_state(
+                reenabled[0].id,
+                Some("https://example.com/cover.jpg"),
+                Some(&cover_path.to_string_lossy()),
+            )
+            .unwrap();
+        fs::remove_file(&managed_path).unwrap();
+        database
+            .set_source_collection_tracking(collection_id, false)
+            .unwrap();
+        database.sync_tracked_spotify_playlist_mirrors().unwrap();
+        assert!(!cover_path.exists());
+    }
+
+    #[test]
+    fn scan_skips_orphaned_managed_m3u_but_imports_user_playlist() {
+        let test = TestLibrary::new("orphaned-managed-marker");
+        let database = test.open_database();
+        fs::write(
+            test.root.join("old-managed.m3u8"),
+            format!("#EXTM3U\n{MANAGED_M3U_MARKER}\n"),
+        )
+        .unwrap();
+        fs::write(test.root.join("my-playlist.m3u8"), "#EXTM3U\n").unwrap();
+
+        scan_library(&database, &test.root, |_| {}).unwrap();
+        let playlists = database.list_local_playlists().unwrap();
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(playlists[0].name, "my-playlist");
+    }
+
+    #[test]
+    fn removing_an_imported_m3u_keeps_the_file_and_prevents_reimport() {
+        let test = TestLibrary::new("dismiss-imported-playlist");
+        let database = test.open_database();
+        let first = test.root.join("Feels.m3u");
+        let other = test.root.join("elsewhere/Feels.m3u");
+        fs::create_dir_all(other.parent().unwrap()).unwrap();
+        fs::write(&first, "#EXTM3U\n").unwrap();
+        fs::write(&other, "#EXTM3U\n").unwrap();
+
+        scan_library(&database, &test.root, |_| {}).unwrap();
+        let playlists = database.list_local_playlists().unwrap();
+        assert_eq!(playlists.len(), 2);
+        let canonical_first = fs::canonicalize(&first).unwrap();
+        let canonical_other = fs::canonicalize(&other).unwrap();
+        let removed = playlists
+            .iter()
+            .find(|playlist| playlist.m3u_path.as_deref() == canonical_first.to_str())
+            .unwrap();
+        database.delete_local_playlist(removed.id).unwrap();
+        assert!(first.exists(), "external M3U must remain on disk");
+        scan_library(&database, &test.root, |_| {}).unwrap();
+        assert_eq!(database.list_local_playlists().unwrap().len(), 1);
+
+        drop(database);
+        let reopened = test.open_database();
+        scan_library(&reopened, &test.root, |_| {}).unwrap();
+        let remaining = reopened.list_local_playlists().unwrap();
+        assert_eq!(remaining.len(), 1, "dismissal must survive restart");
+        assert_eq!(remaining[0].m3u_path.as_deref(), canonical_other.to_str());
     }
 
     #[test]

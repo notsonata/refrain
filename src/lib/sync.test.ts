@@ -4,7 +4,9 @@ import {
   cancelSync,
   getSyncRun,
   listSyncRuns,
+  startFullSync,
   startSync,
+  type SyncPipelineResult,
   type SyncRun,
 } from './sync';
 
@@ -26,6 +28,17 @@ const run: SyncRun = {
 };
 
 describe('sync commands', () => {
+  it('starts the serialized full local-then-Spotify pipeline for its trigger', async () => {
+    const result: SyncPipelineResult = { localRun: run, spotifyRun: run };
+    const invoke = vi.fn(async <T>(command: string, args?: Record<string, unknown>) => {
+      expect(command).toBe('start_full_sync');
+      expect(args).toEqual({ trigger: 'scheduled' });
+      return result as T;
+    }) as InvokeFn;
+
+    await expect(startFullSync('scheduled', invoke)).resolves.toEqual(result);
+  });
+
   it('starts and cancels reconciliation through use-case commands', async () => {
     const invoke = vi.fn(
       async <T>(command: string, args?: Record<string, unknown>) => {

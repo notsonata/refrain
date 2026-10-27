@@ -6,6 +6,7 @@ mod local_library;
 mod local_playlists;
 mod matching;
 mod migrations;
+mod mirror;
 mod normalization;
 mod playlist_exports;
 mod reconciliation;
@@ -56,6 +57,7 @@ impl Database {
             path,
             connection: Mutex::new(connection),
         };
+        database.recover_interrupted_mirror_runs()?;
         database.sync_tracked_spotify_playlist_mirrors()?;
         Ok(database)
     }
@@ -512,6 +514,50 @@ mod tests {
     }
 
     #[test]
+    fn custom_playlist_artwork_persists_in_summary_and_detail_and_can_be_reset() {
+        let test_path = TestDatabasePath::new("local-playlist-custom-artwork");
+        let database = Database::open(test_path.path.clone()).expect("database should open");
+        let playlist = database
+            .create_local_playlist("Artwork")
+            .expect("playlist should be created");
+        assert!(playlist.custom_artwork_path.is_none());
+
+        let updated = database
+            .set_local_playlist_artwork_path(playlist.id, Some("/app/playlist-artwork/1.png"))
+            .expect("artwork path should update");
+        assert_eq!(
+            updated.custom_artwork_path.as_deref(),
+            Some("/app/playlist-artwork/1.png")
+        );
+        assert_eq!(
+            database.list_local_playlists().unwrap()[0]
+                .custom_artwork_path
+                .as_deref(),
+            Some("/app/playlist-artwork/1.png")
+        );
+
+        drop(database);
+        let reopened = Database::open(test_path.path.clone()).expect("database should reopen");
+        assert_eq!(
+            reopened
+                .get_local_playlist(playlist.id)
+                .unwrap()
+                .custom_artwork_path
+                .as_deref(),
+            Some("/app/playlist-artwork/1.png")
+        );
+        let restored = reopened
+            .set_local_playlist_artwork_path(playlist.id, None)
+            .expect("source artwork should be restored");
+        assert!(restored.custom_artwork_path.is_none());
+        assert!(
+            reopened.list_local_playlists().unwrap()[0]
+                .custom_artwork_path
+                .is_none()
+        );
+    }
+
+    #[test]
     fn tracked_spotify_playlist_creates_and_updates_a_local_mirror() {
         let test_path = TestDatabasePath::new("spotify-playlist-mirror");
         let database = Database::open(test_path.path.clone()).expect("database should open");
@@ -602,6 +648,9 @@ mod tests {
             detail.image_url.as_deref(),
             Some("https://i.scdn.co/image/playlist-cover")
         );
+        database
+            .set_local_playlist_artwork_path(mirrored.id, Some("/custom/cover.png"))
+            .expect("Spotify mirrors may have a local artwork override");
         assert_eq!(
             detail
                 .entries
@@ -640,6 +689,10 @@ mod tests {
         let updated = database
             .get_local_playlist(mirrored.id)
             .expect("updated mirror should load");
+        assert_eq!(
+            updated.custom_artwork_path.as_deref(),
+            Some("/custom/cover.png")
+        );
         assert_eq!(
             updated
                 .entries

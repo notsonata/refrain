@@ -1,10 +1,14 @@
 import { render } from 'svelte/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   LocalPlaylistDetail,
   LocalPlaylistSummary,
 } from '../lib/playlists';
 import LocalPlaylistsView from './LocalPlaylistsView.svelte';
+
+vi.mock('@tauri-apps/api/core', () => ({
+  convertFileSrc: (path: string) => `asset://localhost${path}`,
+}));
 
 const playlists: LocalPlaylistSummary[] = [
   {
@@ -12,8 +16,9 @@ const playlists: LocalPlaylistSummary[] = [
     name: 'Night Drive',
     sourceCollectionId: null,
     imageUrl: null,
+    customArtworkPath: null,
     entryCount: 2,
-    m3uPath: '/music/playlists/night-drive.m3u8',
+    m3uPath: '/music/playlists/night-drive.m3u',
     m3uManaged: true,
     lastSyncedAt: 1_800_000_000_000,
     syncError: null,
@@ -60,8 +65,8 @@ describe('LocalPlaylistsView', () => {
     expect(body).toContain('<strong>Local</strong>');
     expect(body).toContain('<span>Playlists</span>');
     expect(body).toContain('Night Drive');
-    expect(body).toContain('M3U8');
-    expect(body).toContain('night-drive.m3u8');
+    expect(body).toContain('M3U synced');
+    expect(body).toContain('night-drive.m3u');
     expect(body).toContain('First Song');
     expect(body).toContain('Second Song');
     expect(body).toContain('Synced');
@@ -114,6 +119,7 @@ describe('LocalPlaylistsView', () => {
     });
 
     expect(body).toContain('Spotify mirror');
+    expect(body).toContain('aria-label="Playlist actions"');
     expect(body).not.toContain(
       'Updates automatically from the tracked Spotify collection.',
     );
@@ -133,5 +139,23 @@ describe('LocalPlaylistsView', () => {
       },
     });
     expect(browserBody).toContain('https://i.scdn.co/image/late-nights-cover');
+  });
+
+  it('prefers local artwork overrides to the Spotify image in playlist cards', () => {
+    const { body } = render(LocalPlaylistsView, {
+      props: {
+        playlists: [
+          {
+            ...playlists[0],
+            imageUrl: 'https://i.scdn.co/image/spotify-cover',
+            customArtworkPath: '/app/playlist-artwork/1.png',
+          },
+        ],
+        selectedPlaylist: null,
+      },
+    });
+
+    expect(body).toContain('playlist-artwork/1.png');
+    expect(body).not.toContain('https://i.scdn.co/image/spotify-cover');
   });
 });

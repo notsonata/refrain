@@ -4,7 +4,7 @@ use std::{fs, path::Path, sync::Arc, time::Duration};
 use std::process::Command;
 
 use serde::Serialize;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::{
     acquisition::{AcquisitionCoordinator, AcquisitionProvider},
@@ -14,16 +14,22 @@ use crate::{
     domain::{
         AcquisitionJob, AcquisitionJobPage, AppSettings, IssuePage, LibraryTrackPage,
         LocalFilePage, LocalLibraryOverview, LocalPlaylistDetail, LocalPlaylistSummary,
-        MatchResult, MatchReview, PlaylistExport, PlaylistExportPage, ProviderHealth,
-        SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview, StagingPage,
+        MatchResult, MatchReview, MirrorRun, MirrorTarget, PlaylistExport, PlaylistExportPage,
+        ProviderHealth, SourceCollectionListPage, SourceCollectionPage, SpotifySourceOverview,
+        StagingPage,
     },
     issues::{get_match_review as load_match_review, list_issues as load_issues},
+    library_mirror,
     local_library::{
         LOCAL_LIBRARY_SCAN_PROGRESS_EVENT, LocalLibraryError, LocalLibraryScanSummary,
         ensure_local_file_hash, scan_library,
     },
     matching::MatcherIndex,
     normalization::trash_invalid_local_file as trash_invalid_file,
+    playlist_artwork::{
+        configured_custom_artwork_directory, import_custom_playlist_artwork,
+        remove_custom_playlist_artwork,
+    },
     playlist_export::{PlaylistExportCommandError, export_playlist as run_playlist_export},
     playlist_sync::{
         sync_local_playlist as run_local_playlist_sync, sync_local_playlist_after_change,
@@ -63,6 +69,28 @@ fn acquire_library_read_lock(
 ) -> Result<std::sync::RwLockReadGuard<'_, ()>, String> {
     lock.read()
         .map_err(|_| "Library mutation lock is poisoned.".to_owned())
+}
+
+fn acquire_cancelable_library_read_lock<'a>(
+    lock: &'a std::sync::RwLock<()>,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<std::sync::RwLockReadGuard<'a, ()>, String> {
+    use std::sync::{TryLockError, atomic::Ordering};
+
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(library_mirror::MIRROR_CANCELLED.to_owned());
+        }
+        match lock.try_read() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(_)) => {
+                return Err("Library mutation lock is poisoned.".to_owned());
+            }
+            Err(TryLockError::WouldBlock) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -179,8 +207,115 @@ pub fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppSettings, St
 }
 
 #[tauri::command]
+pub fn list_mirror_targets(state: tauri::State<'_, AppState>) -> Result<Vec<MirrorTarget>, String> {
+    let mut targets = state
+        .database
+        .list_mirror_targets()
+        .map_err(|error| error.to_string())?;
+    for target in &mut targets {
+        library_mirror::refresh_target(&state.database, target)?;
+    }
+    Ok(targets)
+}
+
+#[tauri::command]
+pub fn save_mirror_target(
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<MirrorTarget, String> {
+    let _guard = acquire_library_read_lock(&state.library_lock)?;
+    library_mirror::save_target(&state.database, &path)
+}
+
+#[tauri::command]
+pub fn remove_mirror_target(id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let _guard = acquire_library_write_lock(&state.library_lock)?;
+    state
+        .database
+        .remove_mirror_target(id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn list_mirror_runs(
+    target_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<MirrorRun>, String> {
+    state
+        .database
+        .list_mirror_runs(target_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn run_mirror(
+    target_id: i64,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<MirrorRun, String> {
+    let database = std::sync::Arc::clone(&state.database);
+    let library_lock = std::sync::Arc::clone(&state.library_lock);
+    let mirror_lock = std::sync::Arc::clone(&state.mirror_lock);
+    let active_mirror = std::sync::Arc::clone(&state.active_mirror);
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut active = active_mirror.lock().map_err(|error| error.to_string())?;
+        if active.is_some() {
+            return Err("A mirror operation is already running.".to_owned());
+        }
+        *active = Some(crate::app::ActiveMirror {
+            target_id,
+            cancelled: std::sync::Arc::clone(&cancelled),
+        });
+    }
+    let worker_cancelled = std::sync::Arc::clone(&cancelled);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _mirror_guard = mirror_lock
+            .try_lock()
+            .map_err(|_| "A mirror operation is already running.".to_owned())?;
+        let _library_guard =
+            acquire_cancelable_library_read_lock(&library_lock, &worker_cancelled)?;
+        library_mirror::run_mirror_with_cancellation(
+            &database,
+            target_id,
+            &worker_cancelled,
+            |progress| {
+                let _ = app.emit(library_mirror::MIRROR_PROGRESS_EVENT, progress);
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Mirror worker stopped unexpectedly: {error}"));
+    let mut active = active_mirror.lock().map_err(|error| error.to_string())?;
+    if active
+        .as_ref()
+        .is_some_and(|current| std::sync::Arc::ptr_eq(&current.cancelled, &cancelled))
+    {
+        *active = None;
+    }
+    result?
+}
+
+#[tauri::command]
+pub fn cancel_mirror(target_id: i64, state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    use std::sync::atomic::Ordering;
+    let active = state
+        .active_mirror
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if let Some(current) = active.as_ref()
+        && current.target_id == target_id
+    {
+        current.cancelled.store(true, Ordering::Release);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[tauri::command]
 pub fn update_settings(
     settings: AppSettings,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<AppSettings, String> {
     settings.validate().map_err(str::to_owned)?;
@@ -189,6 +324,12 @@ pub fn update_settings(
         .database
         .update_settings(&settings)
         .map_err(|error| command_database_error("update settings", error))?;
+    state.sync_scheduler.reconfigure(&updated);
+    if let Ok(directory) = configured_custom_artwork_directory(&state.database) {
+        app.asset_protocol_scope()
+            .allow_directory(&directory, false)
+            .map_err(|error| format!("Could not enable playlist artwork previews: {error}"))?;
+    }
     sync_managed_local_playlists(&state.database)
         .map_err(|error| command_database_error("sync managed playlists", error))?;
     Ok(updated)
@@ -245,12 +386,16 @@ pub async fn scan_local_library(
 
     tauri::async_runtime::spawn_blocking(move || {
         let _library_guard = acquire_library_write_lock(&library_lock)?;
-        scan_library(&database, Path::new(&root), |progress| {
+        let summary = scan_library(&database, Path::new(&root), |progress| {
             if let Err(error) = app.emit(LOCAL_LIBRARY_SCAN_PROGRESS_EVENT, progress) {
                 tracing::warn!(%error, "local library scan progress event failed");
             }
         })
-        .map_err(local_library_error)
+        .map_err(local_library_error)?;
+        sync_managed_local_playlists(&database).map_err(|error| {
+            command_database_error("refresh managed playlists after scan", error)
+        })?;
+        Ok(summary)
     })
     .await
     .map_err(|error| {
@@ -283,7 +428,10 @@ pub fn set_preferred_local_file(
     state
         .database
         .set_preferred_local_file(local_file_id)
-        .map_err(|error| command_database_error("set preferred local file", error))
+        .map_err(|error| command_database_error("set preferred local file", error))?;
+    sync_managed_local_playlists(&state.database).map_err(|error| {
+        command_database_error("refresh managed playlists after file change", error)
+    })
 }
 
 #[tauri::command]
@@ -335,14 +483,74 @@ pub fn rename_local_playlist(
 }
 
 #[tauri::command]
+pub fn set_local_playlist_artwork(
+    playlist_id: i64,
+    path: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalPlaylistDetail, String> {
+    let _library_guard = acquire_library_write_lock(&state.library_lock)?;
+    let original = state
+        .database
+        .get_local_playlist(playlist_id)
+        .map_err(local_playlist_database_error)?;
+    let directory = configured_custom_artwork_directory(&state.database)?;
+    let imported = path
+        .as_deref()
+        .map(|path| import_custom_playlist_artwork(&directory, playlist_id, Path::new(path)))
+        .transpose()?;
+    if let Some(imported) = &imported
+        && let Err(error) = app.asset_protocol_scope().allow_file(imported)
+    {
+        remove_custom_playlist_artwork(
+            &state.app_data_dir,
+            playlist_id,
+            &imported.to_string_lossy(),
+        );
+        return Err(format!(
+            "Could not enable playlist artwork preview: {error}"
+        ));
+    }
+    let stored_path = imported
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned());
+    let result = state
+        .database
+        .set_local_playlist_artwork_path(playlist_id, stored_path.as_deref());
+    if result.is_err()
+        && let Some(imported) = &imported
+    {
+        remove_custom_playlist_artwork(
+            &state.app_data_dir,
+            playlist_id,
+            &imported.to_string_lossy(),
+        );
+    }
+    let playlist = result.map_err(local_playlist_database_error)?;
+    if let Some(previous) = original.custom_artwork_path.as_deref() {
+        remove_custom_playlist_artwork(&state.app_data_dir, playlist_id, previous);
+    }
+    Ok(playlist)
+}
+
+#[tauri::command]
 pub fn delete_local_playlist(
     playlist_id: i64,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let artwork_path = state
+        .database
+        .get_local_playlist(playlist_id)
+        .map_err(local_playlist_database_error)?
+        .custom_artwork_path;
     state
         .database
         .delete_local_playlist(playlist_id)
-        .map_err(local_playlist_database_error)
+        .map_err(local_playlist_database_error)?;
+    if let Some(path) = artwork_path {
+        remove_custom_playlist_artwork(&state.app_data_dir, playlist_id, &path);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -512,7 +720,9 @@ pub fn confirm_match(
     state
         .database
         .sync_tracked_spotify_playlist_mirrors()
-        .map_err(|error| command_database_error("update tracked playlist mirrors", error))
+        .map_err(|error| command_database_error("update tracked playlist mirrors", error))?;
+    sync_managed_local_playlists(&state.database)
+        .map_err(|error| command_database_error("sync managed playlists", error))
 }
 
 #[tauri::command]
@@ -530,7 +740,9 @@ pub fn reject_match(
     state
         .database
         .sync_tracked_spotify_playlist_mirrors()
-        .map_err(|error| command_database_error("update tracked playlist mirrors", error))
+        .map_err(|error| command_database_error("update tracked playlist mirrors", error))?;
+    sync_managed_local_playlists(&state.database)
+        .map_err(|error| command_database_error("sync managed playlists", error))
 }
 
 #[tauri::command]
@@ -547,7 +759,9 @@ pub fn clear_match_decision(
     state
         .database
         .sync_tracked_spotify_playlist_mirrors()
-        .map_err(|error| command_database_error("update tracked playlist mirrors", error))
+        .map_err(|error| command_database_error("update tracked playlist mirrors", error))?;
+    sync_managed_local_playlists(&state.database)
+        .map_err(|error| command_database_error("sync managed playlists", error))
 }
 
 #[tauri::command]

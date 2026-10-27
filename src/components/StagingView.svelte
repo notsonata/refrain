@@ -36,6 +36,14 @@
   let stageFilter: 'all' | StagingStage = 'all';
   let retryingJobId: number | null = null;
 
+  function queueAlbumAndDuration(item: StagingItem): string {
+    const album = item.album?.trim() || 'Unknown album';
+    const duration = formatDuration(item.durationMs);
+    return album.toLocaleLowerCase() === item.title.trim().toLocaleLowerCase()
+      ? duration
+      : `${album} · ${duration}`;
+  }
+
   $: filteredItems = items.filter((item) => {
     const query = search.trim().toLocaleLowerCase();
     if (
@@ -182,7 +190,7 @@
       case 'failed':
         return item.errorMessage ?? 'Acquisition failed.';
       case 'downloaded':
-        return 'Downloaded. Waiting for verification and import retry.';
+        return 'Waiting for verification and import retry.';
       case 'cancelled':
         return 'Acquisition was cancelled.';
     }
@@ -670,6 +678,14 @@
           <div class="download-list">
             {#each filteredItems as item (item.libraryTrackId)}
               {@const percent = progressPercent(item)}
+              {@const quality = item.candidate
+                ? candidateQualitySummary(item.candidate)
+                : ''}
+              {@const hasProvider = Boolean(
+                item.provider ||
+                (item.stage === 'needsResolution' &&
+                  item.candidates.some((candidate) => candidate.provider)),
+              )}
               <article
                 class:selected-card={selected?.libraryTrackId ===
                   item.libraryTrackId}
@@ -703,46 +719,56 @@
                       {/if}
                     </div>
                     <div class="download-copy">
-                      <div class="download-title-row">
-                        <p class="track-title">{item.title}</p>
-                        <span class={chipClass(item.stage)}
-                          >{stageLabel(item.stage)}</span
-                        >
-                      </div>
+                      <p class="track-title">{item.title}</p>
                       <p class="track-secondary">
                         {item.artists.join(', ') || 'Unknown artist'}
                       </p>
                       <p class="download-album">
-                        {item.album ?? 'Unknown album'} · {formatDuration(
-                          item.durationMs,
-                        )}
+                        {queueAlbumAndDuration(item)}
                       </p>
                     </div>
-                    <div class="download-meta">
-                      {#if percent !== null}<strong>{percent}%</strong>{/if}
-                      {#if item.candidate?.format}
-                        <small>{item.candidate.format.toUpperCase()}</small>
-                        {#if candidateQualitySummary(item.candidate)}
-                          <small class="download-quality"
-                            >{candidateQualitySummary(item.candidate)}</small
+                    <span class={`${chipClass(item.stage)} download-state`}
+                      >{stageLabel(item.stage)}</span
+                    >
+                    {#if item.candidate?.format || quality || hasProvider}
+                      <div class="download-details">
+                        {#if item.candidate?.format}
+                          <span class="download-format"
+                            >{item.candidate.format.toUpperCase()}</span
                           >
                         {/if}
-                        <small class="download-provider"
-                          >{providerSummary(item)}</small
-                        >
-                      {:else}
-                        <small>{providerSummary(item)}</small>
-                      {/if}
-                    </div>
+                        {#if quality}
+                          <span class="download-quality">{quality}</span>
+                        {/if}
+                        {#if hasProvider}
+                          <span class="download-provider"
+                            >via {providerSummary(item)}</span
+                          >
+                        {/if}
+                      </div>
+                    {/if}
                   </button>
-                  <p class="download-activity">{activity(item)}</p>
+                  {#if ['downloaded', 'needsResolution', 'failed'].includes(item.stage)}
+                    <p class="download-activity">{activity(item)}</p>
+                  {/if}
                   {#if item.stage === 'downloading'}
-                    <div
-                      class:indeterminate={percent === null}
-                      class="card-progress"
-                    >
-                      <span style={percent === null ? '' : `width:${percent}%`}
-                      ></span>
+                    <div class="download-progress">
+                      <div
+                        class:indeterminate={percent === null}
+                        class="card-progress"
+                        role="progressbar"
+                        aria-label={`Download progress for ${item.title}`}
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow={percent ?? undefined}
+                      >
+                        <span
+                          style={percent === null ? '' : `width:${percent}%`}
+                        ></span>
+                      </div>
+                      {#if percent !== null}
+                        <span class="download-percent">{percent}%</span>
+                      {/if}
                     </div>
                   {/if}
                 </div>
@@ -776,6 +802,13 @@
               </div>
             </div>
 
+            {#if selected.stage === 'needsLocalCopy'}
+              <p class="inspector-guidance">
+                No local copy is linked to this track. Select its checkbox in
+                the queue to start acquisition.
+              </p>
+            {/if}
+
             <dl class="inspector-facts">
               <div>
                 <dt>Album</dt>
@@ -785,26 +818,34 @@
                 <dt>Duration</dt>
                 <dd>{formatDuration(selected.durationMs)}</dd>
               </div>
-              <div>
-                <dt>Format</dt>
-                <dd>{selected.candidate?.format?.toUpperCase() ?? '—'}</dd>
-              </div>
-              <div>
-                <dt>Quality</dt>
-                <dd>{itemQualitySummary(selected)}</dd>
-              </div>
-              <div>
-                <dt>Provider</dt>
-                <dd>{providerSummary(selected)}</dd>
-              </div>
-              <div>
-                <dt>Attempt</dt>
-                <dd>{selected.attempt || '—'}</dd>
-              </div>
-              <div>
-                <dt>Size</dt>
-                <dd>{formatBytes(selected.candidate?.sizeBytes ?? null)}</dd>
-              </div>
+              {#if selected.candidate}
+                <div>
+                  <dt>Format</dt>
+                  <dd>{selected.candidate.format?.toUpperCase() ?? '—'}</dd>
+                </div>
+              {/if}
+              {#if itemQualitySummary(selected) !== '—'}
+                <div>
+                  <dt>Quality</dt>
+                  <dd>{itemQualitySummary(selected)}</dd>
+                </div>
+              {/if}
+              {#if selected.jobId !== null}
+                <div>
+                  <dt>Provider</dt>
+                  <dd>{providerSummary(selected)}</dd>
+                </div>
+                <div>
+                  <dt>Attempt</dt>
+                  <dd>{selected.attempt || '—'}</dd>
+                </div>
+              {/if}
+              {#if selected.candidate?.sizeBytes}
+                <div>
+                  <dt>Size</dt>
+                  <dd>{formatBytes(selected.candidate.sizeBytes)}</dd>
+                </div>
+              {/if}
             </dl>
 
             {#if selected.stagingPath}
@@ -1014,12 +1055,12 @@
     align-items: center;
     gap: 14px;
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
   .staging-header-status strong {
     color: var(--text-primary);
-    font-size: 11px;
+    font-size: 12.5px;
     font-weight: 650;
   }
   .staging-error {
@@ -1034,7 +1075,7 @@
     flex: 1;
     grid-template-rows: minmax(0, 1fr);
     grid-auto-rows: auto;
-    gap: 10px;
+    gap: 14px;
   }
   .staging-loading {
     display: grid;
@@ -1043,8 +1084,9 @@
   }
   .staging-main {
     display: grid;
+    min-width: 0;
     min-height: 0;
-    grid-template-columns: minmax(0, 1fr) 308px;
+    grid-template-columns: minmax(0, 1fr) clamp(260px, 30%, 304px);
     gap: 12px;
   }
   .queue-panel,
@@ -1068,7 +1110,7 @@
     align-items: center;
     gap: 8px;
     border-bottom: 1px solid var(--border-subtle);
-    padding: 12px 12px 13px;
+    padding: 12px 14px;
   }
   .select-all,
   .card-checkbox {
@@ -1081,8 +1123,8 @@
   }
   .select-all input,
   .card-checkbox input {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     margin: 0;
   }
   .queue-filter {
@@ -1090,7 +1132,7 @@
   }
   .queue-count {
     color: var(--text-tertiary);
-    font-size: 10px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -1099,6 +1141,7 @@
     min-height: 44px;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 12px;
     border-bottom: 1px solid var(--border-default);
     background: var(--blue-050);
@@ -1106,32 +1149,41 @@
   }
   .selection-toolbar > strong {
     color: var(--selection-strong-text);
-    font-size: 11px;
+    font-size: 12.5px;
     font-weight: 650;
   }
   .selection-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
   }
   .text-button {
     border: 0;
+    min-height: 32px;
+    border-radius: var(--radius-control);
     background: transparent;
-    padding: 5px 7px;
+    padding: 6px 9px;
     color: var(--blue-600);
-    font-size: 10px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
   }
-  .text-button:hover {
+  .text-button:hover:not(:disabled) {
     color: var(--blue-700);
-    text-decoration: underline;
+    background: var(--bg-hover);
+  }
+
+  .text-button:disabled {
+    cursor: not-allowed;
+    color: var(--text-disabled);
   }
   .download-list {
     display: grid;
     min-height: 0;
     flex: 1;
     align-content: start;
+    grid-auto-rows: max-content;
     gap: 8px;
     overflow-y: auto;
     padding: 10px;
@@ -1141,9 +1193,7 @@
     grid-template-columns: 20px minmax(0, 1fr);
     align-items: start;
     gap: 10px;
-    min-height: 96px;
-    content-visibility: auto;
-    contain-intrinsic-size: 82px;
+    min-height: 82px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-card);
     background: var(--bg-content);
@@ -1158,8 +1208,12 @@
     width: 100%;
     min-width: 0;
     grid-template-columns: 48px minmax(0, 1fr) auto;
-    align-items: center;
+    grid-template-areas:
+      'artwork copy state'
+      '. details details';
+    align-items: start;
     gap: 10px;
+    row-gap: 0;
     border: 0;
     background: transparent;
     padding: 0;
@@ -1170,7 +1224,7 @@
   .download-card-content {
     display: grid;
     min-width: 0;
-    gap: 7px;
+    gap: 6px;
   }
   .download-card:hover {
     border-color: var(--border-default);
@@ -1187,11 +1241,12 @@
     display: grid;
     place-items: center;
     overflow: hidden;
-    background: #e9edf2;
+    background: var(--bg-subtle);
     color: var(--text-tertiary);
     font-weight: 650;
   }
   .download-artwork {
+    grid-area: artwork;
     width: 48px;
     height: 48px;
     border-radius: 7px;
@@ -1205,21 +1260,20 @@
   }
   .download-copy {
     display: grid;
+    grid-area: copy;
     min-width: 0;
     gap: 3px;
     padding-block: 1px;
   }
-  .download-title-row {
-    display: flex;
+  .download-copy .track-title {
     min-width: 0;
-    align-items: center;
-    gap: 8px;
-  }
-  .download-title-row .track-title {
-    min-width: 0;
-    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .download-state {
+    grid-area: state;
+    align-self: start;
     white-space: nowrap;
   }
   .download-copy .track-secondary,
@@ -1227,46 +1281,57 @@
     margin: 0;
     overflow: hidden;
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .download-album {
     color: var(--text-tertiary);
   }
+  .download-details {
+    grid-area: details;
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 3px 12px;
+    padding-top: 7px;
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
+  .download-format {
+    color: var(--text-primary);
+    font-weight: 650;
+  }
   .download-activity {
     min-width: 0;
-    margin: 0 0 1px 58px;
-    color: var(--text-secondary);
-    font-size: 9.5px;
-    line-height: 1.45;
+    margin: 0 0 0 58px;
+    color: var(--text-tertiary);
+    font-size: 11.5px;
+    line-height: 1.4;
     overflow-wrap: anywhere;
     white-space: normal;
   }
   .staging-exclude-selected {
     white-space: nowrap;
   }
-  .download-meta {
-    display: grid;
-    justify-items: end;
-    gap: 3px;
-    min-width: 48px;
-    color: var(--text-tertiary);
-    font-size: 9px;
-  }
-  .download-meta strong {
-    color: var(--text-primary);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-  }
   .download-provider {
     color: var(--text-tertiary);
-    font-size: 8px;
   }
   .download-quality {
     color: var(--text-secondary);
-    font-size: 8px;
-    white-space: nowrap;
+  }
+  .download-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: 58px;
+  }
+  .download-percent {
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
   }
   .card-progress,
   .dock-progress {
@@ -1276,8 +1341,9 @@
     background: var(--control-track);
   }
   .card-progress {
-    height: 3px;
-    margin: 7px 0 0 58px;
+    height: 4px;
+    min-width: 0;
+    flex: 1;
   }
   .card-progress span,
   .dock-progress span {
@@ -1298,57 +1364,45 @@
     flex-direction: column;
   }
   .inspector-summary {
-    min-width: 0;
-  }
-  .resolution-inspector .inspector-summary {
     display: grid;
+    min-width: 0;
     grid-template-columns: 64px minmax(0, 1fr);
     align-items: start;
     gap: 12px;
     border-bottom: 1px solid var(--border-subtle);
-    padding-bottom: 10px;
+    padding-bottom: 12px;
   }
   .inspector-artwork {
-    width: min(100%, 220px);
-    aspect-ratio: 1;
-    margin: 0 auto 14px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-card);
-    font-size: 34px;
-  }
-  .resolution-inspector .inspector-artwork {
     width: 64px;
     height: 64px;
-    aspect-ratio: auto;
-    margin: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
     font-size: 22px;
   }
   .inspector-heading {
-    border-bottom: 1px solid var(--border-subtle);
-    padding-bottom: 14px;
+    min-width: 0;
   }
   .inspector-heading h2 {
-    margin: 9px 0 3px;
-    font-size: 18px;
+    margin: 6px 0 3px;
+    font-size: 15px;
     font-weight: 680;
     letter-spacing: -0.025em;
     line-height: 1.15;
+    overflow-wrap: anywhere;
   }
   .inspector-heading p {
     margin: 0;
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12.5px;
   }
-  .resolution-inspector .inspector-heading {
-    min-width: 0;
-    border-bottom: 0;
-    padding-bottom: 0;
-  }
-  .resolution-inspector .inspector-heading h2 {
-    margin-top: 6px;
-    font-size: 15px;
-    overflow-wrap: anywhere;
-    word-break: normal;
+  .inspector-guidance {
+    margin: 12px 0 0;
+    border-radius: var(--radius-control);
+    background: var(--bg-subtle);
+    padding: 10px 12px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
   }
   .inspector-facts,
   .sync-run-facts {
@@ -1378,7 +1432,7 @@
   .inspector-facts dt,
   .sync-run-facts dt {
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.045em;
     text-transform: uppercase;
@@ -1388,7 +1442,7 @@
     margin: 3px 0 0;
     overflow: hidden;
     color: var(--text-primary);
-    font-size: 10px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1400,7 +1454,7 @@
   }
   .inspector-path > span {
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
   }
@@ -1409,29 +1463,29 @@
     max-width: 100%;
     color: var(--text-secondary);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 9px;
+    font-size: 12px;
     line-height: 1.45;
     overflow-wrap: anywhere;
     white-space: normal;
   }
   .inspector-error {
     margin-top: 8px;
-    border: 1px solid rgb(229 72 77 / 22%);
+    border: 1px solid color-mix(in srgb, var(--red-600) 22%, transparent);
     border-radius: var(--radius-control);
     background: var(--red-100);
     padding: 10px;
     color: var(--red-600);
-    font-size: 10px;
+    font-size: 12px;
   }
   .inspector-error p {
     margin: 4px 0 0;
     line-height: 1.4;
   }
   .inspector-retry {
-    min-height: 28px;
+    min-height: 34px;
     margin-top: 9px;
     padding: 5px 10px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .inspector-empty {
     display: grid;
@@ -1443,7 +1497,7 @@
   .inspector-empty p {
     max-width: 220px;
     margin: 5px 0 0;
-    font-size: 10px;
+    font-size: 12px;
   }
   .resolution-section {
     border-top: 1px solid var(--border-subtle);
@@ -1463,12 +1517,12 @@
   }
   .resolution-heading h3 {
     margin: 0;
-    font-size: 11px;
+    font-size: 12.5px;
   }
   .resolution-heading p {
     margin: 3px 0 0;
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
     line-height: 1.4;
   }
   .resolution-search {
@@ -1494,11 +1548,11 @@
     gap: 8px;
     padding: 2px 2px 0;
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
   }
   .candidate-provider-heading strong {
     color: var(--text-primary);
-    font-size: 10px;
+    font-size: 12px;
   }
   .resolution-inspector .candidate-stack {
     min-height: 0;
@@ -1529,12 +1583,12 @@
   }
   .candidate-confidence {
     flex: 0 0 auto;
-    border: 1px solid rgb(23 105 255 / 22%);
+    border: 1px solid color-mix(in srgb, var(--blue-600) 22%, transparent);
     border-radius: 999px;
     background: var(--blue-050);
     padding: 2px 6px;
     color: var(--blue-600);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
@@ -1542,7 +1596,7 @@
     margin: 5px 0 0;
     overflow: hidden;
     color: var(--text-tertiary);
-    font-size: 8px;
+    font-size: 12px;
     line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1556,7 +1610,7 @@
   }
   .candidate-file-info {
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
   .staging-candidate-actions {
@@ -1570,11 +1624,11 @@
   .staging-candidate-actions .btn {
     width: auto;
     min-width: 78px;
-    min-height: 30px;
+    min-height: 34px;
     flex: 0 0 auto;
     padding: 0 11px;
     border-radius: 8px;
-    font-size: 10px;
+    font-size: 12.5px;
     white-space: nowrap;
   }
   .staging-candidate-actions .btn-primary {
@@ -1586,8 +1640,9 @@
   }
   .sync-dashboard {
     display: grid;
+    min-width: 0;
     min-height: 0;
-    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr) clamp(260px, 30%, 300px);
     gap: 12px;
   }
   .sync-primary-card,
@@ -1605,7 +1660,7 @@
   .eyebrow {
     margin: 0;
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 650;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1619,7 +1674,7 @@
     max-width: 620px;
     margin: 0;
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12.5px;
     line-height: 1.5;
   }
   .sync-summary-title h3 {
@@ -1664,13 +1719,13 @@
   .sync-step strong {
     display: block;
     color: inherit;
-    font-size: 11px;
+    font-size: 12.5px;
     font-weight: 600;
   }
   .sync-step small {
     display: block;
     margin-top: 2px;
-    font-size: 9px;
+    font-size: 12px;
   }
   .sync-step.done,
   .sync-step.current {
@@ -1716,13 +1771,13 @@
     white-space: nowrap;
   }
   .dock-track strong {
-    font-size: 11px;
+    font-size: 12.5px;
     font-weight: 650;
   }
   .dock-track span {
     margin-top: 2px;
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
   }
   .dock-artwork {
     width: 38px;
@@ -1742,12 +1797,12 @@
     gap: 12px;
     margin-top: 5px;
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
   .dock-format {
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 650;
     letter-spacing: 0.05em;
   }
@@ -1772,29 +1827,38 @@
       transform: translateX(275%);
     }
   }
-  @media (max-width: 1120px) {
-    .staging-main,
-    .sync-dashboard {
-      grid-template-columns: minmax(0, 1fr) 270px;
-    }
+  @media (max-width: 1280px) {
     .queue-toolbar {
       grid-template-columns: 28px minmax(160px, 1fr) 130px;
     }
     .queue-count {
       display: none;
     }
+    .download-card-main {
+      grid-template-columns: 40px minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+    .download-artwork {
+      width: 40px;
+      height: 40px;
+    }
+    .download-activity {
+      margin-left: 48px;
+    }
+    .download-progress {
+      margin-left: 48px;
+    }
   }
-  @media (max-width: 930px) {
-    .staging-main,
-    .sync-dashboard {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .track-inspector,
-    .sync-summary-card {
-      display: none;
-    }
+  @media (max-width: 1200px) {
     .transfer-dock {
-      grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1.3fr) auto;
+      grid-template-columns: minmax(140px, 0.8fr) minmax(160px, 1.3fr) auto;
+      gap: 10px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card-progress.indeterminate span,
+    .dock-progress.indeterminate span {
+      animation: none;
     }
   }
 </style>

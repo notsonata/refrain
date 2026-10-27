@@ -37,6 +37,19 @@ const MIGRATION_ARRAY: &[M] = &[
     M::up(include_str!(
         "../../migrations/0020_local_playlist_cover_sidecars.sql"
     )),
+    M::up(include_str!(
+        "../../migrations/0021_ignored_playlist_imports.sql"
+    )),
+    M::up(include_str!("../../migrations/0022_library_mirrors.sql")),
+    M::up(include_str!(
+        "../../migrations/0023_local_playlist_artwork_overrides.sql"
+    )),
+    M::up(include_str!(
+        "../../migrations/0024_cancelled_mirror_runs.sql"
+    )),
+    M::up(include_str!(
+        "../../migrations/0025_retained_mirror_targets.sql"
+    )),
 ];
 
 #[cfg(test)]

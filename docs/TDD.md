@@ -9,7 +9,7 @@ It implements the behavior defined in:
 - `docs/BRIEF.md`
 - `docs/SPEC.md`
 
-The repository now contains the released v0.1 desktop application and the v1 Local Library Index, Matching Engine, and Reconciliation Core implementation. Paths and module names in later v1 sections remain design guidance until their owning milestones are implemented.
+The latest tagged release is v0.6.0. The current repository implements Milestones 1 through 16, including ordered acquisition providers, verified import, scoped synchronization, Local Playlists with managed M3U8 files, and Spotify playlist exports. Milestone 17 destination Library Mirroring, Milestone 18 scheduling/removal handling, and later v1 completion work remain planned. Schema, commands, and interfaces in those future sections are design guidance until implemented; consult source code and migrations for the active contract.
 
 ## Design Goals
 
@@ -277,7 +277,7 @@ Mirror destinations may contain:
 ```text
 .refrain/manifest.json
 Music/
-Playlists/
+  00 Playlists/
 ```
 
 The mirror manifest records only paths managed by Refrain on that target.
@@ -636,6 +636,7 @@ m3u_path        TEXT NULL
 m3u_managed     INTEGER NOT NULL DEFAULT 0 CHECK (m3u_managed IN (0, 1))
 cover_source_url TEXT NULL
 cover_path      TEXT NULL
+custom_artwork_path TEXT NULL
 last_synced_at  INTEGER NULL
 sync_error      TEXT NULL
 created_at      INTEGER NOT NULL
@@ -643,6 +644,8 @@ updated_at      INTEGER NOT NULL
 ```
 
 `source_collection_id IS NULL` means the playlist is user-authored/imported and directly editable. A non-null value means the row mirrors that Spotify source collection. `source_collection_id` is unique when present so one tracked Spotify playlist or Liked Songs collection produces at most one Local Playlist mirror.
+
+`custom_artwork_path` stores an optional local-only UI artwork override. The backend copies a selected JPEG, PNG, WebP, or GIF (up to 12 MiB) into `<Library Root>/00 Playlists/` as a unique `refrain-artwork-<playlist id>-<nonce>.<extension>` file and stores its absolute path. The runtime Tauri asset scope permits previews from the configured folder, including after a library root change. Sync migrates existing Refrain-owned overrides from the old app-data `playlist-artwork/` folder or a previous library root and removes old copies after successful database updates. Replacing/restoring artwork deletes only the previous image owned by that playlist, never the chosen source file. Summary/detail projections expose `customArtworkPath`, which takes precedence over `source_collections.image_url` in the Local Playlists browser. The Spotify-backed managed M3U cover sidecar continues to follow the Spotify image URL independently.
 
 ### `local_playlist_entries`
 
@@ -692,48 +695,40 @@ PRIMARY KEY(export_id, position)
 ### `mirror_targets`
 
 ```text
-id            INTEGER PRIMARY KEY
-name          TEXT NOT NULL
-root_path     TEXT NOT NULL
-enabled       INTEGER NOT NULL DEFAULT 1
-created_at    INTEGER NOT NULL
-updated_at    INTEGER NOT NULL
-last_sync_at  INTEGER NULL
-UNIQUE(root_path)
+id          INTEGER PRIMARY KEY
+path        TEXT NOT NULL UNIQUE
+identity    TEXT NOT NULL
+active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+created_at  INTEGER NOT NULL
+updated_at  INTEGER NOT NULL
 ```
 
 ### `mirror_runs`
 
 ```text
-id             INTEGER PRIMARY KEY
-mirror_target_id INTEGER NOT NULL REFERENCES mirror_targets(id)
-status         TEXT NOT NULL
-started_at     INTEGER NOT NULL
-finished_at    INTEGER NULL
-copied_count   INTEGER NOT NULL DEFAULT 0
-removed_count  INTEGER NOT NULL DEFAULT 0
-error_message  TEXT NULL
+id           INTEGER PRIMARY KEY
+target_id    INTEGER NOT NULL REFERENCES mirror_targets(id) ON DELETE CASCADE
+status       TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'cancelled'))
+started_at   INTEGER NOT NULL
+finished_at  INTEGER NULL
+copied       INTEGER NOT NULL DEFAULT 0
+unchanged    INTEGER NOT NULL DEFAULT 0
+removed      INTEGER NOT NULL DEFAULT 0
+error        TEXT NULL
 ```
 
 ### `mirror_entries`
 
 ```text
-mirror_target_id  INTEGER NOT NULL REFERENCES mirror_targets(id) ON DELETE CASCADE
-kind              TEXT NOT NULL
-source_key        TEXT NOT NULL
-relative_path     TEXT NOT NULL
-content_hash      TEXT NULL
-file_size         INTEGER NULL
-updated_at        INTEGER NOT NULL
-PRIMARY KEY(mirror_target_id, kind, source_key)
+target_id       INTEGER NOT NULL REFERENCES mirror_targets(id) ON DELETE CASCADE
+relative_path   TEXT NOT NULL
+source_key      TEXT NOT NULL
+file_size       INTEGER NOT NULL
+content_hash    TEXT NOT NULL
+PRIMARY KEY(target_id, relative_path)
 ```
 
-`kind` initially supports:
-
-- `audio`
-- `playlist`
-
-Only paths represented by a previous Refrain mirror manifest or `mirror_entries` row are eligible for automatic mirror cleanup.
+The destination manifest and interrupted-run journal establish filesystem ownership. Database `mirror_entries` is updated after manifest publication and does not independently authorize file deletion. Saved destinations are also bound to their directory filesystem identity.
 
 ## Database Indexes
 
@@ -1330,7 +1325,7 @@ For equivalent exact-ISRC Antra candidates, lossless quality preference is expli
 
 ### Download model
 
-Selected Tidal or Qobuz candidates stream from the mirror's `/api/stream/{trackId}` endpoint into the normal Refrain-controlled staging directory. Refrain retries transient request failures, HTTP `429`, and server errors using bounded attempts. Authentication failures are non-retryable provider errors, and mirror responses that explicitly report lossless unavailability are treated as non-retryable for that candidate. The first bytes of the response must contain the native FLAC `fLaC` signature before the download is accepted. A successful HTTP response whose body is not FLAC is classified as a mirror-candidate failure, records the mirror and response content type for diagnosis, skips repeated attempts against that same deterministic payload, and remains retryable at the coordinator level so the next compatible Antra mirror candidate can run immediately.
+Selected Tidal or Qobuz candidates stream from the mirror's `/api/stream/{trackId}` endpoint into the normal Refrain-controlled staging directory. Refrain retries transient request failures, HTTP `429`, and server errors using bounded attempts. Authentication failures are non-retryable provider errors, and mirror responses that explicitly report lossless unavailability are treated as non-retryable for that candidate. The response must begin with native FLAC `fLaC` or a recognizable MP4 `ftyp` container header. Native FLAC is staged directly. For MP4, an optional installed FFmpeg extracts an existing FLAC audio stream with codec copy into a separate temporary file, verifies its `fLaC` signature, and then replaces the downloaded MP4. This never transcodes AAC or other lossy codecs into FLAC. FFmpeg is currently not bundled; absent FFmpeg or an incompatible MP4 codec produces an actionable Antra candidate failure, allowing eligible alternate candidates and providers to run. Unknown payloads, truncated MP4, and invalid extracted output are rejected. Cancellation stops extraction, and temporary files are cleaned on failure.
 
 Antra downloads run in process, expose transferred and total bytes through provider job state, support cooperative cancellation, and clean temporary partial files on cancellation or terminal failure. The adapter currently serializes Antra transfers with a provider-local mutex, so Refrain's global three-track worker pool can continue processing other providers while only one Antra stream is active at a time. HTTP range resume is not currently implemented for Antra.
 
@@ -1338,7 +1333,7 @@ Antra downloads run in process, expose transferred and total bytes through provi
 
 ### Role
 
-Sockseek was the first implemented acquisition provider and remains an inactive fallback while Monochrome is active.
+Sockseek was the first implemented acquisition provider. It is now an optional provider that users can enable and position in the ordered acquisition chain; Monochrome is preselected on new installations.
 
 Refrain uses Sockseek only for Soulseek search/download behavior.
 
@@ -1527,7 +1522,7 @@ source_track_sync_overrides
 
 Collection refresh replaces entry rows but preserves the collection and source-track identities, so these rules survive ordinary Spotify refreshes. A source track is desired for Spotify Sync if any accessible collection includes it after applying the per-track override first and the collection default second. Changing a collection-level tracking switch writes the new collection rule and clears that collection's per-track overrides atomically, so the collection action means all tracked or all untracked. Later per-track actions may create new overrides. Acquisition queueing uses the same predicate and cancels stale queued jobs that are no longer desired.
 
-For `kind IN ('playlist', 'liked_songs')`, a collection-level `default_included = 1` also owns one source-linked Local Playlist. Reconciliation preserves effective tracked order and duplicate positions through `track_links`, updates the mirror after source/tracking changes, and removes the derived row when collection-level tracking is disabled. Saved Albums remain outside Local Playlist mirroring. Local Playlist summary/detail projections join the linked `source_collections.image_url`, so Spotify mirror artwork follows the persisted source collection without duplicating image state into `local_playlists`. Source-linked rows reject direct rename/delete/membership mutation; user-authored rows remain editable. Database open performs one idempotent mirror reconciliation so existing tracked Spotify playlists and Liked Songs are materialized immediately after upgrading to the mirror-capable schema.
+For `kind IN ('playlist', 'liked_songs')`, a collection-level `default_included = 1` also owns one source-linked Local Playlist. Reconciliation preserves effective tracked order and duplicate positions through `track_links`, updates the mirror after source/tracking changes, and removes the derived row when collection-level tracking is disabled. Saved Albums remain outside Local Playlist mirroring. Local Playlist summary/detail projections join the linked `source_collections.image_url` and read the separately stored optional `custom_artwork_path`, so Spotify cover changes propagate while a Local artwork override remains independent. Source-linked rows reject direct rename/delete/membership mutation; user-authored rows remain editable. Database open performs one idempotent mirror reconciliation so existing tracked Spotify playlists and Liked Songs are materialized immediately after upgrading to the mirror-capable schema.
 
 ### Idempotency
 
@@ -1603,23 +1598,17 @@ The UI should report unresolved counts separately.
 
 Local Playlist sync is a persisted editing/synchronization workflow, not an immutable source export. It resolves each `local_playlist_entries.library_track_id` directly to that track's preferred present `LocalFile`.
 
-Local-library scanning also supports one-time discovery of existing M3U/M3U8 files under the configured root. The importer ignores blank/comment lines, resolves relative audio paths against the playlist directory, preserves ordering and duplicate references, and creates a Local Playlist keyed by its canonical M3U path when that path is not already managed. Subsequent scans do not replace the persisted playlist entries, because after import the Refrain copy is the editable source of truth and the linked M3U becomes its synchronization target.
+Local-library scanning also supports one-time discovery of existing M3U/M3U8 files under the configured root. The importer ignores blank/comment lines, resolves relative audio paths against the playlist directory, preserves ordering and duplicate references, and creates a Local Playlist keyed by its canonical M3U path when that path is not already managed. Subsequent scans do not replace the persisted playlist entries, because after import the Refrain copy is the editable source of truth and the linked M3U becomes its synchronization target. Scanning skips already registered playlist paths and the `#REFRAIN-MANAGED-PLAYLIST` header so orphaned managed M3U files never become independent Local Playlists.
 
-New user-authored Local Playlists and source-linked Spotify mirrors are managed by Refrain. A managed playlist resolves its target from the configured library root as `<Library Root>/Playlists/<sanitized playlist name>.m3u8`. Target selection avoids collisions with other persisted playlist targets and existing files. Managed targets are created automatically, including the `Playlists` directory. A managed user-playlist rename resolves a new filename and removes the previous managed file after the replacement succeeds.
+New user-authored Local Playlists and source-linked Spotify mirrors are managed by Refrain. A managed playlist resolves its target from the configured library root as `<Library Root>/00 Playlists/<sanitized playlist name>.m3u`. Target selection avoids collisions with other persisted playlist targets and existing files. Managed targets are created automatically, including the `00 Playlists` directory. A managed user-playlist rename or upgrade from a managed `.m3u8` resolves a new filename and removes the previous managed file after the replacement succeeds. Startup relocates old managed files from `Playlists/` and removes the old folder only when empty. Untracking a source collection deletes its derived mirror row and, after the database transaction commits, removes the M3U only if its Refrain ownership header is present and no other playlist references its path. The recorded cover sidecar is removed only when its path matches the managed playlist filename scheme, is beside the M3U, and is not referenced by another playlist. Owned custom artwork is also cleaned up when a mirror disappears. Unmarked files remain untouched.
 
-For a source-linked Spotify mirror with `source_collections.image_url`, playlist synchronization also maintains a downloaded cover sidecar beside the managed M3U8. `cover_source_url` records which Spotify artwork URL produced the current sidecar and `cover_path` records the Refrain-owned file so unchanged artwork can be reused without a network request and renamed/moved with the managed playlist target. JPEG, PNG, WebP, and GIF responses are supported with a bounded HTTPS download. The normal target uses the M3U8 basename with the detected image extension; if that path is already occupied by an unrelated file, Refrain selects a collision-safe `.cover` filename instead. Cover download failure is logged and retried later without failing an otherwise valid playlist-file synchronization.
+For a source-linked Spotify mirror with `source_collections.image_url`, playlist synchronization also maintains a downloaded cover sidecar beside the managed M3U. `cover_source_url` records which Spotify artwork URL produced the current sidecar and `cover_path` records the Refrain-owned file so unchanged artwork can be reused without a network request and renamed/moved with the managed playlist target. JPEG, PNG, WebP, and GIF responses are supported with a bounded HTTPS download. The normal target uses the M3U basename with the detected image extension; if that path is already occupied by an unrelated file, Refrain selects a collision-safe `.cover` filename instead. Cover download failure is logged and retried later without failing an otherwise valid playlist-file synchronization.
 
 Imported/user-owned M3U targets keep `m3u_managed = 0` and retain their existing path. Refrain never relocates those external targets merely because the persisted playlist is edited.
 
-Before writing, every entry must resolve to a path that currently exists as a file. If any entry fails this check:
+Each synchronization regenerates the complete UTF-8 extended M3U, retaining playable entries in persisted order, including duplicate positions. Entries whose preferred local file is unavailable become `#REFRAIN-UNAVAILABLE` comments, while the destination is still rewritten. Persist a user-visible `sync_error` describing omissions and `last_synced_at` for the completed write; clear the warning when all entries are available again. Prefer a relative path from the M3U location to the audio file when representable and fall back to an absolute native path when necessary. Write through a temporary file in the destination directory and replace the destination only after the complete output is ready.
 
-- refuse the complete sync
-- preserve the existing destination file
-- persist a user-visible `sync_error`
-
-On success, generate UTF-8 extended M3U in persisted playlist order, including duplicate positions. Prefer a relative path from the M3U location to the audio file when representable and fall back to an absolute native path when necessary. Write through a temporary file in the destination directory and replace the destination only after the complete output is ready. Record `last_synced_at` and clear `sync_error` after replacement succeeds.
-
-Automatic synchronization runs after playlist creation, rename, add/remove/reorder mutations, tracked Spotify playlist reconciliation, library-root/settings changes, and application startup. Automatic sync failure is persisted on the playlist but does not roll back an otherwise valid playlist mutation. The Local Playlists UI displays managed/link state, target path, last sync time, and any sync error without exposing manual target selection or a manual Sync button.
+Automatic synchronization runs after playlist creation, rename, add/remove/reorder mutations, tracked Spotify playlist reconciliation, manual match confirmation/rejection/clearing, library scans, preferred-file changes, local normalization, library-root/settings changes, and application startup. Match decisions also refresh Local Playlist projections in the desktop UI. Automatic sync failure is persisted on the playlist but does not roll back an otherwise valid playlist mutation. The Local Playlists UI displays managed/link state, target path, last sync time, and any sync error without exposing manual target selection or a manual Sync button.
 
 The command boundary retains M3U target assignment and explicit sync as lower-level/backward-compatible operations for imported or externally linked playlist targets. Local Songs multi-selection and per-track menus call the add-tracks command with library-track IDs; normal desktop playlist management relies on automatic synchronization.
 
@@ -1691,17 +1680,20 @@ If the same local file occurs multiple times in the playlist, include one audio 
 <MirrorRoot>/
   .refrain/
     manifest.json
+    inflight.json (only during interrupted/incomplete runs)
   Music/
     <canonical relative library tree>
-  Playlists/
-    <collection name>.m3u8
+    00 Playlists/
+      <sanitized playlist name>-<local playlist id>.m3u
 ```
 
 Mirror playlists use paths relative to the playlist location, such as:
 
 ```text
-../Music/Artist/Album (Year)/01 - Song.flac
+../Artist/Album (Year)/01 - Song.flac
 ```
+
+Every Local Playlist is rendered into a UTF-8 M3U (`.m3u`) for compatibility with Android playlist scanners, preserving entry order and duplicates. Playable entries use standard `#EXTM3U` and `#EXTINF` directives; mirror ownership is recorded in the manifest. Entries prefer their directly indexed mirrored file; if the playlist's preferred file is external, the exporter selects an indexed copy of the same logical track inside the library root. External files are excluded from mirror hashing/copying, even when unavailable. Unresolvable playlist entries become `#REFRAIN-UNAVAILABLE:<artists> - <title>` comments and contribute to the `#REFRAIN-MIRROR-SKIPPED:<count>` header. Playable entries still export with relative paths. Later runs replace the managed playlist content when files become available, without affecting unrelated destination files. An older `.m3u8` mirror output is retired on the next run only if its recorded content still passes the managed-file ownership checks.
 
 ### Mirror Manifest
 
@@ -1714,33 +1706,30 @@ The manifest records:
 - each managed relative path
 - source key
 - file size
-- content hash when available
+- required BLAKE3 content hash
+- optional source/destination last-modified timestamps (nanoseconds) for fast incremental comparisons
 
 The database remains authoritative for local application state.
 
-The destination manifest provides portable ownership evidence if the target is temporarily disconnected or the local DB needs to compare against it.
+The destination manifest provides portable ownership evidence if the target is temporarily disconnected or the local DB needs to compare against it. Its target ID binds a remounted device even when its filesystem inode changes. Removing a destination sets its database `active` flag to zero without deleting run history or entry records. Re-adding it by path or matching on-device manifest restores the same record; orphaned manifests created before this retention rule can also be adopted after checking ownership. The target list polls availability without removing disconnected rows. On macOS, it searches available `/Volumes` mount roots for a previously configured subfolder containing the same manifest ID and updates the saved path/identity after rediscovery.
 
 ### Mirror Algorithm
 
-1. verify target is mounted and writable
-2. load prior Refrain manifest if present
-3. build desired audio and playlist manifest
-4. copy changed/new files to temporary paths
-5. verify copies
-6. atomically replace destination files where supported
-7. remove stale paths only if they were present in the previous Refrain manifest
-8. write new manifest last
-9. update `mirror_entries`
+1. **Prepare:** Confirm the destination identity and source separation; load its manifest and any interrupted-run journal; validate managed paths and ownership records. Build the desired snapshot, reusing audio hashes when source identity, size, and modification time match cached values; hash changed/new sources and render portable Local Playlists.
+2. **Plan:** Check each desired or obsolete destination path once against previous manifest and interrupted journal ownership. Reuse cached destination hashes when verified size and modification time match, otherwise hash the destination. Immediately record `Keep`, `Copy`, `Remove`, or `SkipMissing` with the verified size, modification time, and available filesystem file identity. Reject unrelated or externally changed data before starting file updates.
+3. **Execute:** Check the destination mount identity before updates. Before removals and after verifying temporary copies, confirm the affected path still matches its planned metadata and file identity, without rehashing destination content. Remove verified obsolete files while the old journal still proves their ownership, then publish `inflight.json` before replacing desired content; preserve earlier interrupted hashes when rebasing a run. Copy missing/changed audio first, export changed M3U playlists after audio, and leave planned `Keep` files untouched. Write through same-directory temporary files, sync and hash-check copied bytes, and replace only when the destination still matches the plan. Publish the manifest last, update database entries, and remove the journal. At startup, interrupted `running` database rows become retryable `failed` results.
 
 Never recursively delete files simply because they are absent from desired state.
 
+The `library-mirror-progress` event includes a stage (`preparing`, `scanning`, `playlists`, `verifying`, `working`, `copying`, `finalizing`, `complete`), operation, current relative file path, completed/total items for that stage, copied/unchanged/removed counts, and current file bytes written/total. The worker publishes the current file before potentially long source hashing and destination verification, and throttles audio copy byte updates to about 200 ms while actively writing. Playlist processing publishes preparation/unavailable-entry operations and distinguishes M3U export from audio copying. Frontend details remain live while the sidebar notification is open. The final `MirrorRun` record remains authoritative for results; omitted playlist entries remain inspectable in the exported M3U rather than in a separate persisted warning counter.
+
+`cancel_mirror` signals the active worker for its target without acquiring the mirror or library work locks. The worker checks cancellation during source/destination hashing, preflight, before managed-file changes, and between chunks of audio copying. Interrupted temporary writes are discarded; previously completed managed-file changes remain journal-authorized and can be resumed safely by starting another mirror run. Cancellation before publishing the manifest records a `cancelled` run in history; once manifest publication begins, the worker completes the committed state consistently. Migration `0024` extends the historical run-status constraint for existing installations.
+
+The desktop computes elapsed time and remaining-time estimates from the current stage's observed item rate, resetting the sample when the stage changes. An active file copy can also expose an estimate from observed transferred bytes. The UI labels estimates as stage/file estimates and displays a calculating state when the rate is unknown, rather than predicting a total duration across unmeasured stages.
+
 ### Change Detection
 
-Prefer:
-
-1. known source content hash
-2. stored file size plus modification metadata
-3. compute hash when identity remains uncertain
+Successful runs cache file size, modification time, and verified BLAKE3 hashes in the on-device manifest. Unchanged files are checked through metadata first so subsequent mirrors can avoid rereading audio on both sides. Older manifests require hashing once to populate the cache. Destination content is compared only during Plan; Execute performs lightweight metadata/file-identity checks before destructive changes, including just before replacing a verified temporary copy. A file modified while deliberately preserving size, modification time, and file identity cannot be detected by this shortcut; full BLAKE3 checks still apply to unknown or metadata-changed files during Plan.
 
 ## Tauri Command Boundary
 
@@ -1797,6 +1786,7 @@ list_mirror_targets
 save_mirror_target
 remove_mirror_target
 run_mirror
+cancel_mirror
 ```
 
 Exact Rust function names may differ, but the boundary should remain use-case-oriented.
@@ -1828,7 +1818,7 @@ List commands support:
 - sort
 - filter where needed
 
-Local-library and Spotify track projections should support server-side filtering once a filter would otherwise require loading the entire collection into the webview. Common filters include search, artist, album, year, format, Spotify membership, and local/presence state. Spotify collection summaries also project aggregate local-entry and attention-entry counts so Albums and Playlists can expose the same local-state overview without loading every collection's entries into the webview. Technical filters such as path/location, acquisition state, match state, explicit state, and duration can use the same query boundary behind the UI's Advanced controls.
+Local-library and Spotify track projections should support server-side filtering once a filter would otherwise require loading the entire collection into the webview. Common query fields include search, local/presence state, tracking state, acquisition state, and match state; artist, album, year, format, and Spotify membership remain available as sortable row metadata where supported. Spotify collection summaries also project aggregate local-entry and attention-entry counts so Albums and Playlists can expose the same local-state overview without loading every collection's entries into the webview. Additional technical filters such as path/location, explicit state, and duration can use the same query boundary behind the UI's compact `Filters` control.
 
 Until those projections provide server-side filtering for the relevant view, Liked Songs and Local Library keep client-side search/filter correctness by eagerly requesting subsequent pages whenever a query or filter is active. Reactive filtering expressions must explicitly depend on the current search/filter values so Svelte invalidates the result set when controls change.
 
@@ -1858,15 +1848,16 @@ Spotify
   Liked Songs
   Albums
   Playlists
-Settings
-Issues (secondary attention flow)
+Staging
+Issues
+Settings (sidebar footer)
 ```
 
 The Local and Spotify parent rows are independently collapsible. Local > Songs shows only present local-library tracks and annotates matched Spotify membership; each row includes its local file path and local artwork when available. Local > Playlists uses a playlist browser that opens a dedicated detail view. It manages editable user-authored playlists alongside read-only tracked Spotify mirrors, shows automatic managed/linked M3U8 state and sync diagnostics, and exposes ordered track membership without manual file-target or sync controls. The Spotify workspace contains Liked Songs, Saved Albums, and Playlists sections with persistent tracking controls. Inaccessible playlists are excluded from the normal playlist list and exposed in a collapsed secondary section.
 
 Spotify track tables support row multi-selection for tracking changes. Single-track changes continue through `set_source_track_tracking`; bulk `Track`, `Exclude`, and reset-to-default changes use `set_source_tracks_tracking`, which validates that every selected source track belongs to the collection and applies the deduplicated overrides in one SQLite transaction before the frontend reloads collection/source state once.
 
-Use a compact desktop-density system rather than a literal global CSS zoom. Reduce typography, spacing, controls, card dimensions, row heights, and shell chrome consistently so the application feels substantially denser while keeping normal desktop text readable. The primary sidebar should be materially narrower than the current 13rem shell.
+Use a compact desktop-density system rather than a literal global CSS zoom. Keep typography, spacing, controls, card dimensions, row heights, and shell chrome consistent and readable, with a compact primary sidebar.
 
 Use dense media rows and chips for track/state browsing. Avoid spreadsheet-style tables for the main Local and Spotify browsing flows.
 
@@ -1874,7 +1865,7 @@ Saved Albums and Playlists use responsive artwork-first grids. Selecting a colle
 
 Saved Album and Playlist cards support a native-style right-click pin toggle. Pins are frontend-only ordering preferences persisted in `localStorage` under `refrain-spotify-pinned-collections`; they store the collection kind, provider collection ID, display name, image URL, and current database ID. Pinned cards are sorted to the front of their respective Albums or Playlists grid, and the card's cover badge must react immediately when pin state changes. Pinning does not alter Spotify tracking state or require a database migration. If a persisted pin is outside the initially loaded collection page, the collection browser continues pagination until the pinned collection is available or the list is exhausted.
 
-Default-visible filters are search, Spotify/local state, artist, album, year, format, and Spotify membership where applicable. Path/location, acquisition state, match state, explicit state, and duration live behind an Advanced control.
+Keep search visible. Group applicable Spotify/local state, tracking, acquisition, match, path/location, explicit state, and other technical criteria behind one collapsible `Filters` control. Artist, album, year, format, and other metadata remain available in sortable track columns where supported.
 
 Album art should remain small and lazy-loaded.
 
@@ -2057,7 +2048,7 @@ Each retry must either:
 - use a different provider candidate
 - or follow a provider-declared retryable failure
 
-A different fallback candidate may be attempted automatically only when it independently meets the acquisition confidence threshold. If an automatic attempt fails, continue with the next configured provider. If the ordered chain ends on a retryable provider or transfer failure, rerun the complete provider chain with fresh search results up to three total chain attempts using short exponential backoff. If at least one provider identified an automatic-quality match but every automatic transfer attempt across those chain retries ultimately fails, persist the transfer failure as a retryable acquisition failure and do not convert the known match back into manual resolution. Only when no provider identified an automatic-quality match should returned search outputs be persisted as `needsResolution`, grouped by provider priority.
+A different fallback candidate may be attempted automatically only when it independently meets the acquisition confidence threshold. If an automatic attempt fails, continue with the next configured provider. If the ordered chain ends on a retryable provider or transfer failure, rerun the complete provider chain with fresh search results up to three total chain attempts using short exponential backoff. Confirmed Antra invalid-stream failures skip this complete-chain retry when no other automatic provider reported a retryable transfer failure; an identical MP4 codec will not become FLAC on repetition. If at least one provider identified an automatic-quality match but every automatic transfer attempt across those chain retries ultimately fails, persist the transfer failure as a retryable acquisition failure and do not convert the known match back into manual resolution. Only when no provider identified an automatic-quality match should returned search outputs be persisted as `needsResolution`, grouped by provider priority.
 
 Do not repeatedly download the exact same rejected candidate.
 

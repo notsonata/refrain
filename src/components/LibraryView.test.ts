@@ -71,6 +71,9 @@ describe('LibraryView', () => {
     expect(body).toContain('Local Only');
     expect(body).toContain('01 - Available Song.flac');
     expect(body).toContain('02 - Local Song.mp3');
+    expect(body).toMatch(
+      /class="collection-chip-cell">(?:<!--.*?-->)*<span class="muted-cell">—<\/span>/,
+    );
   });
 
   it('virtualizes long desktop library lists instead of rendering every row', () => {

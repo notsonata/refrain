@@ -1,0 +1,7 @@
+[features.code_mode]
+direct_only_tool_namespaces = ["mcp__specship"]
+
+[mcp_servers.specship]
+command = "/opt/homebrew/bin/node"
+args = ["/Users/angelo/Projects/Personal/refrain/.specship/runtime/dist/cli.js", "serve", "/Users/angelo/Projects/Personal/refrain"]
+tool_timeout_sec = 2147483

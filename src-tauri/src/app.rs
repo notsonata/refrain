@@ -2,7 +2,7 @@ use std::{
     error::Error,
     fs,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock, atomic::AtomicBool},
 };
 
 use tracing_subscriber::EnvFilter;
@@ -10,7 +10,8 @@ use tracing_subscriber::EnvFilter;
 use crate::{
     antra::AntraProvider, db::Database, monochrome::MonochromeProvider,
     playlist_sync::sync_managed_local_playlists, reconciliation::SyncCoordinator,
-    sockseek::SockseekManager, source_sync::SourceRefreshControl, spotify::SpotifyClient,
+    reconciliation::SyncPipelineLock, sockseek::SockseekManager,
+    source_sync::SourceRefreshControl, spotify::SpotifyClient, sync_scheduler::SyncScheduler,
 };
 
 pub struct AppState {
@@ -19,10 +20,19 @@ pub struct AppState {
     pub spotify: Arc<SpotifyClient>,
     pub source_refresh: Arc<SourceRefreshControl>,
     pub sync: Arc<SyncCoordinator>,
+    pub sync_pipeline: Arc<SyncPipelineLock>,
+    pub sync_scheduler: SyncScheduler,
     pub library_lock: Arc<RwLock<()>>,
+    pub mirror_lock: Arc<Mutex<()>>,
+    pub active_mirror: Arc<Mutex<Option<ActiveMirror>>>,
     pub monochrome: Arc<MonochromeProvider>,
     pub antra: Arc<AntraProvider>,
     pub sockseek: Arc<SockseekManager>,
+}
+
+pub struct ActiveMirror {
+    pub target_id: i64,
+    pub cancelled: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -30,6 +40,7 @@ impl AppState {
         app_data_dir: PathBuf,
         database: Arc<Database>,
         spotify: Arc<SpotifyClient>,
+        sync_scheduler: SyncScheduler,
     ) -> Result<Self, crate::acquisition::ProviderError> {
         Ok(Self {
             app_data_dir,
@@ -37,7 +48,11 @@ impl AppState {
             spotify,
             source_refresh: Arc::new(SourceRefreshControl::default()),
             sync: Arc::new(SyncCoordinator::default()),
+            sync_pipeline: Arc::new(SyncPipelineLock::default()),
+            sync_scheduler,
             library_lock: Arc::new(RwLock::new(())),
+            mirror_lock: Arc::new(Mutex::new(())),
+            active_mirror: Arc::new(Mutex::new(None)),
             monochrome: Arc::new(MonochromeProvider::new()?),
             antra: Arc::new(AntraProvider::new()?),
             sockseek: Arc::new(SockseekManager::default()),
@@ -64,7 +79,8 @@ pub fn initialize(app_data_dir: PathBuf) -> Result<AppState, Box<dyn Error>> {
         "application persistence initialized"
     );
 
-    Ok(AppState::new(app_data_dir, database, spotify)?)
+    let sync_scheduler = SyncScheduler::new(&database.get_settings()?);
+    Ok(AppState::new(app_data_dir, database, spotify, sync_scheduler)?)
 }
 
 fn initialize_logging(log_dir: PathBuf) {

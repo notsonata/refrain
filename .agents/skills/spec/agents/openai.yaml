@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spec"
+  short_description: "Plan, delegate, and independently accept changes"
+  default_prompt: "Use $spec to plan this change with me, delegate implementation, and verify the result."
+
+policy:
+  allow_implicit_invocation: false

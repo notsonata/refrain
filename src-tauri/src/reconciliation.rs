@@ -8,7 +8,7 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::{
     acquisition::{AcquisitionCoordinator, AcquisitionProvider},
@@ -35,6 +35,50 @@ use crate::{
 };
 
 pub const SYNC_PROGRESS_EVENT: &str = "library-sync-progress";
+pub const SYNC_PIPELINE_EVENT: &str = "library-sync-pipeline";
+
+#[derive(Debug, Default)]
+pub struct SyncPipelineLock {
+    busy: AtomicBool,
+    cancelled: AtomicBool,
+}
+
+pub struct SyncPipelineLease(Arc<SyncPipelineLock>);
+
+impl SyncPipelineLock {
+    pub fn try_acquire(self: &Arc<Self>) -> Option<SyncPipelineLease> {
+        self.busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| {
+                self.cancelled.store(false, Ordering::Release);
+                SyncPipelineLease(Arc::clone(self))
+            })
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::Acquire)
+    }
+
+    pub fn cancel(&self) -> bool {
+        if self.is_busy() {
+            self.cancelled.store(true, Ordering::Release);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for SyncPipelineLease {
+    fn drop(&mut self) {
+        self.0.busy.store(false, Ordering::Release);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +89,21 @@ pub struct SyncProgress {
     pub completed: usize,
     pub total: Option<usize>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPipelineResult {
+    pub local_run: SyncRun,
+    pub spotify_run: Option<SyncRun>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncPipelineEvent {
+    trigger: String,
+    status: String,
+    message: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -173,7 +232,11 @@ pub async fn start_sync(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncRun, String> {
-    start_scoped_sync("spotify", trigger, app, state).await
+    let _pipeline = state
+        .sync_pipeline
+        .try_acquire()
+        .ok_or_else(|| "A full library synchronization is already running.".to_owned())?;
+    start_scoped_sync("spotify", trigger, app, &state).await
 }
 
 #[tauri::command]
@@ -182,7 +245,11 @@ pub async fn start_local_sync(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncRun, String> {
-    start_scoped_sync("local", trigger, app, state).await
+    let _pipeline = state
+        .sync_pipeline
+        .try_acquire()
+        .ok_or_else(|| "A full library synchronization is already running.".to_owned())?;
+    start_scoped_sync("local", trigger, app, &state).await
 }
 
 #[tauri::command]
@@ -191,14 +258,104 @@ pub async fn start_spotify_sync(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncRun, String> {
-    start_scoped_sync("spotify", trigger, app, state).await
+    let _pipeline = state
+        .sync_pipeline
+        .try_acquire()
+        .ok_or_else(|| "A full library synchronization is already running.".to_owned())?;
+    start_scoped_sync("spotify", trigger, app, &state).await
+}
+
+#[tauri::command]
+pub async fn start_full_sync(
+    trigger: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SyncPipelineResult, String> {
+    let trigger = trigger.unwrap_or_else(|| "manual".into());
+    if !matches!(trigger.as_str(), "manual" | "startup" | "scheduled") {
+        return Err("Sync trigger must be manual, startup, or scheduled.".into());
+    }
+    run_full_pipeline(&app, &state, &trigger).await
+}
+
+pub async fn run_automatic_full_sync(app: tauri::AppHandle, trigger: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    run_full_pipeline(&app, &state, &trigger).await.map(|_| ())
+}
+
+async fn run_full_pipeline(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    trigger: &str,
+) -> Result<SyncPipelineResult, String> {
+    let _pipeline = state
+        .sync_pipeline
+        .try_acquire()
+        .ok_or_else(|| "A full library synchronization is already running.".to_owned())?;
+    let _ = app.emit(
+        SYNC_PIPELINE_EVENT,
+        SyncPipelineEvent {
+            trigger: trigger.to_owned(),
+            status: "running".into(),
+            message: None,
+        },
+    );
+    let result: Result<SyncPipelineResult, String> = async {
+        let local_run = start_scoped_sync("local", Some(trigger.to_owned()), app.clone(), state).await?;
+        if matches!(local_run.status.as_str(), "failed" | "cancelled")
+            || state.sync_pipeline.is_cancelled()
+        {
+            return Ok(SyncPipelineResult {
+                local_run,
+                spotify_run: None,
+            });
+        }
+        let spotify_run = start_scoped_sync(
+            "spotify",
+            Some(trigger.to_owned()),
+            app.clone(),
+            state,
+        )
+        .await?;
+        Ok(SyncPipelineResult {
+            local_run,
+            spotify_run: Some(spotify_run),
+        })
+    }
+    .await;
+    let event = match &result {
+        Ok(pipeline) => SyncPipelineEvent {
+            trigger: trigger.to_owned(),
+            status: if pipeline.spotify_run.as_ref().is_some_and(|run| run.status == "failed") {
+                "failed".into()
+            } else if pipeline.local_run.status == "cancelled"
+                || pipeline.spotify_run.as_ref().is_some_and(|run| run.status == "cancelled")
+            {
+                "cancelled".into()
+            } else {
+                "finished".into()
+            },
+            message: pipeline
+                .spotify_run
+                .as_ref()
+                .and_then(|run| run.error_message.clone())
+                .or_else(|| pipeline.local_run.error_message.clone()),
+        },
+        Err(error) => SyncPipelineEvent {
+            trigger: trigger.to_owned(),
+            status: "failed".into(),
+            message: Some(error.clone()),
+        },
+    };
+    let _ = app.emit(SYNC_PIPELINE_EVENT, event);
+    result
 }
 
 async fn start_scoped_sync(
     scope: &'static str,
     trigger: Option<String>,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: &AppState,
 ) -> Result<SyncRun, String> {
     let trigger = trigger.unwrap_or_else(|| "manual".into());
     if !matches!(trigger.as_str(), "manual" | "startup" | "scheduled") {
@@ -284,7 +441,7 @@ async fn start_scoped_sync(
 
 #[tauri::command]
 pub fn cancel_sync(state: tauri::State<'_, AppState>) -> bool {
-    let cancelled = state.sync.cancel();
+    let cancelled = state.sync_pipeline.cancel() | state.sync.cancel();
     if cancelled {
         state.source_refresh.cancel();
         cancel_spotify_saved_album_refresh();
@@ -914,6 +1071,13 @@ fn run_local_sync(
                 unchanged = summary.unchanged,
                 "local filesystem normalization completed"
             );
+            sync_managed_local_playlists(database).map_err(|error| {
+                failed(
+                    counts,
+                    "refresh managed playlists after normalization",
+                    error,
+                )
+            })?;
             Ok(SyncExecutionSuccess {
                 counts,
                 warnings: Vec::new(),
@@ -1169,6 +1333,25 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn full_pipeline_lock_serializes_operations_and_recovers_after_release() {
+        let lock = Arc::new(SyncPipelineLock::default());
+        let first = lock.try_acquire().expect("first pipeline should acquire");
+        assert!(lock.is_busy());
+        assert!(lock.try_acquire().is_none());
+        drop(first);
+        assert!(!lock.is_busy());
+        assert!(lock.try_acquire().is_some());
+    }
+
+    #[test]
+    fn cancellation_remains_pending_between_scoped_runs() {
+        let lock = Arc::new(SyncPipelineLock::default());
+        let _lease = lock.try_acquire().expect("pipeline should acquire");
+        assert!(lock.cancel());
+        assert!(lock.is_cancelled());
+    }
 
     static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(0);
 

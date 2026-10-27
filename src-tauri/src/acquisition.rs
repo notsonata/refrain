@@ -492,7 +492,12 @@ impl AcquisitionCoordinator {
                             "automatic acquisition candidate failed"
                         );
                         last_error = error.clone();
-                        automatic_failure.get_or_insert_with(|| (provider.id().to_owned(), error));
+                        if automatic_failure.as_ref().is_none_or(|(_, previous)| {
+                            previous.code == "antraInvalidStream"
+                                && error.code != "antraInvalidStream"
+                        }) {
+                            automatic_failure = Some((provider.id().to_owned(), error));
+                        }
                     }
                     continue;
                 }
@@ -501,7 +506,12 @@ impl AcquisitionCoordinator {
             }
 
             if let Some((provider, error)) = automatic_failure {
-                if error.retryable && chain_attempt + 1 < MAX_CHAIN_ATTEMPTS {
+                // The provider already tried alternate candidates. Repeating a
+                // confirmed incompatible stream cannot make it a FLAC file.
+                if error.retryable
+                    && error.code != "antraInvalidStream"
+                    && chain_attempt + 1 < MAX_CHAIN_ATTEMPTS
+                {
                     thread::sleep(chain_retry_delay(chain_attempt));
                     continue;
                 }
@@ -2117,6 +2127,139 @@ mod tests {
             second.state.lock().unwrap().acquired_tokens,
             vec!["sock-match"]
         );
+    }
+
+    #[test]
+    fn antra_invalid_stream_tries_next_exact_isrc_release() {
+        let (path, database) = database("antra-invalid-next-release");
+        seed_missing_track(&database, false);
+        let antra = Arc::new(FakeProvider::named_with_candidates(
+            "antra",
+            &["tidal-release", "qobuz-release"],
+        ));
+        {
+            let mut state = antra.state.lock().unwrap();
+            for candidate in &mut state.candidates {
+                candidate.isrc = Some("TEST12345678".into());
+            }
+            state.acquire_results.push_back(Err(ProviderError::new(
+                "antraInvalidStream",
+                "Tidal returned AAC in MP4",
+                true,
+            )));
+        }
+
+        let providers: Vec<Arc<dyn AcquisitionProvider>> = vec![antra.clone()];
+        let jobs = AcquisitionCoordinator
+            .run_missing_chain(&database, &path.0, &providers, || false)
+            .unwrap();
+
+        assert_eq!(jobs[0].status, "staged");
+        let state = antra.state.lock().unwrap();
+        assert_eq!(state.acquired_tokens.len(), 2);
+        assert!(state.acquired_tokens.contains(&"tidal-release".to_owned()));
+        assert!(state.acquired_tokens.contains(&"qobuz-release".to_owned()));
+        assert_eq!(state.search_calls, 1);
+    }
+
+    #[test]
+    fn antra_invalid_stream_falls_through_to_next_provider() {
+        let (path, database) = database("antra-invalid-provider-fallback");
+        seed_missing_track(&database, false);
+        let antra = Arc::new(FakeProvider::named_with_candidates("antra", &["tidal"]));
+        antra
+            .state
+            .lock()
+            .unwrap()
+            .acquire_results
+            .push_back(Err(ProviderError::new(
+                "antraInvalidStream",
+                "AAC in MP4",
+                true,
+            )));
+        let other = Arc::new(FakeProvider::named_with_candidates(
+            "sockseek",
+            &["lossless"],
+        ));
+        let providers: Vec<Arc<dyn AcquisitionProvider>> = vec![antra.clone(), other.clone()];
+
+        let jobs = AcquisitionCoordinator
+            .run_missing_chain(&database, &path.0, &providers, || false)
+            .unwrap();
+
+        assert_eq!(jobs[0].status, "staged");
+        assert_eq!(jobs[0].provider, "sockseek");
+        assert_eq!(antra.state.lock().unwrap().search_calls, 1);
+        assert_eq!(other.state.lock().unwrap().search_calls, 1);
+    }
+
+    #[test]
+    fn exhausted_antra_invalid_stream_does_not_restart_entire_chain() {
+        let (path, database) = database("antra-invalid-no-chain-retry");
+        seed_missing_track(&database, false);
+        let antra = Arc::new(FakeProvider::named_with_candidates("antra", &["tidal"]));
+        antra
+            .state
+            .lock()
+            .unwrap()
+            .acquire_results
+            .push_back(Err(ProviderError::new(
+                "antraInvalidStream",
+                "AAC in MP4",
+                true,
+            )));
+
+        let providers: Vec<Arc<dyn AcquisitionProvider>> = vec![antra.clone()];
+        let jobs = AcquisitionCoordinator
+            .run_missing_chain(&database, &path.0, &providers, || false)
+            .unwrap();
+
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), Some("antraInvalidStream"));
+        let state = antra.state.lock().unwrap();
+        assert_eq!(state.search_calls, 1);
+        assert_eq!(state.acquired_tokens, vec!["tidal"]);
+    }
+
+    #[test]
+    fn other_provider_transient_error_still_retries_after_antra_invalid_stream() {
+        let (path, database) = database("antra-invalid-with-transient-fallback");
+        seed_missing_track(&database, false);
+        let antra = Arc::new(FakeProvider::named_with_candidates("antra", &["tidal"]));
+        {
+            let mut state = antra.state.lock().unwrap();
+            for _ in 0..MAX_CHAIN_ATTEMPTS {
+                state.acquire_results.push_back(Err(ProviderError::new(
+                    "antraInvalidStream",
+                    "AAC in MP4",
+                    true,
+                )));
+            }
+        }
+        let other = Arc::new(FakeProvider::named_with_candidates(
+            "sockseek",
+            &["lossless"],
+        ));
+        other
+            .state
+            .lock()
+            .unwrap()
+            .acquire_results
+            .push_back(Err(ProviderError::new(
+                "downloadTransportFailed",
+                "temporary failure",
+                true,
+            )));
+        let providers: Vec<Arc<dyn AcquisitionProvider>> = vec![antra.clone(), other.clone()];
+
+        let jobs = AcquisitionCoordinator
+            .run_missing_chain(&database, &path.0, &providers, || false)
+            .unwrap();
+
+        assert_eq!(jobs[0].status, "staged");
+        assert_eq!(jobs[0].provider, "sockseek");
+        assert_eq!(antra.state.lock().unwrap().search_calls, 2);
+        assert_eq!(other.state.lock().unwrap().search_calls, 2);
     }
 
     #[test]

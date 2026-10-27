@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ship"
+  short_description: "Implement a brief and report verified evidence"
+  default_prompt: "Use $ship to implement this brief, validate the result, and report evidence or consequential blockers."
+
+policy:
+  allow_implicit_invocation: false

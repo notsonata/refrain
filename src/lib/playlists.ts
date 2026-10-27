@@ -6,6 +6,7 @@ export interface LocalPlaylistSummary {
   name: string;
   sourceCollectionId: number | null;
   imageUrl: string | null;
+  customArtworkPath: string | null;
   entryCount: number;
   m3uPath: string | null;
   m3uManaged: boolean;
@@ -32,6 +33,7 @@ export interface LocalPlaylistDetail {
   name: string;
   sourceCollectionId: number | null;
   imageUrl: string | null;
+  customArtworkPath: string | null;
   m3uPath: string | null;
   m3uManaged: boolean;
   lastSyncedAt: number | null;
@@ -39,6 +41,28 @@ export interface LocalPlaylistDetail {
   createdAt: number;
   updatedAt: number;
   entries: LocalPlaylistEntry[];
+}
+
+// Older, independently imported M3Us may share a name with an automatically
+// tracked Spotify mirror. Keep both records and files; collapse only the
+// imported cards in the default browser, with an explicit way to reveal them.
+export function localPlaylistBrowserItems(
+  playlists: LocalPlaylistSummary[],
+  showImportedNamesakes = false,
+): LocalPlaylistSummary[] {
+  if (showImportedNamesakes) return playlists;
+  const mirrorNames = new Set(
+    playlists
+      .filter((playlist) => playlist.sourceCollectionId !== null)
+      .map((playlist) => playlist.name.trim().toLocaleLowerCase()),
+  );
+  return playlists.filter(
+    (playlist) =>
+      playlist.sourceCollectionId !== null ||
+      playlist.m3uPath === null ||
+      playlist.m3uManaged ||
+      !mirrorNames.has(playlist.name.trim().toLocaleLowerCase()),
+  );
 }
 
 export function listLocalPlaylists(
@@ -69,6 +93,17 @@ export function renameLocalPlaylist(
   return invokeFn<LocalPlaylistDetail>('rename_local_playlist', {
     playlistId,
     name,
+  });
+}
+
+export function setLocalPlaylistArtwork(
+  playlistId: number,
+  path: string | null,
+  invokeFn: InvokeFn = invoke,
+): Promise<LocalPlaylistDetail> {
+  return invokeFn<LocalPlaylistDetail>('set_local_playlist_artwork', {
+    playlistId,
+    path,
   });
 }
 

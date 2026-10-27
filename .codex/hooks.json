@@ -26,6 +26,17 @@
           }
         ]
       }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/opt/homebrew/bin/node' '/Users/angelo/Projects/Personal/refrain/.specship/runtime/dist/cli.js' 'interrupt' '--workspace' '/Users/angelo/Projects/Personal/refrain'",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

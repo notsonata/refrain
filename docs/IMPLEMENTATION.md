@@ -14,11 +14,11 @@ This plan records the implementation sequence from the initial project foundatio
 
 ## Current State
 
-Refrain v0.1.0 was released on 2026-09-25. Milestones 1 through 12 are complete. Milestone 13 originally delivered the Sockseek sidecar provider. Acquisition now supports an ordered provider chain with Monochrome as the default first provider, Antra as an authenticated optional provider, and Sockseek as another optional fallback; the current Soulseek login path remains unreliable.
+Refrain v0.1.0 was released on 2026-09-25, and the latest tagged release is v0.6.0 (2026-09-27). Milestones 1 through 17 are complete in the working repository. Milestone 13 originally delivered the Sockseek sidecar provider. Acquisition now supports an ordered provider chain with Monochrome preselected first, Antra as an authenticated optional provider, and Sockseek as another optional fallback; the current Soulseek login path remains unreliable.
 
 The repository now contains the Tauri 2 desktop application, Svelte 5 frontend, Rust backend, SQLite persistence, Spotify Authorization Code with PKCE, Spotify source synchronization and browsing, scoped Local/Spotify synchronization, persistent Spotify tracking rules, automated validation, native bundle configuration, and tag-triggered release packaging.
 
-Milestones 7 through 16 are complete. The acquisition layer contains Monochrome, Antra, and Sockseek production adapters. Settings persists their enabled priority order, the coordinator falls through providers when a higher-priority provider cannot auto-match, and manual resolution groups all returned candidates by provider with provider/token identity. Refrain follows Monochrome's current `tracks.monochrome.st` search/direct-FLAC path and retains the older compatible API pool as Monochrome's internal fallback. Antra uses its device-login protocol, OS credential storage, authenticated endpoint discovery, and current Tidal/Qobuz lossless mirrors. Milestone 14 verification/import is complete and its live Monochrome/Antra one-click lossless acquisition/import smoke gate has passed. Milestone 15 completes the approved two-scope Local Sync then Spotify Sync pipeline with durable progress, partial outcomes, final post-import counts, cancellation, library mutation locking, and tracked Spotify playlist/Liked Songs projection into read-only Local Playlist mirrors. Local Playlists automatically maintain managed M3U8 files under the configured library, Spotify mirrors capture source cover artwork when available, and imported external M3U targets remain in place. Milestone 16 adds immutable Spotify playlist export snapshots/history, atomic UTF-8 M3U8 output, and portable ZIP bundles with deduplicated audio copies plus source playlist artwork when available. Milestone 17 Library Mirroring is next; scheduling and v1 hardening remain future work.
+Milestones 7 through 17 are complete in the working repository. The Milestone 17 exit check was completed on 2026-10-18 based on the user's confirmation that all remaining manual mirroring validation is complete; this is user-reported validation, not an independently repeated device/platform check. The acquisition layer contains Monochrome, Antra, and Sockseek production adapters. Settings persists their enabled priority order, the coordinator falls through providers when a higher-priority provider cannot auto-match, and manual resolution groups all returned candidates by provider with provider/token identity. Refrain follows Monochrome's current `tracks.monochrome.st` search/direct-FLAC path and retains the older compatible API pool as Monochrome's internal fallback. Antra uses its device-login protocol, OS credential storage, authenticated endpoint discovery, and current Tidal/Qobuz lossless mirrors. Milestone 14 verification/import is complete and its live Monochrome/Antra one-click lossless acquisition/import smoke gate has passed. Milestone 15 completes the approved two-scope Local Sync then Spotify Sync pipeline with durable progress, partial outcomes, final post-import counts, cancellation, library mutation locking, and tracked Spotify playlist/Liked Songs projection into read-only Local Playlist mirrors. Local Playlists automatically maintain managed UTF-8 M3U files under the configured library, migrate earlier managed M3U8 targets at startup, and write playable partial playlists with visible missing-track warnings. Spotify mirrors capture source cover artwork when available, and imported external M3U targets retain their linked paths. Milestone 16 adds immutable Spotify playlist export snapshots/history, atomic UTF-8 M3U8 output, and portable ZIP bundles with deduplicated audio copies plus source playlist artwork when available. Milestone 17's remaining user-reported manual validation is closed. Milestones 18 (running-process scheduling and safe removed-track cleanup) and 19 (UX integration and major journey verification) remain active; neither is represented as complete here. Milestone 20 release hardening remains future work.
 
 The approved v1 direction remains:
 
@@ -677,7 +677,7 @@ Core acquisition orchestration works without any Sockseek-specific logic.
 
 ### Objective
 
-Make Sockseek the first production acquisition provider.
+Originally, make Sockseek the first production acquisition provider. This milestone is complete; Monochrome is now the default preselected provider and Sockseek is optional in the ordered chain.
 
 ### Work
 
@@ -881,9 +881,17 @@ Both export modes meet the product acceptance criteria.
 
 ## Milestone 17: Library Mirroring
 
+**Status:** Complete (2026-10-18; remaining manual validation reported complete by the user)
+
 ### Objective
 
 Mirror the normalized local library and resolved playlists to another filesystem location without treating that destination as disposable storage.
+
+### Current Implementation State
+
+The target, run, and managed-entry schema and backend are implemented. Local > Mirrors exposes destinations, progress, and run history. Mirrors copy indexed in-root audio and export Local Playlist UTF-8 M3U files under `Music/` and `Playlists/`, including playable partial playlists with comments identifying unavailable entries. Relative paths and duplicate playlist entries are preserved; an in-root copy of the same logical track can replace an external preferred file. Mirrors verify BLAKE3 hashes, preserve unrelated files, and remove obsolete outputs only after validating ownership against the committed manifest or interrupted-run journal. Destination identity prevents silently treating a replacement mount as the configured drive; identity and managed-file ownership are rechecked immediately before managed-file changes during a run. An `inflight.json` journal records the planned output and retains authorized hashes across interrupted runs whose source snapshot changes; the manifest is committed after successful content operations.
+
+All 20 focused Rust mirror tests passed earlier on 2026-10-17, including partial playlist restoration, external preferred-file fallback, and mirror recovery protections. Following the `.m3u` compatibility change, nine playlist-sync Rust tests, 18 local-library tests, five Local Playlists UI tests, Rust formatting, Clippy with warnings denied, frontend lint/format/typecheck/build, a macOS native no-bundle release build, and diff whitespace checks passed. The user confirmed on 2026-10-18 that the outstanding manual Milestone 17 validation is complete. That confirmation closes the milestone's manual gate as user-reported evidence; the physical Android/Sideport, Windows, and platform-packaging checks were not independently repeated for this task.
 
 ### Work
 
@@ -930,6 +938,8 @@ A mounted external filesystem can contain a portable, incrementally maintained c
 ---
 
 ## Milestone 18: Scheduling and Removed-Track Policy
+
+Current state (2026-10-18): backend scheduler/full-pipeline work is saved but incomplete after the configured Ship assignment limit. Rust test-target compilation passes; frontend checks fail on missing full-sync wrapper exports. Cleanup, frontend integration and acceptance verification remain open.
 
 ### Objective
 
@@ -993,7 +1003,7 @@ Complete and refine the primary workspace navigation:
 - Local
 - Spotify
 - Settings
-- Issues as a secondary attention flow
+- Staging and Issues as persistent utility destinations
 
 Apply the approved compact desktop-density pass across all pages:
 
@@ -1002,8 +1012,8 @@ Apply the approved compact desktop-density pass across all pages:
 - keep dense track rows readable at supported desktop window sizes
 - replace the Saved Albums and Playlists permanent collection sidebar with responsive artwork-first collection grids that open into collection detail views
 - keep Liked Songs as a dense track-oriented view
-- add default-visible filters for search, Spotify/local state, artist, album, year, file format, and Spotify membership where meaningful
-- group path/location, acquisition state, match state, explicit state, and duration under an Advanced filter control
+- keep search visible; group Spotify/local state, tracking state, path/location, acquisition state, match state, explicit state, and other relevant controls behind one compact `Filters` button
+- present artist, album, year, file format, and other sortable metadata in the track table without duplicating them as permanent filter controls
 - display local file paths directly in Local rows
 - extract embedded local artwork during scanning, cache it outside SQLite, and expose it through a narrowly scoped backend/Tauri image boundary
 - fall back to matched Spotify artwork or a neutral placeholder when local embedded artwork is unavailable

@@ -1,6 +1,10 @@
+use std::{fs, io::Read, path::Path};
+
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::domain::{LocalPlaylistDetail, LocalPlaylistEntry, LocalPlaylistSummary};
+use crate::playlist_artwork::remove_custom_playlist_artwork;
+use crate::playlist_sync::MANAGED_M3U_MARKER;
 
 use super::{Database, DatabaseError, now_ms};
 
@@ -13,6 +17,7 @@ impl Database {
                 playlist.name,
                 playlist.source_collection_id,
                 collection.image_url,
+                playlist.custom_artwork_path,
                 COUNT(entry.id),
                 playlist.m3u_path,
                 playlist.m3u_managed,
@@ -35,13 +40,14 @@ impl Database {
                     name: row.get(1)?,
                     source_collection_id: row.get(2)?,
                     image_url: row.get(3)?,
-                    entry_count: row.get::<_, i64>(4)? as usize,
-                    m3u_path: row.get(5)?,
-                    m3u_managed: row.get::<_, i64>(6)? != 0,
-                    last_synced_at: row.get(7)?,
-                    sync_error: row.get(8)?,
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    custom_artwork_path: row.get(4)?,
+                    entry_count: row.get::<_, i64>(5)? as usize,
+                    m3u_path: row.get(6)?,
+                    m3u_managed: row.get::<_, i64>(7)? != 0,
+                    last_synced_at: row.get(8)?,
+                    sync_error: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
@@ -53,6 +59,22 @@ impl Database {
         playlist_id: i64,
     ) -> Result<LocalPlaylistDetail, DatabaseError> {
         let connection = self.lock_connection()?;
+        local_playlist_detail(&connection, playlist_id)
+    }
+
+    pub fn set_local_playlist_artwork_path(
+        &self,
+        playlist_id: i64,
+        path: Option<&str>,
+    ) -> Result<LocalPlaylistDetail, DatabaseError> {
+        let connection = self.lock_connection()?;
+        let changed = connection.execute(
+            "UPDATE local_playlists
+             SET custom_artwork_path = ?2, updated_at = ?3
+             WHERE id = ?1",
+            params![playlist_id, path, now_ms()],
+        )?;
+        ensure_playlist_changed(changed, playlist_id)?;
         local_playlist_detail(&connection, playlist_id)
     }
 
@@ -141,11 +163,37 @@ impl Database {
     }
 
     pub fn delete_local_playlist(&self, playlist_id: i64) -> Result<(), DatabaseError> {
-        let connection = self.lock_connection()?;
-        ensure_playlist_editable(&connection, playlist_id)?;
+        let mut connection = self.lock_connection()?;
+        let transaction = connection.transaction()?;
+        ensure_playlist_editable(&transaction, playlist_id)?;
+        let imported_path: Option<String> = transaction.query_row(
+            "SELECT CASE WHEN m3u_managed = 0 THEN m3u_path ELSE NULL END
+             FROM local_playlists WHERE id = ?1",
+            [playlist_id],
+            |row| row.get(0),
+        )?;
+        if let Some(path) = imported_path {
+            let canonical_path =
+                fs::canonicalize(&path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+            transaction.execute(
+                "INSERT OR REPLACE INTO ignored_playlist_imports (path, ignored_at)
+                 VALUES (?1, ?2)",
+                params![canonical_path.to_string_lossy(), now_ms()],
+            )?;
+        }
         let changed =
-            connection.execute("DELETE FROM local_playlists WHERE id = ?1", [playlist_id])?;
+            transaction.execute("DELETE FROM local_playlists WHERE id = ?1", [playlist_id])?;
+        transaction.commit()?;
         ensure_playlist_changed(changed, playlist_id)
+    }
+
+    pub(crate) fn ignored_playlist_import_paths(&self) -> Result<Vec<String>, DatabaseError> {
+        let connection = self.lock_connection()?;
+        let mut statement = connection.prepare("SELECT path FROM ignored_playlist_imports")?;
+        statement
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(DatabaseError::from)
     }
 
     pub fn set_local_playlist_m3u_path(
@@ -378,6 +426,34 @@ impl Database {
         let transaction = connection.transaction()?;
         let now = now_ms();
 
+        let stale_mirrors = {
+            let mut statement = transaction.prepare(
+                "SELECT id, m3u_path, cover_path, custom_artwork_path
+                 FROM local_playlists
+                 WHERE source_collection_id IS NOT NULL
+                   AND m3u_managed = 1
+                   AND NOT EXISTS (
+                        SELECT 1
+                        FROM source_collections AS collection
+                        INNER JOIN source_collection_sync_rules AS rule
+                          ON rule.collection_id = collection.id
+                        WHERE collection.id = local_playlists.source_collection_id
+                          AND collection.kind IN ('playlist', 'liked_songs')
+                          AND rule.default_included = 1
+                   )",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
         transaction.execute(
             "DELETE FROM local_playlists
              WHERE source_collection_id IS NOT NULL
@@ -494,8 +570,120 @@ impl Database {
             )?;
         }
 
+        // A path explicitly assigned to another playlist is no longer ours to remove.
+        let mut cleanup = Vec::new();
+        let mut stale_artworks = Vec::new();
+        for (playlist_id, m3u_path, cover_path, custom_artwork_path) in stale_mirrors {
+            if let Some(artwork_path) = custom_artwork_path {
+                let referenced_elsewhere = transaction.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM local_playlists WHERE custom_artwork_path = ?1)",
+                    [&artwork_path],
+                    |row| row.get::<_, i64>(0),
+                )? != 0;
+                if !referenced_elsewhere {
+                    stale_artworks.push((playlist_id, artwork_path));
+                }
+            }
+            let Some(m3u_path) = m3u_path else {
+                continue;
+            };
+            let referenced_elsewhere = transaction.query_row(
+                "SELECT EXISTS (SELECT 1 FROM local_playlists WHERE m3u_path = ?1)",
+                [&m3u_path],
+                |row| row.get::<_, i64>(0),
+            )? != 0;
+            if !referenced_elsewhere {
+                let cover_path = if let Some(path) = cover_path {
+                    let cover_referenced = transaction.query_row(
+                        "SELECT EXISTS (SELECT 1 FROM local_playlists WHERE cover_path = ?1)",
+                        [&path],
+                        |row| row.get::<_, i64>(0),
+                    )? != 0;
+                    (!cover_referenced).then_some(path)
+                } else {
+                    None
+                };
+                cleanup.push((m3u_path, cover_path));
+            }
+        }
         transaction.commit()?;
+        drop(connection);
+
+        for (m3u_path, cover_path) in cleanup {
+            remove_untracked_managed_mirror_files(&m3u_path, cover_path.as_deref());
+        }
+        if let Some(app_data_dir) = self.path().parent() {
+            for (playlist_id, artwork_path) in stale_artworks {
+                remove_custom_playlist_artwork(app_data_dir, playlist_id, &artwork_path);
+            }
+        }
         Ok(())
+    }
+}
+
+fn remove_untracked_managed_mirror_files(m3u_path: &str, cover_path: Option<&str>) {
+    let playlist = Path::new(m3u_path);
+    // Older, unmarked files might have been replaced by the user. Only the
+    // Refrain header proves that a present playlist file is ours to delete.
+    // If the file was already removed, the recorded cover may still be ours.
+    match fs::symlink_metadata(playlist) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(info) if info.file_type().is_file() => {
+            let marked_as_managed = fs::File::open(playlist)
+                .and_then(|mut file| {
+                    let mut header = [0_u8; 128];
+                    let size = file.read(&mut header)?;
+                    Ok(String::from_utf8_lossy(&header[..size])
+                        .lines()
+                        .take(3)
+                        .any(|line| line.trim_end() == MANAGED_M3U_MARKER))
+                })
+                .unwrap_or(false);
+            if !marked_as_managed {
+                return;
+            }
+            if let Err(error) = fs::remove_file(playlist) {
+                tracing::warn!(path = %playlist.display(), %error, "could not remove untracked mirror M3U8");
+            }
+        }
+        _ => return,
+    }
+
+    let Some(cover_path) = cover_path else {
+        return;
+    };
+    let cover = Path::new(cover_path);
+    let Some(playlist_stem) = playlist.file_stem().and_then(|value| value.to_str()) else {
+        return;
+    };
+    let Some(cover_stem) = cover.file_stem().and_then(|value| value.to_str()) else {
+        return;
+    };
+    let valid_cover_name = cover_stem == playlist_stem
+        || cover_stem == format!("{playlist_stem}.cover")
+        || cover_stem
+            .strip_prefix(&format!("{playlist_stem}.cover-"))
+            .is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+            });
+    let valid_cover_extension = cover
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "webp" | "gif"
+            )
+        });
+    if playlist.is_absolute()
+        && cover.is_absolute()
+        && cover.parent() == playlist.parent()
+        && valid_cover_name
+        && valid_cover_extension
+        && fs::symlink_metadata(cover).is_ok_and(|info| info.file_type().is_file())
+        && let Err(error) = fs::remove_file(cover)
+    {
+        tracing::warn!(path = %cover.display(), %error, "could not remove untracked mirror cover");
     }
 }
 
@@ -593,6 +781,7 @@ fn local_playlist_detail(
                 playlist.name,
                 playlist.source_collection_id,
                 collection.image_url,
+                playlist.custom_artwork_path,
                 playlist.m3u_path,
                 playlist.m3u_managed,
                 playlist.last_synced_at,
@@ -611,11 +800,12 @@ fn local_playlist_detail(
                     row.get::<_, Option<i64>>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
-                    row.get::<_, i64>(5)? != 0,
-                    row.get::<_, Option<i64>>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                    row.get::<_, i64>(8)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)? != 0,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
                     row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
                 ))
             },
         )
@@ -625,6 +815,7 @@ fn local_playlist_detail(
         name,
         source_collection_id,
         image_url,
+        custom_artwork_path,
         m3u_path,
         m3u_managed,
         last_synced_at,
@@ -685,6 +876,7 @@ fn local_playlist_detail(
         name,
         source_collection_id,
         image_url,
+        custom_artwork_path,
         m3u_path,
         m3u_managed,
         last_synced_at,

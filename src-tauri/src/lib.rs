@@ -5,6 +5,7 @@ mod commands;
 mod db;
 mod domain;
 mod issues;
+mod library_mirror;
 mod local_library;
 mod matching;
 mod monochrome;
@@ -18,6 +19,7 @@ mod security;
 mod sockseek;
 mod source_sync;
 mod spotify;
+mod sync_scheduler;
 mod verification;
 
 use tauri::Manager;
@@ -30,7 +32,16 @@ pub fn run() {
         .setup(|application| {
             let app_data_dir = application.path().app_data_dir()?;
             let state = app::initialize(app_data_dir)?;
+            if let Ok(directory) =
+                playlist_artwork::configured_custom_artwork_directory(&state.database)
+            {
+                application
+                    .asset_protocol_scope()
+                    .allow_directory(&directory, false)?;
+            }
+            let sync_scheduler = state.sync_scheduler.clone();
             application.manage(state);
+            sync_scheduler.start(application.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -40,6 +51,12 @@ pub fn run() {
             commands::reveal_in_file_manager,
             commands::get_settings,
             commands::update_settings,
+            commands::list_mirror_targets,
+            commands::save_mirror_target,
+            commands::remove_mirror_target,
+            commands::list_mirror_runs,
+            commands::run_mirror,
+            commands::cancel_mirror,
             commands::get_local_library_overview,
             commands::list_library_tracks,
             commands::list_local_files,
@@ -50,6 +67,7 @@ pub fn run() {
             commands::get_local_playlist,
             commands::create_local_playlist,
             commands::rename_local_playlist,
+            commands::set_local_playlist_artwork,
             commands::delete_local_playlist,
             commands::set_local_playlist_m3u_path,
             commands::add_tracks_to_local_playlist,
@@ -89,6 +107,7 @@ pub fn run() {
             commands::get_sockseek_provider_health,
             commands::get_monochrome_provider_health,
             reconciliation::start_sync,
+            reconciliation::start_full_sync,
             reconciliation::start_local_sync,
             reconciliation::start_spotify_sync,
             reconciliation::cancel_sync,

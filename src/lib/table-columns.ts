@@ -5,6 +5,11 @@ export interface TableColumn {
   minWidth: number;
   sortable?: boolean;
   draggable?: boolean;
+  resizable?: boolean;
+  fluid?: boolean;
+  fixedWidth?: boolean;
+  gridMinWidth?: number;
+  legacyDefaultWidth?: number;
   align?: 'left' | 'center' | 'right';
 }
 
@@ -46,15 +51,19 @@ const actionsColumn: TableColumn = {
 const localOrderColumn: TableColumn = {
   id: 'order',
   label: '',
-  width: 54,
-  minWidth: 54,
+  width: 22,
+  minWidth: 22,
   draggable: false,
+  resizable: false,
   align: 'center',
 };
 
 const spotifyOrderColumn: TableColumn = {
   ...localOrderColumn,
   label: 'Order',
+  width: 54,
+  minWidth: 54,
+  resizable: true,
   sortable: true,
 };
 
@@ -65,12 +74,23 @@ function cloneSharedTrackColumns(): TableColumn[] {
 export function createLocalTrackColumns(): TableColumn[] {
   return [
     { ...localOrderColumn },
-    ...cloneSharedTrackColumns(),
+    ...cloneSharedTrackColumns().map((column) =>
+      column.id === 'status'
+        ? {
+            ...column,
+            width: 92,
+            minWidth: 64,
+            fixedWidth: true,
+          }
+        : column,
+    ),
     {
       id: 'playlists',
       label: 'Playlists',
       width: 170,
-      minWidth: 120,
+      minWidth: 48,
+      gridMinWidth: 48,
+      fluid: true,
       sortable: true,
       draggable: false,
     },
@@ -97,9 +117,54 @@ export function createSpotifyTrackColumns(): TableColumn[] {
 export function tableGridTemplate(columns: TableColumn[]): string {
   return columns
     .map((column) =>
-      column.draggable === false
+      (column.draggable === false && !column.fluid) || column.fixedWidth
         ? `${column.width}px`
-        : `minmax(0, ${Math.max(1, column.width)}fr)`,
+        : `minmax(${column.gridMinWidth ?? 0}px, ${Math.max(1, column.width)}fr)`,
     )
     .join(' ');
+}
+
+export function restoredColumnWidth(
+  column: TableColumn,
+  savedWidth: number | undefined,
+): number {
+  if (column.resizable === false) return column.width;
+  const width =
+    typeof savedWidth === 'number' &&
+    Number.isFinite(savedWidth) &&
+    savedWidth !== column.legacyDefaultWidth
+      ? savedWidth
+      : column.width;
+  return Math.max(column.minWidth, width);
+}
+
+export function migrateLegacyColumns(
+  savedColumns: Array<{ id: string; width?: number }> | undefined,
+  resetWidthIds: readonly string[],
+): Array<{ id: string; width?: number }> | undefined {
+  if (!savedColumns) return undefined;
+  const reset = new Set(resetWidthIds);
+  return savedColumns.map((saved) =>
+    reset.has(saved.id) ? { ...saved, width: undefined } : saved,
+  );
+}
+
+export function mergeSharedColumns(
+  columns: Array<{ id: string; width: number }>,
+  previous: Array<{ id: string; width?: number }>,
+  sharedIds: ReadonlySet<string>,
+): Array<{ id: string; width?: number }> {
+  const pending = columns.filter((column) => sharedIds.has(column.id));
+  const merged: Array<{ id: string; width?: number }> = [];
+
+  for (const column of previous) {
+    if (!sharedIds.has(column.id)) {
+      merged.push(column);
+    } else {
+      const next = pending.shift();
+      if (next) merged.push(next);
+    }
+  }
+
+  return [...merged, ...pending];
 }

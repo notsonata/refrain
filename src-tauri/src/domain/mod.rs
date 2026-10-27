@@ -3,6 +3,7 @@ pub(crate) mod acquisition;
 pub(crate) mod issues;
 pub(crate) mod library;
 pub(crate) mod matching;
+mod mirror;
 mod playlist_exports;
 mod playlists;
 pub(crate) mod reconciliation;
@@ -25,6 +26,7 @@ pub(crate) use matching::MatchTrackDescriptor;
 pub use matching::{
     MatchCandidateEvidence, MatchOutcome, MatchRelationship, MatchResult, MatchScoreBreakdown,
 };
+pub use mirror::{MirrorRun, MirrorTarget};
 pub use playlist_exports::{PlaylistExport, PlaylistExportPage};
 pub(crate) use playlist_exports::{
     PlaylistExportCandidateEntry, PlaylistExportSnapshotEntry, PlaylistExportSource,

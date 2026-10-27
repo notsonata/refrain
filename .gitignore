@@ -9,3 +9,4 @@ vite.config.ts.timestamp-*
 src-tauri/target/
 src-tauri/gen/schemas/
 src-tauri/binaries/sockseek-*
+.specship/

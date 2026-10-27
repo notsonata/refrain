@@ -11,6 +11,24 @@ export async function chooseLibraryRoot(
   });
 }
 
+export async function chooseMirrorDestination(): Promise<string | null> {
+  return open({
+    directory: true,
+    multiple: false,
+    title: 'Choose mirror destination',
+  });
+}
+
+export async function choosePlaylistArtwork(): Promise<string | null> {
+  return open({
+    multiple: false,
+    title: 'Replace playlist artwork',
+    filters: [
+      { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] },
+    ],
+  });
+}
+
 export async function choosePlaylistFile(
   playlistName: string,
   currentPath?: string,

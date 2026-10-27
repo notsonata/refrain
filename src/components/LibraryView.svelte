@@ -45,6 +45,8 @@
   let search = '';
   let statusFilter: 'all' | TrackStatus = 'all';
   let advancedOpen = false;
+  let filtersButton: HTMLButtonElement;
+  let filtersPanel: HTMLDivElement;
   let pathFilter = '';
   let acquisitionFilter = 'all';
   let matchFilter = 'all';
@@ -435,7 +437,39 @@
     statusFilter = value;
     loadAllRequested = true;
   }
+
+  function closeFiltersOnOutsidePointer(event: PointerEvent) {
+    if (!advancedOpen || !(event.target instanceof Node)) return;
+    if (
+      filtersButton?.contains(event.target) ||
+      filtersPanel?.contains(event.target)
+    )
+      return;
+    advancedOpen = false;
+  }
+
+  function closeFiltersOnEscape(event: KeyboardEvent) {
+    if (!advancedOpen || event.key !== 'Escape') return;
+    event.preventDefault();
+    advancedOpen = false;
+    filtersButton?.focus();
+  }
+
+  function closeFiltersOnFocusOut(event: FocusEvent) {
+    const next = event.relatedTarget;
+    if (
+      next instanceof Node &&
+      (filtersButton?.contains(next) || filtersPanel?.contains(next))
+    )
+      return;
+    advancedOpen = false;
+  }
 </script>
+
+<svelte:window
+  onpointerdown={closeFiltersOnOutsidePointer}
+  onkeydown={closeFiltersOnEscape}
+/>
 
 <div class="screen">
   <header class="page-header">
@@ -494,10 +528,12 @@
     </label>
 
     <button
+      bind:this={filtersButton}
       type="button"
       class="btn filter-button"
       class:filters-active={activeFilterCount > 0}
       aria-expanded={advancedOpen}
+      aria-controls="local-library-filters"
       onclick={() => (advancedOpen = !advancedOpen)}
     >
       <Icon name="filter" size={15} />
@@ -509,85 +545,108 @@
         <Icon name="chevron-right" size={13} />
       </span>
     </button>
+    {#if advancedOpen}
+      <div
+        bind:this={filtersPanel}
+        id="local-library-filters"
+        class="local-library-filters-popover"
+        role="group"
+        aria-label="Local library filters"
+        onfocusout={closeFiltersOnFocusOut}
+      >
+        <div class="filters-panel-header">
+          <div class="local-library-filters-heading">Filter local tracks</div>
+          <button
+            type="button"
+            class="link-button"
+            disabled={activeFilterCount === 0}
+            onclick={clearFilters}
+          >
+            Clear all
+          </button>
+        </div>
+
+        <div class="local-filter-section">
+          <div class="local-filter-section-label">Library state</div>
+          <div class="local-filter-fields">
+            <label class="filter-field">
+              <span class="filter-label">Status</span>
+              <select
+                value={statusFilter}
+                aria-label="Track status"
+                class="filter-select"
+                onchange={(event) =>
+                  setStatusFilter(
+                    event.currentTarget.value as 'all' | TrackStatus,
+                  )}
+              >
+                <option value="all">Any status</option>
+                {#each localLibraryTrackStatuses as status (status)}
+                  <option value={status}>{trackStatusLabel(status)}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">Match</span>
+              <select
+                bind:value={matchFilter}
+                aria-label="Match filter"
+                class="filter-select"
+              >
+                <option value="all">Any match</option>
+                <option value="matched">Matched</option>
+                <option value="unmatched">Unmatched</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="local-filter-section">
+          <div class="local-filter-section-label">File details</div>
+          <div class="local-filter-fields">
+            <label class="filter-field">
+              <span class="filter-label">Acquisition</span>
+              <select
+                bind:value={acquisitionFilter}
+                aria-label="Acquisition filter"
+                class="filter-select"
+              >
+                <option value="all">Any state</option>
+                {#each acquisitionOptions as status (status)}<option
+                    value={status}>{status}</option
+                  >{/each}
+              </select>
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">Explicit</span>
+              <select
+                bind:value={explicitFilter}
+                aria-label="Explicit filter"
+                class="filter-select"
+              >
+                <option value="all">Any</option>
+                <option value="explicit">Explicit</option>
+                <option value="clean">Clean</option>
+              </select>
+            </label>
+            <label class="filter-field local-filter-path">
+              <span class="filter-label">File path</span>
+              <input
+                bind:value={pathFilter}
+                aria-label="File path filter"
+                placeholder="Path contains…"
+                class="filter-input"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+    {/if}
     <OverflowMenu
       items={selectionMenuItems}
       ariaLabel="Local library selection actions"
     />
   </div>
-
-  {#if advancedOpen}
-    <div class="filters-panel">
-      <div class="filters-panel-header">
-        <div class="filters-panel-title">Filter results</div>
-        <button type="button" class="link-button" onclick={clearFilters}>
-          Clear
-        </button>
-      </div>
-      <div class="filters-grid">
-        <label class="filter-field">
-          <span class="filter-label">Status</span>
-          <select
-            value={statusFilter}
-            aria-label="Track status"
-            class="filter-select"
-            onchange={(event) =>
-              setStatusFilter(event.currentTarget.value as 'all' | TrackStatus)}
-          >
-            <option value="all">Any status</option>
-            {#each localLibraryTrackStatuses as status (status)}
-              <option value={status}>{trackStatusLabel(status)}</option>
-            {/each}
-          </select>
-        </label>
-        <label class="filter-field">
-          <span class="filter-label">Path</span>
-          <input
-            bind:value={pathFilter}
-            aria-label="File path filter"
-            placeholder="Path contains…"
-            class="filter-input"
-          />
-        </label>
-        <label class="filter-field">
-          <span class="filter-label">Acquisition</span>
-          <select
-            bind:value={acquisitionFilter}
-            aria-label="Acquisition filter"
-            class="filter-select"
-          >
-            <option value="all">Any state</option>
-            {#each acquisitionOptions as status (status)}<option value={status}
-                >{status}</option
-              >{/each}
-          </select>
-        </label>
-        <label class="filter-field">
-          <span class="filter-label">Match</span>
-          <select
-            bind:value={matchFilter}
-            aria-label="Match filter"
-            class="filter-select"
-          >
-            <option value="all">Any state</option>
-            <option value="matched">Matched</option>
-            <option value="unmatched">Unmatched</option>
-          </select>
-        </label>
-        <label class="filter-field">
-          <span class="filter-label">Explicit</span>
-          <select
-            bind:value={explicitFilter}
-            aria-label="Explicit filter"
-            class="filter-select"
-          >
-            <option value="all">Any</option>
-            <option value="explicit">Explicit</option>
-            <option value="clean">Clean</option>
-          </select>
-        </label>
-      </div>
-    </div>
-  {/if}
 
   {#if error}
     <div class="error-state">{error}</div>
@@ -617,9 +676,14 @@
         bind:sortId
         bind:sortDirection
         compact={compactRows}
-        storageKey="refrain.table.local.columns.v5"
+        storageKey="refrain.table.local.columns.v7"
+        legacyStorageKeys={[
+          'refrain.table.local.columns.v6',
+          'refrain.table.local.columns.v5',
+        ]}
+        resetLegacyWidthIds={['status']}
         sharedStorageKey="refrain.table.track-columns.v2"
-        sharedColumnIds={sharedTrackColumnIds}
+        sharedColumnIds={sharedTrackColumnIds.filter((id) => id !== 'status')}
       />
       <div
         class="table-scroll local-library-scroll"
@@ -799,9 +863,13 @@
                   {:else if column.id === 'playlists'}
                     {@const playlists = playlistLabels(track)}
                     <div class="collection-chip-cell">
-                      <CollectionChips labels={playlists} />
-                      {#if playlists.length === 0}
-                        <span style="color:var(--text-tertiary)">—</span>
+                      {#if playlists.length > 0}
+                        <CollectionChips
+                          labels={playlists}
+                          countOnlyBelow={64}
+                        />
+                      {:else}
+                        <span class="muted-cell">—</span>
                       {/if}
                     </div>
                   {:else if column.id === 'actions'}

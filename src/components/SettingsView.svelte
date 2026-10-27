@@ -123,6 +123,7 @@
   ] as const;
 
   let activeTab: SettingsTab = 'general';
+  let settingsScroll: HTMLDivElement;
 
   const acquisitionProviderOptions: Array<{
     id: AcquisitionProviderId;
@@ -199,8 +200,10 @@
   function selectTab(tab: SettingsTab) {
     activeTab = tab;
     window.requestAnimationFrame(() => {
+      settingsScroll.scrollTop = 0;
       const panel = document.querySelector('[data-settings-panel]');
-      if (panel instanceof window.HTMLElement) panel.focus();
+      if (panel instanceof window.HTMLElement)
+        panel.focus({ preventScroll: true });
     });
   }
 
@@ -217,7 +220,10 @@
     const next = tabs[nextIndex];
     activeTab = next.id;
     window.requestAnimationFrame(() => {
-      document.getElementById(`settings-tab-${next.id}`)?.focus();
+      settingsScroll.scrollTop = 0;
+      document
+        .getElementById(`settings-tab-${next.id}`)
+        ?.focus({ preventScroll: true });
     });
   }
 
@@ -280,7 +286,7 @@
   </div>
 
   <div class="settings-body">
-    <div class="settings-scroll">
+    <div class="settings-scroll" bind:this={settingsScroll}>
       {#if activeTab === 'general'}
         <div
           id="settings-panel-general"
@@ -390,6 +396,8 @@
             </div>
           </article>
 
+          <div class="settings-group-divider"><span>Preferences</span></div>
+
           <article class="settings-card">
             <div class="card-heading">
               <span class="card-icon"><Icon name="monitor" size={18} /></span>
@@ -442,28 +450,6 @@
               </button>
             </div>
           </article>
-
-          <article class="settings-card compact-card">
-            <div class="card-heading">
-              <span class="card-icon"><Icon name="info" size={17} /></span>
-              <div>
-                <h3>About Refrain</h3>
-                <p>Application and local data location.</p>
-              </div>
-            </div>
-            <dl class="detail-list">
-              <div>
-                <dt>Application</dt>
-                <dd>
-                  {appInfo ? `${appInfo.name} ${appInfo.version}` : 'Loading…'}
-                </dd>
-              </div>
-              <div>
-                <dt>Data directory</dt>
-                <dd class="mono">{appInfo?.dataDir ?? 'Loading…'}</dd>
-              </div>
-            </dl>
-          </article>
         </div>
       {:else if activeTab === 'sync'}
         <div
@@ -482,19 +468,6 @@
                 independently.
               </p>
             </div>
-            <button
-              class="primary-button"
-              type="button"
-              onclick={onSyncLibrary}
-              disabled={syncBusy || sourceBusy || authBusy}
-            >
-              <Icon name="sync" size={15} />
-              {syncBusy
-                ? syncScope === 'spotify'
-                  ? 'Syncing Spotify…'
-                  : 'Syncing local library…'
-                : 'Sync Library'}
-            </button>
           </div>
 
           {#if syncError}
@@ -537,6 +510,8 @@
             </div>
           </article>
 
+          <div class="settings-group-divider"><span>Latest runs</span></div>
+
           <div class="two-column-cards">
             <article class="settings-card compact-card">
               <div class="card-heading inline-heading">
@@ -563,6 +538,21 @@
                   <dd>{localSyncRun?.needsReview ?? 0}</dd>
                 </div>
               </dl>
+              <div class="sync-card-actions">
+                <button
+                  class="primary-button"
+                  type="button"
+                  onclick={onSyncLibrary}
+                  disabled={syncBusy || sourceBusy || authBusy}
+                >
+                  <Icon name="sync" size={15} />
+                  {syncBusy
+                    ? syncScope === 'spotify'
+                      ? 'Syncing Spotify…'
+                      : 'Syncing local library…'
+                    : 'Sync Library'}
+                </button>
+              </div>
             </article>
             <article class="settings-card compact-card">
               <div class="card-heading inline-heading">
@@ -589,8 +579,36 @@
                   <dd>{spotifySyncRun?.acquisitionFailed ?? 0}</dd>
                 </div>
               </dl>
+              <div class="sync-card-actions">
+                <button
+                  class="secondary-button"
+                  type="button"
+                  onclick={onRefreshSpotify}
+                  disabled={syncBusy ||
+                    sourceBusy ||
+                    authBusy ||
+                    !authStatus?.connected}
+                >
+                  <Icon name="refresh" size={14} />
+                  {sourceBusy ? 'Refreshing…' : 'Refresh Spotify'}
+                </button>
+              </div>
+              {#if sourceError}
+                <div class="message error">
+                  <Icon name="warning" size={16} />{sourceError}
+                </div>
+              {/if}
+              {#if sourceSummary}
+                <div class="message success">
+                  <Icon name="check" size={15} />
+                  Refreshed {sourceSummary.refreshedPlaylists} playlists; {sourceSummary.unchangedPlaylists}
+                  unchanged.
+                </div>
+              {/if}
             </article>
           </div>
+
+          <div class="settings-group-divider"><span>Run history</span></div>
 
           <article class="settings-card compact-card">
             <div class="card-heading inline-heading">
@@ -639,27 +657,7 @@
             {/if}
           </article>
 
-          <article class="settings-card compact-card action-card">
-            <div class="card-heading">
-              <span class="card-icon"><Icon name="spotify" size={17} /></span>
-              <div>
-                <h3>Spotify source refresh</h3>
-                <p>
-                  Update liked songs, saved albums, and playlists without
-                  running a full library sync.
-                </p>
-              </div>
-            </div>
-            <button
-              class="secondary-button"
-              type="button"
-              onclick={onRefreshSpotify}
-              disabled={sourceBusy || authBusy || !authStatus?.connected}
-            >
-              <Icon name="refresh" size={14} />
-              {sourceBusy ? 'Refreshing…' : 'Refresh Spotify'}
-            </button>
-          </article>
+          <div class="settings-group-divider"><span>Acquisition</span></div>
 
           <article class="settings-card acquisition-card">
             <div class="card-heading acquisition-heading">
@@ -1049,12 +1047,6 @@
                 <Icon name="warning" size={16} />{authError}
               </div>
             {/if}
-            {#if sourceError}
-              <div class="message error">
-                <Icon name="warning" size={16} />{sourceError}
-              </div>
-            {/if}
-
             <div class="button-row">
               {#if authStatus?.connected}
                 <button
@@ -1064,16 +1056,6 @@
                   disabled={authBusy || sourceBusy}
                 >
                   {authBusy ? 'Disconnecting…' : 'Disconnect'}
-                </button>
-                <button
-                  class="primary-button"
-                  type="button"
-                  onclick={onRefreshSpotify}
-                  disabled={authBusy || sourceBusy}
-                >
-                  <Icon name="refresh" size={14} />{sourceBusy
-                    ? 'Refreshing…'
-                    : 'Refresh Spotify'}
                 </button>
               {:else}
                 <button
@@ -1089,6 +1071,8 @@
               {/if}
             </div>
           </article>
+
+          <div class="settings-group-divider"><span>Stored source</span></div>
 
           <article class="settings-card compact-card">
             <div class="card-heading inline-heading">
@@ -1119,13 +1103,6 @@
                 >
               </div>
             </div>
-            {#if sourceSummary}
-              <div class="message success">
-                <Icon name="check" size={15} />
-                Refreshed {sourceSummary.refreshedPlaylists} playlists; {sourceSummary.unchangedPlaylists}
-                unchanged.
-              </div>
-            {/if}
           </article>
         </div>
       {:else if activeTab === 'library'}
@@ -1219,6 +1196,8 @@
             {/if}
           </article>
 
+          <div class="settings-group-divider"><span>File inventory</span></div>
+
           <article class="settings-card compact-card">
             <div class="card-heading">
               <span class="card-icon"><Icon name="database" size={17} /></span>
@@ -1294,42 +1273,12 @@
                 <dt>Data directory</dt>
                 <dd class="mono">{appInfo?.dataDir ?? 'Loading…'}</dd>
               </div>
-              <div>
-                <dt>Spotify redirect URI</dt>
-                <dd class="mono">
-                  {authStatus?.registeredRedirectUri ?? fallbackRedirectUri}
-                </dd>
-              </div>
             </dl>
           </article>
 
-          <article class="settings-card compact-card">
-            <div class="card-heading">
-              <span class="card-icon"><Icon name="database" size={17} /></span>
-              <div>
-                <h3>Persisted data</h3>
-                <p>High-level counts from Refrain's local state.</p>
-              </div>
-            </div>
-            <dl class="detail-list">
-              <div>
-                <dt>Local files</dt>
-                <dd>{indexedFiles.toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Liked Songs</dt>
-                <dd>{sourceOverview?.likedSongs?.entryCount ?? 0}</dd>
-              </div>
-              <div>
-                <dt>Saved albums</dt>
-                <dd>{savedAlbumTotal}</dd>
-              </div>
-              <div>
-                <dt>Playlists</dt>
-                <dd>{sourceOverview?.playlistCount ?? 0}</dd>
-              </div>
-            </dl>
-          </article>
+          <div class="settings-group-divider">
+            <span>Storage and credentials</span>
+          </div>
 
           <div class="setup-note">
             <span class="card-icon"><Icon name="database" size={16} /></span>
@@ -1345,129 +1294,6 @@
         </div>
       {/if}
     </div>
-
-    <aside class="settings-summary-rail" aria-label="Settings summary">
-      <article class="summary-card account-card">
-        <div class="summary-card-heading">
-          <span class="summary-icon spotify"
-            ><Icon name="spotify" size={17} /></span
-          >
-          <div>
-            <strong>Spotify account</strong>
-            <small
-              >{authStatus?.connected
-                ? 'Connected and ready'
-                : 'Not connected'}</small
-            >
-          </div>
-        </div>
-
-        {#if sourceOverview?.account}
-          <div class="account-identity">
-            {#if sourceOverview.account.imageUrl}
-              <img src={sourceOverview.account.imageUrl} alt="" />
-            {:else}
-              <span class="account-avatar-fallback">
-                {(sourceOverview.account.displayName ?? 'S')
-                  .slice(0, 1)
-                  .toUpperCase()}
-              </span>
-            {/if}
-            <div>
-              <strong
-                >{sourceOverview.account.displayName ??
-                  'Spotify account'}</strong
-              >
-              <small
-                >{formatDateTime(
-                  sourceOverview.account.lastSourceSyncAt,
-                )}</small
-              >
-            </div>
-          </div>
-        {/if}
-
-        <div class="summary-actions">
-          {#if authStatus?.connected}
-            <button
-              class="summary-secondary"
-              type="button"
-              onclick={onDisconnectSpotify}
-              disabled={authBusy || sourceBusy}
-            >
-              {authBusy ? 'Disconnecting…' : 'Disconnect'}
-            </button>
-            <button
-              class="summary-icon-button"
-              type="button"
-              title="Refresh Spotify"
-              aria-label="Refresh Spotify"
-              onclick={onRefreshSpotify}
-              disabled={authBusy || sourceBusy}
-            >
-              <Icon name="refresh" size={14} />
-            </button>
-          {:else}
-            <button
-              class="summary-secondary"
-              type="button"
-              onclick={() => selectTab('spotify')}
-            >
-              Configure Spotify
-            </button>
-          {/if}
-        </div>
-      </article>
-
-      <article class="summary-card">
-        <div class="summary-card-heading">
-          <span class="summary-icon"><Icon name="sync" size={17} /></span>
-          <div>
-            <strong>Synchronization</strong>
-            <small>Run and inspect library sync.</small>
-          </div>
-        </div>
-        <div class="summary-links">
-          <button type="button" onclick={() => selectTab('sync')}>
-            <span><Icon name="sync" size={14} />Sync settings</span>
-            <Icon name="chevron-right" size={14} />
-          </button>
-          <button type="button" onclick={() => selectTab('spotify')}>
-            <span><Icon name="spotify" size={14} />Spotify source</span>
-            <Icon name="chevron-right" size={14} />
-          </button>
-          <button type="button" onclick={() => selectTab('sync')}>
-            <span><Icon name="download" size={14} />Acquisition</span>
-            <Icon name="chevron-right" size={14} />
-          </button>
-        </div>
-      </article>
-
-      <article class="summary-card">
-        <div class="summary-card-heading">
-          <span class="summary-icon"><Icon name="folder" size={17} /></span>
-          <div>
-            <strong>Local library</strong>
-            <small>{indexedFiles.toLocaleString()} indexed files.</small>
-          </div>
-        </div>
-        <div class="summary-library-state">
-          <div>
-            <span>Present</span><strong>{presentFiles.toLocaleString()}</strong>
-          </div>
-          <div>
-            <span>Missing</span><strong>{libraryOverview?.missing ?? 0}</strong>
-          </div>
-        </div>
-        <button
-          class="summary-link-button"
-          type="button"
-          onclick={() => selectTab('library')}
-        >
-          Manage library <Icon name="chevron-right" size={14} />
-        </button>
-      </article>
-    </aside>
   </div>
 </div>
 
@@ -1491,16 +1317,16 @@
 
   .settings-heading h1 {
     margin: 0;
-    font-size: clamp(24px, 2vw, 34px);
-    font-weight: 760;
-    letter-spacing: -0.035em;
-    line-height: 1.08;
+    font-size: clamp(25px, 2vw, 30px);
+    font-weight: 730;
+    letter-spacing: -0.03em;
+    line-height: 1.16;
   }
 
   .settings-heading p:not(.settings-eyebrow) {
     margin: 6px 0 0;
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.5;
   }
 
@@ -1525,7 +1351,7 @@
     overflow-x: auto;
     border-bottom: 1px solid var(--divider);
     background: var(--bg-content);
-    padding-bottom: 14px;
+    padding-bottom: 10px;
     scrollbar-width: none;
   }
 
@@ -1552,7 +1378,7 @@
     background: transparent;
     padding: 0 12px;
     color: var(--text-secondary);
-    font-size: 10.5px;
+    font-size: 12.5px;
     font-weight: 650;
     white-space: nowrap;
     cursor: pointer;
@@ -1572,21 +1398,21 @@
   }
 
   .settings-tabs button.active {
-    border-color: var(--blue-600);
-    background: var(--bg-selected);
-    color: var(--blue-700);
+    border-color: var(--border-default);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
   }
 
   .settings-tabs button.active :global(svg) {
-    color: var(--blue-600);
+    color: var(--text-primary);
   }
 
   .settings-body {
     display: grid;
     min-height: 0;
     flex: 1;
-    grid-template-columns: minmax(0, 1fr) 232px;
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
     overflow: hidden;
     background: var(--bg-content);
   }
@@ -1595,244 +1421,39 @@
     min-height: 0;
     overflow-y: auto;
     background: var(--bg-content);
-    padding: 18px 4px 32px 0;
+    padding: 20px 4px 32px 0;
   }
 
   .settings-panel {
     display: grid;
     max-width: 880px;
-    gap: 12px;
+    gap: 16px;
     outline: none;
   }
 
-  .settings-summary-rail {
-    display: grid;
-    min-height: 0;
-    align-content: start;
-    gap: 10px;
-    overflow-y: auto;
-    padding: 18px 2px 32px 0;
-    background: var(--bg-content);
+  .settings-panel:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-control);
   }
 
-  .summary-card {
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-card);
-    background: var(--bg-elevated);
-    padding: 13px;
-    box-shadow: 0 1px 2px rgb(15 23 42 / 2%);
-  }
-
-  .summary-card-heading {
+  .settings-group-divider {
     display: flex;
-    min-width: 0;
     align-items: center;
-    gap: 9px;
-  }
-
-  .summary-card-heading > div {
-    display: grid;
-    min-width: 0;
-    gap: 2px;
-  }
-
-  .summary-card-heading strong,
-  .account-identity strong {
-    overflow: hidden;
-    font-size: 10.5px;
-    font-weight: 700;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .summary-card-heading small,
-  .account-identity small {
-    overflow: hidden;
-    color: var(--text-secondary);
-    font-size: 9px;
-    line-height: 1.35;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .summary-icon {
-    display: inline-grid;
-    width: 32px;
-    height: 32px;
-    flex: 0 0 32px;
-    place-items: center;
-    border-radius: 8px;
-    background: var(--bg-subtle);
-    color: var(--text-secondary);
-  }
-
-  .summary-icon.spotify {
-    background: var(--green-100);
-    color: var(--green-600);
-  }
-
-  .account-identity {
-    display: grid;
-    grid-template-columns: 34px minmax(0, 1fr);
-    align-items: center;
-    gap: 9px;
-    border-top: 1px solid var(--border-subtle);
-    margin-top: 12px;
-    padding-top: 11px;
-  }
-
-  .account-identity img,
-  .account-avatar-fallback {
-    display: grid;
-    width: 34px;
-    height: 34px;
-    place-items: center;
-    border-radius: 50%;
-    object-fit: cover;
-    box-shadow: inset 0 0 0 1px rgb(15 23 42 / 8%);
-  }
-
-  .account-avatar-fallback {
-    background: var(--blue-100);
-    color: var(--blue-700);
+    gap: 12px;
+    margin: 6px 1px -4px;
+    color: var(--text-tertiary);
     font-size: 11px;
-    font-weight: 750;
+    font-weight: 700;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
   }
 
-  .account-identity > div {
-    display: grid;
-    min-width: 0;
-    gap: 2px;
-  }
-
-  .summary-actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 7px;
-    margin-top: 11px;
-  }
-
-  .summary-actions:has(.summary-secondary:only-child) {
-    grid-template-columns: 1fr;
-  }
-
-  .summary-secondary,
-  .summary-icon-button {
-    border: 1px solid var(--border-default);
-    border-radius: 7px;
-    background: var(--bg-control);
-    color: var(--text-primary);
-    font-size: 9px;
-    font-weight: 650;
-    cursor: pointer;
-  }
-
-  .summary-link-button,
-  .summary-links button {
-    border: 0;
-    background: transparent;
-    color: var(--text-primary);
-    font-size: 9px;
-    font-weight: 650;
-    cursor: pointer;
-  }
-
-  .summary-secondary {
-    min-height: 30px;
-    padding: 0 9px;
-  }
-
-  .summary-icon-button {
-    display: grid;
-    width: 30px;
-    height: 30px;
-    place-items: center;
-    padding: 0;
-  }
-
-  .summary-secondary:hover:not(:disabled),
-  .summary-icon-button:hover:not(:disabled),
-  .summary-link-button:hover,
-  .summary-links button:hover {
-    background: var(--bg-hover);
-  }
-
-  .summary-secondary:disabled,
-  .summary-icon-button:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
-  .summary-links {
-    display: grid;
-    border-top: 1px solid var(--border-subtle);
-    margin-top: 11px;
-  }
-
-  .summary-links button {
-    display: flex;
-    min-height: 40px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    border: 0;
-    border-top: 1px solid var(--border-subtle);
-    border-radius: 0;
-    padding: 0 2px;
-    text-align: left;
-  }
-
-  .summary-links button:first-child {
-    border-top: 0;
-  }
-
-  .summary-links button > span {
-    display: inline-flex;
-    min-width: 0;
-    align-items: center;
-    gap: 7px;
-  }
-
-  .summary-links button > :global(svg) {
-    color: var(--text-tertiary);
-  }
-
-  .summary-library-state {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    border-top: 1px solid var(--border-subtle);
-    margin-top: 11px;
-    padding-top: 10px;
-  }
-
-  .summary-library-state > div {
-    display: grid;
-    gap: 2px;
-  }
-
-  .summary-library-state span {
-    color: var(--text-tertiary);
-    font-size: 8.5px;
-  }
-
-  .summary-library-state strong {
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-    font-weight: 720;
-  }
-
-  .summary-link-button {
-    display: flex;
-    width: 100%;
-    min-height: 30px;
-    align-items: center;
-    justify-content: space-between;
-    border-top: 1px solid var(--border-subtle);
-    border-radius: 0;
-    margin-top: 10px;
-    padding: 9px 0 0;
-    text-align: left;
+  .settings-group-divider::after {
+    height: 1px;
+    flex: 1;
+    background: var(--border-subtle);
+    content: '';
   }
 
   .section-intro {
@@ -1857,7 +1478,7 @@
   .setup-note p {
     margin: 3px 0 0;
     color: var(--text-secondary);
-    font-size: 10.5px;
+    font-size: 12.5px;
     line-height: 1.5;
   }
 
@@ -1870,7 +1491,7 @@
     background: var(--bg-subtle);
     padding: 0 9px;
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 700;
     white-space: nowrap;
   }
@@ -1882,7 +1503,7 @@
 
   .status-pill.warning {
     background: var(--orange-100);
-    color: #b75a00;
+    color: var(--orange-600);
   }
 
   .status-pill.danger {
@@ -1944,8 +1565,8 @@
   }
 
   .overview-card:active,
-  .primary-button:active,
-  .secondary-button:active {
+  .primary-button:active:not(:disabled),
+  .secondary-button:active:not(:disabled) {
     transform: scale(0.98);
   }
 
@@ -1985,14 +1606,14 @@
   .overview-copy strong,
   .switch-copy strong,
   .setup-note strong {
-    font-size: 11px;
+    font-size: 12.5px;
     font-weight: 680;
   }
 
   .overview-copy small {
     overflow: hidden;
     color: var(--text-secondary);
-    font-size: 9.5px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2019,7 +1640,7 @@
 
   .card-heading h3 {
     margin: 1px 0 0;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: -0.01em;
   }
@@ -2031,7 +1652,7 @@
   .subtle-meta {
     margin-left: auto;
     color: var(--text-tertiary);
-    font-size: 9px;
+    font-size: 12px;
     white-space: nowrap;
   }
 
@@ -2069,7 +1690,7 @@
 
   .stat-row span {
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .detail-list {
@@ -2092,13 +1713,13 @@
 
   .detail-list dt {
     color: var(--text-secondary);
-    font-size: 9.5px;
+    font-size: 12px;
   }
 
   .detail-list dd {
     min-width: 0;
     margin: 0;
-    font-size: 10px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
     font-weight: 580;
     text-align: right;
@@ -2109,6 +1730,14 @@
     display: grid;
     margin-top: 12px;
     border-top: 1px solid var(--border-subtle);
+  }
+
+  .sync-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 12px;
+    padding-top: 12px;
   }
 
   .sync-history-row {
@@ -2132,14 +1761,14 @@
   }
 
   .sync-history-main strong {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 680;
   }
 
   .sync-history-main small,
   .sync-history-counts {
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .sync-history-counts {
@@ -2153,14 +1782,14 @@
   .empty-inline {
     margin: 12px 0 0;
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .mono,
   code {
     font-family:
       ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 9px !important;
+    font-size: 12px !important;
   }
 
   .field-stack {
@@ -2171,7 +1800,7 @@
 
   .field-stack label {
     color: var(--text-secondary);
-    font-size: 9.5px;
+    font-size: 12px;
     font-weight: 650;
   }
 
@@ -2183,8 +1812,7 @@
     background: var(--bg-control);
     padding: 0 11px;
     color: var(--text-primary);
-    font-size: 10.5px;
-    outline: none;
+    font-size: 13px;
   }
 
   .field-stack input::placeholder {
@@ -2193,7 +1821,7 @@
 
   .field-stack input:focus {
     border-color: var(--blue-600);
-    box-shadow: 0 0 0 2px rgb(23 105 255 / 10%);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 18%, transparent);
   }
 
   .field-stack input:disabled {
@@ -2210,7 +1838,7 @@
   .path-picker input {
     font-family:
       ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 9.5px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -2255,13 +1883,13 @@
 
   .provider-priority-copy strong {
     color: var(--text-primary);
-    font-size: 10.5px;
+    font-size: 12.5px;
   }
 
   .provider-priority-copy small,
   .provider-add-row > span {
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .provider-priority-index {
@@ -2272,7 +1900,7 @@
     border-radius: 999px;
     background: var(--bg-control);
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 700;
   }
 
@@ -2298,7 +1926,7 @@
 
   .technical-field span {
     color: var(--text-tertiary);
-    font-size: 8.5px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -2325,13 +1953,13 @@
   .secondary-button,
   .text-button {
     display: inline-flex;
-    min-height: 32px;
+    min-height: 34px;
     align-items: center;
     justify-content: center;
     gap: 6px;
     border-radius: 8px;
     padding: 0 11px;
-    font-size: 9.5px;
+    font-size: 13px;
     font-weight: 650;
     cursor: pointer;
     transition:
@@ -2341,14 +1969,14 @@
   }
 
   .primary-button {
-    border: 1px solid var(--blue-600);
-    background: var(--blue-600);
-    color: #fff;
+    border: 1px solid var(--action-primary-bg);
+    background: var(--action-primary-bg);
+    color: var(--action-primary-text);
   }
 
   .primary-button:hover:not(:disabled) {
-    border-color: var(--blue-700);
-    background: var(--blue-700);
+    border-color: var(--action-primary-hover);
+    background: var(--action-primary-hover);
   }
 
   .secondary-button {
@@ -2379,8 +2007,23 @@
   .secondary-button:disabled,
   .text-button:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
     transform: none;
+  }
+
+  .primary-button:disabled {
+    border-color: var(--action-disabled-bg);
+    background: var(--action-disabled-bg);
+    color: var(--action-disabled-text);
+  }
+
+  .secondary-button:disabled {
+    border-color: var(--control-disabled-border);
+    background: var(--control-disabled-bg);
+    color: var(--text-disabled);
+  }
+
+  .text-button:disabled {
+    color: var(--text-disabled);
   }
 
   .message {
@@ -2390,7 +2033,7 @@
     border-radius: 8px;
     margin-top: 12px;
     padding: 9px 10px;
-    font-size: 9.5px;
+    font-size: 12px;
     line-height: 1.45;
   }
 
@@ -2401,22 +2044,22 @@
 
   .message.error {
     background: var(--red-100);
-    color: #b4232b;
+    color: var(--red-600);
   }
 
   .message.warning {
     background: var(--orange-100);
-    color: #a95400;
+    color: var(--orange-600);
   }
 
   .message.success {
     background: var(--green-100);
-    color: #147d51;
+    color: var(--green-600);
   }
 
   .message.info {
     background: var(--blue-050);
-    color: #315c9f;
+    color: var(--blue-700);
   }
 
   .sync-flow {
@@ -2445,7 +2088,7 @@
     border-radius: 50%;
     background: var(--blue-100);
     color: var(--blue-700);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 750;
   }
 
@@ -2456,12 +2099,12 @@
   }
 
   .sync-step strong {
-    font-size: 10.5px;
+    font-size: 12.5px;
   }
 
   .sync-step small {
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
     line-height: 1.4;
   }
 
@@ -2473,17 +2116,6 @@
       #b8c8e8,
       var(--border-default)
     );
-  }
-
-  .action-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-  }
-
-  .action-card .card-heading {
-    flex: 1;
   }
 
   .acquisition-card {
@@ -2546,8 +2178,8 @@
   }
 
   .switch-row input[type='checkbox']:checked {
-    border-color: var(--blue-600);
-    background: var(--blue-600);
+    border-color: var(--control-accent-bg);
+    background: var(--control-accent-bg);
   }
 
   .switch-row input[type='checkbox']:checked::after {
@@ -2556,7 +2188,12 @@
 
   .switch-row input[type='checkbox']:disabled {
     cursor: not-allowed;
-    opacity: 0.55;
+    border-color: var(--control-disabled-border);
+    background: var(--control-disabled-bg);
+  }
+
+  .switch-row input[type='checkbox']:disabled::after {
+    background: var(--action-disabled-text);
   }
 
   .setup-note {
@@ -2583,14 +2220,13 @@
     margin-top: 12px;
     padding-top: 10px;
     color: var(--text-secondary);
-    font-size: 9.5px;
+    font-size: 12px;
   }
 
   .cached-status {
     margin-left: auto;
-    color: currentColor;
-    font-size: 8.5px;
-    opacity: 0.72;
+    color: inherit;
+    font-size: 12px;
     white-space: nowrap;
   }
 
@@ -2624,7 +2260,8 @@
 
   .theme-choice-grid > button.active {
     border-color: var(--blue-600);
-    box-shadow: 0 0 0 2px rgb(23 105 255 / 10%);
+    background: var(--blue-050);
+    box-shadow: inset 0 0 0 1px var(--blue-600);
   }
 
   .theme-choice-grid > button:active {
@@ -2677,13 +2314,13 @@
   }
 
   .theme-choice-label strong {
-    font-size: 10.5px;
+    font-size: 12.5px;
     font-weight: 680;
   }
 
   .theme-choice-label small {
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   :global(html[data-theme='dark']) .overview-card,
@@ -2702,12 +2339,12 @@
 
   :global(html[data-theme='dark']) .field-stack label,
   :global(html[data-theme='dark']) .technical-field code,
-  :global(html[data-theme='dark']) .secondary-button {
+  :global(html[data-theme='dark']) .secondary-button:not(:disabled) {
     color: var(--text-primary);
   }
 
   :global(html[data-theme='dark']) .field-stack input,
-  :global(html[data-theme='dark']) .secondary-button {
+  :global(html[data-theme='dark']) .secondary-button:not(:disabled) {
     border-color: var(--border-default);
     background: var(--bg-control);
   }
@@ -2723,12 +2360,23 @@
   }
 
   :global(html[data-theme='dark']) .switch-row input[type='checkbox']:checked {
-    border-color: var(--blue-600);
-    background: var(--blue-600);
+    border-color: var(--control-accent-bg);
+    background: var(--control-accent-bg);
+  }
+
+  :global(html[data-theme='dark']) .switch-row input[type='checkbox']:disabled {
+    border-color: var(--control-disabled-border);
+    background: var(--control-disabled-bg);
   }
 
   :global(html[data-theme='dark']) .switch-row input[type='checkbox']::after {
     background: #f5f7fa;
+  }
+
+  :global(html[data-theme='dark'])
+    .switch-row
+    input[type='checkbox']:disabled::after {
+    background: var(--action-disabled-text);
   }
 
   :global(html[data-theme='dark']) .message.info {
@@ -2765,16 +2413,7 @@
     }
   }
 
-  @media (max-width: 900px) {
-    .settings-body {
-      grid-template-columns: minmax(0, 1fr);
-      background: var(--bg-content);
-    }
-
-    .settings-summary-rail {
-      display: none;
-    }
-
+  @media (max-width: 1200px) {
     .two-fields {
       grid-template-columns: 1fr;
     }
@@ -2816,15 +2455,6 @@
       height: 16px;
       margin-left: 11px;
       background: var(--border-default);
-    }
-
-    .action-card {
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    .action-card > button {
-      align-self: flex-start;
     }
   }
 

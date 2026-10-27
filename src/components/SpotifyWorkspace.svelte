@@ -6,6 +6,7 @@
   import OverflowMenu from './OverflowMenu.svelte';
   import TrackList from './TrackList.svelte';
   import type { OverflowMenuItem } from '../lib/menu';
+  import type { LocalPlaylistSummary } from '../lib/playlists';
   import {
     exportPlaylist,
     listPlaylistExports,
@@ -36,6 +37,7 @@
   export let savedAlbums: SourceCollectionSummary[] = [];
   export let savedAlbumTotal = 0;
   export let playlists: SourceCollectionSummary[] = [];
+  export let localPlaylists: LocalPlaylistSummary[] = [];
   export let playlistTotal = 0;
   export let currentCollection: SourceCollectionSummary | null = null;
   export let entries: SourceCollectionEntryView[] = [];
@@ -54,6 +56,8 @@
     ((album: SourceCollectionSummary) => void) | undefined = undefined;
   export let onSelectPlaylist:
     ((playlist: SourceCollectionSummary) => void) | undefined = undefined;
+  export let onOpenLocalPlaylist:
+    ((playlistId: number) => void | Promise<void>) | undefined = undefined;
   export let onBackToCollections: (() => void) | undefined = undefined;
   export let onLoadMoreSavedAlbums: (() => void) | undefined = undefined;
   export let onLoadMorePlaylists: (() => void) | undefined = undefined;
@@ -154,6 +158,9 @@
         ? currentCollection
         : (overview?.likedSongs ?? null)
       : currentCollection;
+  $: localMirror = localPlaylists.find(
+    (playlist) => playlist.sourceCollectionId === displayedCollection?.id,
+  );
   $: localCollections = collectionList.filter(
     (collection) =>
       collection.entryCount > 0 &&
@@ -734,6 +741,16 @@
             </div>
 
             <div class="album-detail-actions">
+              {#if section === 'playlists' && localMirror}
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => onOpenLocalPlaylist?.(localMirror.id)}
+                >
+                  <Icon name="local" size={14} />
+                  Open Local Copy
+                </button>
+              {/if}
               <div class="collection-tracking-control">
                 <span class="liked-tracking-label">
                   {section === 'albums' ? 'Track Album' : 'Track Playlist'}
@@ -1265,21 +1282,16 @@
           {#if section === 'playlists' && filteredUnavailablePlaylists.length > 0}
             <details
               open={collectionState === 'attention'}
-              style="margin-top:18px; border-top:1px solid var(--divider); padding-top:12px;"
+              class="unavailable-playlists"
             >
               <summary
-                style="cursor:pointer; color:var(--text-secondary); font-size:10px; font-weight:600;"
                 >Unavailable Playlists · {filteredUnavailablePlaylists.length}</summary
               >
-              <div
-                style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-top:9px;"
-              >
+              <div class="unavailable-playlist-grid">
                 {#each filteredUnavailablePlaylists as playlist (playlist.id)}
-                  <div class="inspector-card" style="margin:0; padding:10px;">
-                    <strong style="font-size:10px;">{playlist.name}</strong>
-                    <p
-                      style="margin:3px 0 0; color:var(--text-tertiary); font-size:9px; line-height:1.45;"
-                    >
+                  <div class="inspector-card unavailable-playlist-card">
+                    <strong>{playlist.name}</strong>
+                    <p>
                       {playlist.accessIssue ??
                         'Spotify does not expose this playlist to Refrain.'}
                     </p>

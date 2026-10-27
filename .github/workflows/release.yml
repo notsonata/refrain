@@ -12,6 +12,8 @@ jobs:
   validate-tag:
     name: Validate release tag
     runs-on: ubuntu-latest
+    outputs:
+      release_body: ${{ steps.release-notes.outputs.body }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -41,6 +43,36 @@ jobs:
           if (cargoVersion !== packageJson.version) {
             throw new Error(`Cargo version ${cargoVersion ?? 'missing'} does not match package version ${packageJson.version}.`);
           }
+          EOF
+      - name: Require and extract What's New release notes
+        id: release-notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from 'node:fs';
+          import { randomUUID } from 'node:crypto';
+
+          const version = process.env.RELEASE_TAG.replace(/^v/, '');
+          const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+          const heading = new RegExp(`^## \\[${version.replaceAll('.', '\\.')}\\][^\\n]*\\n`, 'm');
+          const headingMatch = heading.exec(changelog);
+
+          if (!headingMatch) {
+            throw new Error(`CHANGELOG.md has no release entry for ${version}.`);
+          }
+
+          const releaseStart = headingMatch.index + headingMatch[0].length;
+          const remainingChangelog = changelog.slice(releaseStart);
+          const nextRelease = remainingChangelog.search(/^## \[/m);
+          const release = nextRelease === -1 ? remainingChangelog : remainingChangelog.slice(0, nextRelease);
+          const whatsNew = release.split(/^### What's New\s*$/m)[1]?.split(/^### /m)[0]?.trim();
+          if (!whatsNew || !/^[-*]\s+\S/m.test(whatsNew)) {
+            throw new Error(`CHANGELOG.md must include a non-empty "### What's New" section for ${version}.`);
+          }
+
+          const delimiter = `NOTES_${randomUUID()}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `body<<${delimiter}\n### What's New\n\n${whatsNew}\n${delimiter}\n`);
           EOF
 
   publish:
@@ -96,7 +128,8 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Refrain ${{ github.ref_name }}'
-          generateReleaseNotes: true
+          releaseBody: ${{ needs.validate-tag.outputs.release_body }}
+          generateReleaseNotes: false
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

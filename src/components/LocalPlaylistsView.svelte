@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import type {
     LocalPlaylistDetail,
     LocalPlaylistEntry,
     LocalPlaylistSummary,
   } from '../lib/playlists';
+  import { localPlaylistBrowserItems } from '../lib/playlists';
   import type { OverflowMenuItem } from '../lib/menu';
   import { formatTrackDuration } from '../lib/source';
   import Icon from './Icon.svelte';
@@ -23,6 +25,10 @@
   export let onRename: ((name: string) => void | Promise<void>) | undefined =
     undefined;
   export let onDelete: (() => void | Promise<void>) | undefined = undefined;
+  export let onReplaceArtwork:
+    ((playlistId: number) => void | Promise<void>) | undefined = undefined;
+  export let onRestoreArtwork:
+    ((playlistId: number) => void | Promise<void>) | undefined = undefined;
   export let onMoveEntry:
     | ((entryId: number, newPosition: number) => void | Promise<void>)
     | undefined = undefined;
@@ -36,14 +42,80 @@
   let editingName = false;
   let nameDraft = '';
   let lastSelectedPlaylistId: number | null = null;
+  let showImportedNamesakes = false;
+  let contextPlaylist: LocalPlaylistSummary | null = null;
+  let contextMenuTop = 0;
+  let contextMenuLeft = 0;
+
+  function openPlaylistContextMenu(
+    event: MouseEvent,
+    playlist: LocalPlaylistSummary,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const menuWidth = 196;
+    const menuHeight = playlist.customArtworkPath ? 84 : 42;
+    contextMenuLeft = Math.max(
+      8,
+      Math.min(window.innerWidth - menuWidth - 8, event.clientX),
+    );
+    contextMenuTop = Math.max(
+      8,
+      Math.min(window.innerHeight - menuHeight - 8, event.clientY),
+    );
+    contextPlaylist = playlist;
+  }
+
+  function closePlaylistContextMenu() {
+    contextPlaylist = null;
+  }
+
+  function handleContextArtwork(restore = false) {
+    const playlist = contextPlaylist;
+    closePlaylistContextMenu();
+    if (!playlist || busy) return;
+    if (restore) void onRestoreArtwork?.(playlist.id);
+    else void onReplaceArtwork?.(playlist.id);
+  }
+
+  onMount(() => {
+    const closeFromPointer = (event: PointerEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('.local-playlist-context-menu')
+      )
+        return;
+      closePlaylistContextMenu();
+    };
+    const closeFromKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePlaylistContextMenu();
+    };
+    const closeFromViewport = () => closePlaylistContextMenu();
+    document.addEventListener('pointerdown', closeFromPointer);
+    document.addEventListener('keydown', closeFromKey);
+    document.addEventListener('scroll', closeFromViewport, true);
+    window.addEventListener('resize', closeFromViewport);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromPointer);
+      document.removeEventListener('keydown', closeFromKey);
+      document.removeEventListener('scroll', closeFromViewport, true);
+      window.removeEventListener('resize', closeFromViewport);
+    };
+  });
 
   $: selectedIsSpotifyMirror = selectedPlaylist?.sourceCollectionId != null;
-  $: filteredPlaylists = filterPlaylists(playlists, playlistSearch);
+  $: visiblePlaylists = localPlaylistBrowserItems(
+    playlists,
+    showImportedNamesakes,
+  );
+  $: namesakeImportCount =
+    playlists.length - localPlaylistBrowserItems(playlists).length;
+  $: filteredPlaylists = filterPlaylists(visiblePlaylists, playlistSearch);
   $: filteredEntries = filterEntries(
     selectedPlaylist?.entries ?? [],
     trackSearch,
   );
-  $: totalTracks = playlists.reduce(
+  $: totalTracks = visiblePlaylists.reduce(
     (total, playlist) => total + playlist.entryCount,
     0,
   );
@@ -91,14 +163,30 @@
     }).format(new Date(timestamp));
   }
 
-  function playlistSyncLabel(playlist: LocalPlaylistSummary): string {
+  function playlistSyncLabel(
+    playlist: Pick<
+      LocalPlaylistSummary,
+      'syncError' | 'm3uPath' | 'm3uManaged'
+    >,
+  ): string {
     if (playlist.syncError) return 'Needs attention';
-    if (!playlist.m3uPath) return 'M3U8 pending';
-    return playlist.m3uManaged ? 'M3U8 synced' : 'Linked M3U8';
+    if (!playlist.m3uPath) return 'M3U pending';
+    if (playlist.m3uManaged) return 'M3U synced';
+    return playlist.m3uPath.toLowerCase().endsWith('.m3u')
+      ? 'Linked M3U'
+      : 'Linked M3U8';
   }
 
   function artworkUrl(entry: LocalPlaylistEntry): string | null {
     return entry.artworkPath ? convertFileSrc(entry.artworkPath) : null;
+  }
+
+  function playlistArtworkUrl(
+    playlist: LocalPlaylistSummary | LocalPlaylistDetail,
+  ): string | null {
+    return playlist.customArtworkPath
+      ? convertFileSrc(playlist.customArtworkPath)
+      : playlist.imageUrl;
   }
 
   async function createPlaylist() {
@@ -117,9 +205,25 @@
   }
 
   function playlistMenuItems(): OverflowMenuItem[] {
-    if (!selectedPlaylist || selectedPlaylist.sourceCollectionId != null)
-      return [];
+    if (!selectedPlaylist) return [];
+    const playlistId = selectedPlaylist.id;
+    const artworkItems: OverflowMenuItem[] = [
+      {
+        label: 'Replace Artwork',
+        icon: 'folder',
+        action: () => onReplaceArtwork?.(playlistId),
+      },
+    ];
+    if (selectedPlaylist.customArtworkPath) {
+      artworkItems.push({
+        label: 'Restore Original Artwork',
+        icon: 'refresh',
+        action: () => onRestoreArtwork?.(playlistId),
+      });
+    }
+    if (selectedPlaylist.sourceCollectionId != null) return artworkItems;
     return [
+      ...artworkItems,
       {
         label: 'Rename Playlist',
         icon: 'refresh',
@@ -129,7 +233,10 @@
         },
       },
       {
-        label: 'Delete Playlist',
+        label:
+          !selectedPlaylist.m3uManaged && selectedPlaylist.m3uPath
+            ? 'Remove from Library'
+            : 'Delete Playlist',
         icon: 'close',
         action: () => onDelete?.(),
         separatorBefore: true,
@@ -246,35 +353,32 @@
                 size={14}
               />
               <strong>
-                {selectedPlaylist.syncError
-                  ? 'M3U8 needs attention'
-                  : selectedPlaylist.m3uPath
-                    ? 'M3U8 synced'
-                    : 'M3U8 pending'}
+                {playlistSyncLabel(selectedPlaylist)}
               </strong>
             </span>
           </div>
 
-          {#if !selectedIsSpotifyMirror}
-            <div class="album-detail-actions">
-              <OverflowMenu
-                items={playlistMenuItems()}
-                ariaLabel="Playlist actions"
-              />
-            </div>
-          {/if}
+          <div class="album-detail-actions">
+            <OverflowMenu
+              items={playlistMenuItems()}
+              ariaLabel="Playlist actions"
+            />
+          </div>
         </div>
       </header>
 
       <div class="local-playlist-managed-file">
         <div class="local-playlist-managed-file-copy">
-          <span class="local-playlist-managed-label">M3U8</span>
+          <span class="local-playlist-managed-label">
+            {selectedPlaylist.m3uPath?.toLowerCase().endsWith('.m3u8')
+              ? 'M3U8'
+              : 'M3U'}
+          </span>
           <span
             class="local-playlist-managed-path"
             title={selectedPlaylist.m3uPath ?? ''}
           >
-            {selectedPlaylist.m3uPath ??
-              'Waiting for the library folder and a complete local copy.'}
+            {selectedPlaylist.m3uPath ?? 'Waiting for the library folder.'}
           </span>
         </div>
         <span class="local-playlist-managed-time">
@@ -398,7 +502,7 @@
           <h1 class="page-title">Local Playlists</h1>
         </div>
         <p class="page-description">
-          Local playlists and tracked Spotify mirrors, kept as playable M3U8
+          Local playlists and tracked Spotify mirrors, kept as playable M3U
           files.
         </p>
       </div>
@@ -420,9 +524,11 @@
       aria-label="Playlist summary"
     >
       <div class="metric-inline">
-        <div class="metric-value">{playlists.length.toLocaleString()}</div>
+        <div class="metric-value">
+          {visiblePlaylists.length.toLocaleString()}
+        </div>
         <div class="metric-label">
-          total {playlists.length === 1 ? 'playlist' : 'playlists'}
+          total {visiblePlaylists.length === 1 ? 'playlist' : 'playlists'}
         </div>
       </div>
       <div class="metric-inline">
@@ -485,6 +591,24 @@
       </span>
     </div>
 
+    {#if namesakeImportCount > 0}
+      <div class="local-playlist-imported-namesakes">
+        <span>
+          {namesakeImportCount} separately imported M3U
+          {namesakeImportCount === 1 ? '' : 's'} share a name with a Spotify mirror.
+        </span>
+        <button
+          type="button"
+          class="btn btn-subtle"
+          onclick={() => (showImportedNamesakes = !showImportedNamesakes)}
+        >
+          {showImportedNamesakes
+            ? 'Hide imported copies'
+            : 'Show imported copies'}
+        </button>
+      </div>
+    {/if}
+
     {#if loading}
       <div class="local-playlist-browser-loading">
         <div class="skeleton" style="height:62px"></div>
@@ -516,10 +640,16 @@
                 type="button"
                 class="collection-card local-playlist-card"
                 onclick={() => onSelect?.(playlist.id)}
+                oncontextmenu={(event) =>
+                  openPlaylistContextMenu(event, playlist)}
               >
                 <div class="collection-artwork">
-                  {#if playlist.imageUrl}
-                    <img src={playlist.imageUrl} alt="" loading="lazy" />
+                  {#if playlistArtworkUrl(playlist)}
+                    <img
+                      src={playlistArtworkUrl(playlist) ?? ''}
+                      alt=""
+                      loading="lazy"
+                    />
                   {:else}
                     <div
                       class="artwork-fallback"
@@ -567,3 +697,37 @@
     {/if}
   {/if}
 </div>
+
+{#if contextPlaylist}
+  <div
+    class="overflow-menu collection-context-menu local-playlist-context-menu"
+    role="menu"
+    tabindex="-1"
+    aria-label={`${contextPlaylist.name} artwork actions`}
+    style={`top:${contextMenuTop}px; left:${contextMenuLeft}px;`}
+    oncontextmenu={(event) => event.preventDefault()}
+  >
+    <button
+      type="button"
+      class="overflow-menu-item"
+      role="menuitem"
+      disabled={busy}
+      onclick={() => handleContextArtwork()}
+    >
+      <Icon name="local" size={14} />
+      <span>Replace Artwork</span>
+    </button>
+    {#if contextPlaylist.customArtworkPath}
+      <button
+        type="button"
+        class="overflow-menu-item"
+        role="menuitem"
+        disabled={busy}
+        onclick={() => handleContextArtwork(true)}
+      >
+        <Icon name="refresh" size={14} />
+        <span>Restore Original Artwork</span>
+      </button>
+    {/if}
+  </div>
+{/if}

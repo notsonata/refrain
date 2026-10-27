@@ -6,7 +6,7 @@ This document is a functional inventory for redesigning Refrain's desktop UI and
 
 It describes what each screen must let the user understand or do. It is not a recommendation to preserve the current visual layout. The redesign can change navigation, hierarchy, component style, spacing, typography, and arrangement as long as the functional requirements remain clear.
 
-Current implementation is derived from the Svelte frontend and current project docs. Planned v1 surfaces are listed separately so redesign work can anticipate features that have not been implemented yet.
+This inventory preserves a redesign snapshot from the earlier Milestone 13 period; its screen descriptions are design input, not an authoritative record of the latest implementation. Milestones 14 through 16 subsequently added verification/import, full synchronization, and playlist export. Destination Library Mirroring and automatic scheduling remain planned. For current behavior use `docs/SPEC.md`, `docs/STATUS.md`, and the Svelte frontend.
 
 ## Product Context
 
@@ -25,7 +25,7 @@ These elements can appear around multiple screens and should be designed as one 
 
 ### Primary navigation
 
-Current primary destinations:
+Primary destinations considered in this redesign snapshot:
 
 - **Local**
   - Shows a local track count.
@@ -33,7 +33,7 @@ Current primary destinations:
   - Contains Liked Songs, Albums, and Playlists subsections.
   - Shows a collection count.
 - **Settings**
-- **Issues** is currently a secondary attention flow opened contextually from Local rather than a permanent primary nav item.
+- **Issues** was envisioned as a contextual secondary flow in this redesign snapshot. The implemented application now provides a permanent Issues navigation item.
 
 ### Global header
 
@@ -108,39 +108,21 @@ Important summary values:
 
 These do not have to remain three cards. They only need to remain quickly readable.
 
-### Main filters
+### Search and filters
 
-Always available filters:
+Keep search visible across title, artist, album, path, and Spotify collection membership. Group applicable state and technical filters under one collapsible **Filters** control:
 
-- search across title, artist, album, path, and Spotify collection membership
-- Spotify state
-  - all
-  - on Spotify
-  - local only
-- artist
-- album
-- year
-- audio format
-- Spotify membership / collection
-
-### Advanced filters
-
-Advanced or secondary controls:
-
-- path contains
+- Spotify/local state
+- tracking state where applicable
+- path/location
 - acquisition status
 - match status
-  - matched
-  - unmatched
 - explicit state
-  - explicit
-  - not explicit
-- duration
-  - under 3 minutes
-  - 3 to 5 minutes
-  - over 5 minutes
-- clear all filters
+- duration when supported
+- clear filters without clearing search
 - shown count and loaded count
+
+Show artist, album, year, format, and other metadata in sortable table columns without duplicating them as permanent filter controls.
 
 ### Local track row
 
@@ -222,30 +204,7 @@ Must show:
 
 ### Track filters
 
-Default filters:
-
-- search title / artist / album
-- tracking state
-  - all
-  - tracked
-  - excluded
-- local state
-  - all
-  - on disk
-  - missing
-- artist
-- album
-- year
-- local audio format
-
-Advanced filters:
-
-- acquisition status
-- match state
-- explicit state
-- duration
-- clear filters
-- shown / loaded count
+Keep title/artist/album search visible. Use one collapsible **Filters** control for tracking state, local state, acquisition/match state, explicit state, and other applicable technical criteria. Show artist, album, year, and format as sortable row metadata. Include a clear-filters action and shown/loaded counts.
 
 ### Spotify track row
 
@@ -348,7 +307,7 @@ Must show:
 Uses the Spotify track list behavior from Liked Songs:
 
 - search and filters
-- Advanced filters
+- compact Filters panel
 - track position
 - artwork
 - title / artist / album / year / duration
@@ -663,31 +622,24 @@ Important product distinction:
 
 The direct **Scan Files** operation indexes the folder. **Sync Library** is the broader reconciliation / normalization workflow and internally runs the local reconciliation phase before the tracked Spotify phase.
 
-### C. Acquisition / Sockseek Provider
+### C. Acquisition Providers
 
 Must support:
 
 - acquisition enabled toggle
-- Soulseek account configuration state
-- Sockseek provider health state
-  - not checked
-  - ready
-  - not ready
-- Soulseek username
-- Soulseek password
-- save acquisition setting
-- save Soulseek credentials
-- check / start Sockseek health verification
-- clear credentials
+- prioritized provider list with add, remove, and reorder controls
+- Monochrome (default, no credentials), optional Antra, and optional Sockseek / Soulseek
+- per-provider health-check actions and health messages
+- Antra device sign-in / sign-out state
+- Soulseek account configuration state, username, password, credential save/clear, and Sockseek health
+- immediate persistence of acquisition enablement and provider priority
 - provider version when available
-- provider health message
 - acquisition configuration errors
 
 Important user-facing concepts:
 
-- Sockseek is bundled with Refrain.
-- Sockseek connects to Soulseek using the user's Soulseek credentials.
-- There is no separate Sockseek account.
+- Monochrome works without credentials; Antra requires device sign-in.
+- Sockseek is an optional bundled fallback that connects using the user's Soulseek credentials; there is no separate Sockseek account.
 - credentials are stored in the operating system credential store.
 - acquisition finds missing tracks during synchronization.
 - downloads are staged and require verification before becoming canonical library files.
@@ -803,9 +755,9 @@ Keep the following user-facing states visually distinct but consistent:
 
 ---
 
-# Planned v1 Screens and Surfaces
+# Additional v1 Screens and Surfaces
 
-These features are in the approved v1 product plan but are not fully implemented in the current frontend. Designs generated now should account for them.
+This section records concepts that were planned when this inventory was created. Verification/import (Milestone 14), full synchronization status/history (Milestone 15), and Spotify Playlist Export (Milestone 16) are now implemented. Destination Library Mirroring (Milestone 17) and scheduling/removal policy (Milestone 18) remain future work.
 
 ## 13. Acquisition Verification / Import State
 
@@ -813,7 +765,7 @@ These features are in the approved v1 product plan but are not fully implemented
 
 Show what happens after a provider successfully downloads a candidate but before it becomes part of the canonical library.
 
-Important future states:
+Important workflow states:
 
 - queued
 - searching
@@ -934,7 +886,7 @@ Important safety distinction:
 
 ## 17. Sync Activity / Recent Runs
 
-The current UI only exposes compact current and recent sync summaries. v1 UX calls for clearer recent sync state.
+Current synchronization includes live phase/progress and recent run summaries; richer activity presentation remains a later UX concern.
 
 A redesign should leave room for a richer activity surface showing:
 
@@ -962,7 +914,7 @@ This can be a dedicated screen, drawer, popover, or expanded section. The exact 
 For a complete UI redesign, generate at least these distinct desktop concepts:
 
 1. Global shell + Local Library populated state
-2. Local Library with Advanced filters open
+2. Local Library with compact Filters panel open
 3. Spotify Liked Songs
 4. Spotify Saved Albums grid
 5. Spotify Saved Album detail
@@ -971,7 +923,7 @@ For a complete UI redesign, generate at least these distinct desktop concepts:
 8. Issues queue with Ambiguous Match Review selected
 9. Issues queue with a non-match issue selected
 10. Settings overview showing Spotify, Local Library, Acquisition, and Runtime hierarchy
-11. Playlist Export future screen
+11. Playlist Export screen
 12. Mirror Targets / Mirror Progress future screen
 13. Scheduling / Removal Policy future settings
 14. Global active synchronization / progress treatment
@@ -992,4 +944,4 @@ When simplifying the current UI, preserve these distinctions:
 7. **Acquisition provider details should stay secondary.** Users care whether acquisition is configured, running, staged, verified, failed, or unavailable more than Sockseek implementation details.
 8. **File paths and ownership matter.** Refrain performs real filesystem work, so paths, local presence, and safety-related state cannot be hidden completely.
 9. **Dense lists are intentional.** This is a desktop library management tool, but density should come from hierarchy and efficient components rather than tiny unreadable text.
-10. **Future Export and Mirror workflows need space in the information architecture.** Avoid a redesign that only works for the current Milestone 13 feature set.
+10. **Playlist Export is implemented; destination mirroring remains planned.** Accommodate existing export/history controls while reserving space for future mirror targets and progress.

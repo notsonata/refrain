@@ -3,6 +3,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::Path,
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
@@ -34,6 +35,13 @@ const SEARCH_TIMEOUT: Duration = Duration::from_secs(12);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const ENDPOINT_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_DOWNLOAD_ATTEMPTS: usize = 4;
+const REMUX_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamFormat {
+    Flac,
+    Mp4,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -627,11 +635,16 @@ impl AntraProvider {
             job.set_status(ProviderJobStatus::Running);
             match provider.download_with_retries(&token, Path::new(&output_path), &job) {
                 Ok(()) if job.cancelled.load(Ordering::Acquire) => {
+                    let _ = fs::remove_file(&output_path);
                     job.set_status(ProviderJobStatus::Cancelled)
                 }
                 Ok(()) => job.set_status(ProviderJobStatus::Succeeded {
                     output_paths: vec![output_path],
                 }),
+                Err(_) if job.cancelled.load(Ordering::Acquire) => {
+                    let _ = fs::remove_file(&output_path);
+                    job.set_status(ProviderJobStatus::Cancelled)
+                }
                 Err(error) => job.set_status(ProviderJobStatus::Failed {
                     code: error.code,
                     message: error.message,
@@ -652,11 +665,19 @@ impl AntraProvider {
         for attempt in 0..MAX_DOWNLOAD_ATTEMPTS {
             if job.cancelled.load(Ordering::Acquire) {
                 let _ = fs::remove_file(&part_path);
-                return Ok(());
+                return Err(cancelled_error());
             }
             match self.download_once(candidate, &part_path, job) {
+                Ok(()) if job.cancelled.load(Ordering::Acquire) => {
+                    let _ = fs::remove_file(&part_path);
+                    return Err(cancelled_error());
+                }
                 Ok(()) => {
                     fs::rename(&part_path, output_path).map_err(io_provider_error)?;
+                    if job.cancelled.load(Ordering::Acquire) {
+                        let _ = fs::remove_file(output_path);
+                        return Err(cancelled_error());
+                    }
                     return Ok(());
                 }
                 Err(error) => {
@@ -726,7 +747,14 @@ impl AntraProvider {
                 )
             })?;
         let response = ensure_download_response(response, candidate.source)?;
-        stream_flac_to_part(response, part_path, job, candidate.source)
+        let format = stream_flac_to_part(response, part_path, job, candidate.source)?;
+        if job.cancelled.load(Ordering::Acquire) {
+            return Err(cancelled_error());
+        }
+        if format == StreamFormat::Mp4 {
+            remux_mp4_flac(part_path, job, candidate.source)?;
+        }
+        Ok(())
     }
 }
 
@@ -1096,7 +1124,7 @@ fn stream_flac_to_part(
     part_path: &Path,
     job: &AntraJob,
     source: MirrorSource,
-) -> Result<(), ProviderError> {
+) -> Result<StreamFormat, ProviderError> {
     let content_type = response
         .headers()
         .get(CONTENT_TYPE)
@@ -1114,10 +1142,12 @@ fn stream_flac_to_part(
 
     let mut output = fs::File::create(part_path).map_err(io_provider_error)?;
     let mut buffer = [0_u8; 64 * 1024];
-    let mut first_chunk = true;
+    let mut stream_format = None;
+    let mut prefix = [0_u8; 8];
+    let mut prefix_len = 0;
     loop {
         if job.cancelled.load(Ordering::Acquire) {
-            return Ok(());
+            return Err(cancelled_error());
         }
         let read = response.read(&mut buffer).map_err(|error| {
             ProviderError::new(
@@ -1129,8 +1159,13 @@ fn stream_flac_to_part(
         if read == 0 {
             break;
         }
-        if first_chunk {
-            if read < 4 || &buffer[..4] != b"fLaC" {
+        if stream_format.is_none() {
+            let take = (prefix.len() - prefix_len).min(read);
+            prefix[prefix_len..prefix_len + take].copy_from_slice(&buffer[..take]);
+            prefix_len += take;
+            if let Some(format) = classify_stream_format(&prefix[..prefix_len]) {
+                stream_format = Some(format);
+            } else if prefix_len == prefix.len() {
                 tracing::warn!(
                     source = source.label(),
                     content_type,
@@ -1145,7 +1180,6 @@ fn stream_flac_to_part(
                     true,
                 ));
             }
-            first_chunk = false;
         }
         output
             .write_all(&buffer[..read])
@@ -1154,10 +1188,13 @@ fn stream_flac_to_part(
             .fetch_add(i64::try_from(read).unwrap_or(i64::MAX), Ordering::AcqRel);
     }
     output.flush().map_err(io_provider_error)?;
-    if first_chunk {
+    if job.cancelled.load(Ordering::Acquire) {
+        return Err(cancelled_error());
+    }
+    if stream_format.is_none() {
         return Err(ProviderError::new(
             "antraDownloadFailed",
-            "Antra returned an empty download.",
+            "Antra returned an empty or unrecognized audio stream.",
             true,
         ));
     }
@@ -1169,7 +1206,136 @@ fn stream_flac_to_part(
             true,
         ));
     }
-    Ok(())
+    Ok(stream_format.expect("stream format set after first nonempty chunk"))
+}
+
+fn classify_stream_format(prefix: &[u8]) -> Option<StreamFormat> {
+    if prefix.starts_with(b"fLaC") {
+        Some(StreamFormat::Flac)
+    } else if prefix.len() >= 8 && &prefix[4..8] == b"ftyp" {
+        Some(StreamFormat::Mp4)
+    } else {
+        None
+    }
+}
+
+// Some Tidal lossless streams arrive in an MP4 container. Only copy an existing
+// FLAC audio stream; ffmpeg's FLAC muxer rejects AAC and other codecs here.
+fn remux_mp4_flac(
+    part_path: &Path,
+    job: &AntraJob,
+    source: MirrorSource,
+) -> Result<(), ProviderError> {
+    if job.cancelled.load(Ordering::Acquire) {
+        return Err(cancelled_error());
+    }
+    let output_path = part_path.with_extension("remux.part");
+    let _ = fs::remove_file(&output_path);
+
+    let mut child = Command::new(ffmpeg_command())
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(part_path)
+        .args(["-map", "0:a:0", "-c:a", "copy", "-f", "flac"])
+        .arg(&output_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            ProviderError::new(
+                "antraInvalidStream",
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    format!(
+                        "Antra {} returned MP4 audio. Install ffmpeg to extract its FLAC stream.",
+                        source.label()
+                    )
+                } else {
+                    format!(
+                        "Antra {} FLAC extraction could not start: {error}",
+                        source.label()
+                    )
+                },
+                true,
+            )
+        })?;
+
+    let started = Instant::now();
+    let result = loop {
+        if job.cancelled.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break Err(cancelled_error());
+        }
+        if started.elapsed() >= REMUX_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            break Err(ProviderError::new(
+                "antraInvalidStream",
+                format!("Antra {} FLAC extraction timed out.", source.label()),
+                true,
+            ));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status.success()),
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(io_provider_error(error));
+            }
+        }
+    };
+
+    let result = result.and_then(|success| {
+        if job.cancelled.load(Ordering::Acquire) {
+            return Err(cancelled_error());
+        }
+        if !success {
+            return Err(ProviderError::new(
+                "antraInvalidStream",
+                format!(
+                    "Antra {} returned MP4 audio without an extractable FLAC stream.",
+                    source.label()
+                ),
+                true,
+            ));
+        }
+        let mut header = [0; 4];
+        fs::File::open(&output_path)
+            .and_then(|mut file| file.read_exact(&mut header))
+            .map_err(io_provider_error)?;
+        if header != *b"fLaC" {
+            return Err(ProviderError::new(
+                "antraInvalidStream",
+                format!(
+                    "Antra {} MP4 extraction did not produce FLAC.",
+                    source.label()
+                ),
+                true,
+            ));
+        }
+        // Windows does not replace an existing destination on rename.
+        fs::remove_file(part_path).map_err(io_provider_error)?;
+        fs::rename(&output_path, part_path).map_err(io_provider_error)
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(&output_path);
+    }
+    result
+}
+
+fn cancelled_error() -> ProviderError {
+    ProviderError::new("antraCancelled", "Antra download was cancelled.", false)
+}
+
+fn ffmpeg_command() -> &'static str {
+    if cfg!(target_os = "macos") && Path::new("/opt/homebrew/bin/ffmpeg").is_file() {
+        "/opt/homebrew/bin/ffmpeg"
+    } else if cfg!(target_os = "macos") && Path::new("/usr/local/bin/ffmpeg").is_file() {
+        "/usr/local/bin/ffmpeg"
+    } else {
+        "ffmpeg"
+    }
 }
 
 fn should_retry_same_candidate(error: &ProviderError) -> bool {
@@ -1274,14 +1440,155 @@ fn response_error(code: &str, response: Response, retryable: bool) -> ProviderEr
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        process::{Command, Stdio},
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
     use serde_json::json;
 
     use crate::{acquisition::ProviderError, domain::TrackQuery};
 
     use super::{
-        CandidateToken, EndpointManifest, MirrorSource, exact_candidate_from_payload,
+        AntraJob, CandidateToken, EndpointManifest, MirrorSource, StreamFormat,
+        classify_stream_format, exact_candidate_from_payload, ffmpeg_command, remux_mp4_flac,
         should_retry_same_candidate,
     };
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("refrain-antra-{name}-{}-{id}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn part(&self) -> PathBuf {
+            self.0.join("track.flac.part")
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn make_mp4(path: &std::path::Path, codec: &str) -> bool {
+        let output = Command::new(ffmpeg_command())
+            .args([
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=0.2",
+                "-c:a",
+                codec,
+            ])
+            .args(if codec == "flac" {
+                &["-strict", "-2"][..]
+            } else {
+                &[]
+            })
+            .args(["-f", "mp4", "-y"])
+            .arg(path)
+            .stdin(Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(output, "ffmpeg could not generate {codec} MP4 test fixture");
+        true
+    }
+
+    fn ffmpeg_available() -> bool {
+        Command::new(ffmpeg_command())
+            .arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    #[test]
+    fn stream_prefix_classifies_native_flac_mp4_and_rejects_partial_or_unknown() {
+        assert_eq!(classify_stream_format(b"fLaC"), Some(StreamFormat::Flac));
+        assert_eq!(
+            classify_stream_format(b"\0\0\0\x18ftypisom"),
+            Some(StreamFormat::Mp4)
+        );
+        for payload in [b"fLa".as_slice(), b"\0\0\0\x18fty", b"not audio"] {
+            assert_eq!(classify_stream_format(payload), None);
+        }
+    }
+
+    #[test]
+    fn mp4_with_flac_remuxes_without_reencoding() {
+        if !ffmpeg_available() {
+            eprintln!("skipping MP4 remux test: ffmpeg is unavailable");
+            return;
+        }
+        let dir = TestDir::new("flac-mp4");
+        let part = dir.part();
+        make_mp4(&part, "flac");
+        assert_eq!(
+            classify_stream_format(&fs::read(&part).unwrap()[..8]),
+            Some(StreamFormat::Mp4)
+        );
+
+        remux_mp4_flac(&part, &AntraJob::new(), MirrorSource::Tidal).unwrap();
+
+        assert!(fs::read(&part).unwrap().starts_with(b"fLaC"));
+        assert!(!part.with_extension("remux.part").exists());
+    }
+
+    #[test]
+    fn mp4_with_aac_is_rejected_and_temporary_output_cleaned() {
+        if !ffmpeg_available() {
+            eprintln!("skipping AAC remux test: ffmpeg is unavailable");
+            return;
+        }
+        let dir = TestDir::new("aac-mp4");
+        let part = dir.part();
+        make_mp4(&part, "aac");
+
+        let error = remux_mp4_flac(&part, &AntraJob::new(), MirrorSource::Tidal).unwrap_err();
+
+        assert_eq!(error.code, "antraInvalidStream");
+        assert!(part.exists());
+        assert!(!part.with_extension("remux.part").exists());
+    }
+
+    #[test]
+    fn truncated_mp4_is_rejected_and_cancellation_preserves_original() {
+        if !ffmpeg_available() {
+            eprintln!("skipping truncated MP4 remux test: ffmpeg is unavailable");
+            return;
+        }
+        let dir = TestDir::new("truncated-mp4");
+        let part = dir.part();
+        let header = b"\0\0\0\x18ftypisom";
+        fs::write(&part, header).unwrap();
+        let error = remux_mp4_flac(&part, &AntraJob::new(), MirrorSource::Tidal).unwrap_err();
+        assert_eq!(error.code, "antraInvalidStream");
+        assert_eq!(fs::read(&part).unwrap(), header);
+        assert!(!part.with_extension("remux.part").exists());
+
+        let job = AntraJob::new();
+        job.cancelled.store(true, Ordering::Release);
+        let error = remux_mp4_flac(&part, &job, MirrorSource::Tidal).unwrap_err();
+        assert_eq!(error.code, "antraCancelled");
+        assert_eq!(fs::read(&part).unwrap(), header);
+    }
 
     fn query() -> TrackQuery {
         TrackQuery {
